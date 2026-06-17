@@ -1,0 +1,10 @@
+id=mffm-unified
+name=[MFFM] Font Module Template
+version=2026.06.18
+versionCode=202606180000
+author=MFFM
+description=Unified static and variable Android font module template for Magisk, KernelSU, and APatch.
+minMagisk=20400
+minKernelSU=10940
+minAPatch=11000
+

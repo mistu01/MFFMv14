@@ -1,0 +1,22 @@
+*.zip
+*.ttf
+*.otf
+*.ttc
+*.woff
+*.woff2
+
+dist/
+Updated Modules/
+.mffm-signer/
+__pycache__/
+*.py[cod]
+.venv/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Keep the input and generated payload directories in the template.
+!Fonts/.gitkeep
+!Files/.gitkeep
+

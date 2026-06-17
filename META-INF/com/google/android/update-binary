@@ -1,0 +1,32 @@
+#!/sbin/sh
+
+umask 022
+OUTFD=$2
+ZIPFILE=$3
+
+ui_print() { echo "$1"; }
+abort_root() {
+  ui_print "*******************************"
+  ui_print " Magisk 20.4+, KernelSU, or   "
+  ui_print " APatch is required.          "
+  ui_print "*******************************"
+  exit 1
+}
+
+mount /data 2>/dev/null
+
+if [ -f /data/adb/ksu/bin/ksud ]; then
+  [ -f /data/adb/ksu/bin/util_functions.sh ] && . /data/adb/ksu/bin/util_functions.sh
+elif [ "$APATCH" = "true" ] || [ -f /data/adb/ap/bin/util_functions.sh ]; then
+  [ -f /data/adb/ap/bin/util_functions.sh ] || abort_root
+  . /data/adb/ap/bin/util_functions.sh
+elif [ -f /data/adb/magisk/util_functions.sh ]; then
+  . /data/adb/magisk/util_functions.sh
+  [ "${MAGISK_VER_CODE:-0}" -ge 20400 ] || abort_root
+else
+  abort_root
+fi
+
+command -v install_module >/dev/null 2>&1 || abort_root
+install_module
+exit 0
