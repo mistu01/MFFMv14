@@ -431,7 +431,9 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
             font = _open_font(face)
             _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
             fonts.append(font)
-        output_name = "DroidSans.ttc"
+        # Intentional compatibility convention: this is a TTC collection by
+        # content, but Android receives the historical .ttf payload name.
+        output_name = "DroidSans.ttf"
         collection = TTCollection()
         collection.fonts = fonts
         collection.save(str(files_dir / output_name))
@@ -447,7 +449,7 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
     if not normal:
         normal = list(condensed)
     regular_index = min(range(len(ordered)), key=lambda index: (ordered[index].style != "normal", abs(ordered[index].weight - 400), ordered[index].condensed))
-    clock = _font_xml("GoogleSansClock-Regular.ttc", 400, "normal", index=regular_index)
+    clock = _font_xml("GoogleSansClock-Regular.ttf", 400, "normal", index=regular_index)
     _write_fragments(files_dir, normal, condensed, clock)
     return ordered, (output_name,)
 

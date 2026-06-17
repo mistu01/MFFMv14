@@ -2,11 +2,11 @@
 
 One template builds and updates both static and variable Android font modules. The compiler detects the font model from OpenType tables and generates the correct installer XML:
 
-- **Static:** all faces are compiled into one `DroidSans.ttc`; XML entries use collection `index` values.
+- **Static:** multiple faces are compiled into one TTC-backed `DroidSans.ttf`; XML entries use collection `index` values. The `.ttf` extension is intentional and preserves the established Android compatibility/spoofing convention.
 - **Variable:** one upright font and an optional italic font are kept variable; XML entries use each font's real `fvar` axes.
 
-When the static input contains only one face, the compiler instead writes a
-standalone `DroidSans.ttf` and generates XML from that face's detected weight
+When the static input contains only one face, `DroidSans.ttf` is an ordinary
+standalone TTF rather than a collection, and its XML uses the detected weight
 and style. This applies equally to inputs such as `Regular.ttf`, `Bold.ttf`, or
 `Italic.ttf`.
 

@@ -46,5 +46,4 @@ The new template has one source of truth:
 - `zipsigner_auto.py` owns signing setup and verification;
 - `customize.sh` consumes generated files and remains agnostic to font internals.
 
-The key design decision is to move all font intelligence to the desktop compiler. Android receives deterministic XML fragments and a small `FONT_MODE` contract. Static faces use TTC indices; variable faces use actual axis tags and values. The installer follows the same patch path for both.
-
+The key design decision is to move all font intelligence to the desktop compiler. Android receives deterministic XML fragments and a small `FONT_MODE` contract. Multi-face static families use TTC indices while retaining the intentional `DroidSans.ttf` external name; single-face static builds use a normal standalone TTF. Variable faces use actual axis tags and values. The installer follows the same patch path for both.

@@ -1,10 +1,9 @@
 id=mffm-unified
-name=[MFFM] Font Module Template
+name=[MFFM] Strichpunkt Sans
 version=2026.06.18
-versionCode=202606180000
+versionCode=202606180423
 author=MFFM
-description=Unified static and variable Android font module template for Magisk, KernelSU, and APatch.
+description=Replaces Android's default Roboto family with "Strichpunkt Sans" (static). Compatible with Magisk, KernelSU, and APatch.
 minMagisk=20400
 minKernelSU=10940
 minAPatch=11000
-
