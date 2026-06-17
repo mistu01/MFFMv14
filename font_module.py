@@ -19,6 +19,7 @@ GENERATED_FILES = {
     "DroidSans.ttc",
     "DroidSans-Italic.ttf",
     "DroidSans-Italic.otf",
+    "DroidSans-Bold.ttf",
     "sans.xml",
     "condensed.xml",
     "serif.xml",
@@ -489,7 +490,10 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
     _save_face(upright, files_dir / upright_name, keep_hinting=keep_hinting, prefix_family=prefix_family)
     payload = [upright_name]
     if italic != upright:
-        italic_name = f"DroidSans-Italic{_variable_extension(italic)}"
+        # Intentional Android compatibility/spoofing convention inherited
+        # from the variable template: the italic variable face is presented
+        # externally as DroidSans-Bold.ttf.
+        italic_name = "DroidSans-Bold.ttf"
         _save_face(italic, files_dir / italic_name, keep_hinting=keep_hinting, prefix_family=prefix_family)
         payload.append(italic_name)
 

@@ -28,11 +28,11 @@ Strong parts retained:
 - reusable external ZipSignerust helper;
 - optional resource behavior.
 
-Constraints addressed in the unified template:
+Constraints addressed and intentional conventions clarified in the unified template:
 
 - it assumed variable fonts and could not compile a static family;
 - builder and updater duplicated axis/config generation;
-- `DroidSans-Bold.ttf` was used as an italic filename;
+- `DroidSans-Bold.ttf` was used as an italic filename; this is intentionally retained as an Android compatibility/spoofing convention, while the generated XML still identifies the face as italic;
 - the installer parsed axes at install time and used Bash-only `[[ ... ]]` in a `/system/bin/sh` script;
 - several large XML patch paths overlapped, increasing maintenance and regression risk.
 
