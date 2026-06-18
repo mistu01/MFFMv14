@@ -1,5 +1,10 @@
 #!/system/bin/sh
-# Unified MFFM installer: generated font-config.sh selects static or variable XML.
+# ==============================================================================
+# MFFMv14 Font Module Installer
+# Script credits: MFFM / Mistu
+# Last modified: 2026-06-18
+# ==============================================================================
+# Generated font-config.sh selects static or variable XML behavior.
 
 [ "$DEBUG" = "1" ] && set -x
 
@@ -18,13 +23,26 @@ if ! command -v set_perm_recursive >/dev/null 2>&1; then
 fi
 
 LOG_DIR=/sdcard/Download
-LOG_FILE="$LOG_DIR/mffm_install_$(date '+%Y%m%d_%H%M%S' 2>/dev/null || echo current).log"
+LOG_FILE="$LOG_DIR/mffmv14_install_$(date '+%Y%m%d_%H%M%S' 2>/dev/null || echo current).log"
 mkdir -p "$LOG_DIR" 2>/dev/null
 
 fail() {
-  ui_print "! $1"
+  ui_print ""
+  ui_print "  [ERROR] $1"
+  ui_print "  Installation stopped."
+  ui_print ""
   exit 1
 }
+
+section() {
+  ui_print ""
+  ui_print "  [$1] $2"
+  ui_print "  ----------------------------------------"
+}
+
+status_ok() { ui_print "    [OK] $1"; }
+status_skip() { ui_print "    [--] $1"; }
+status_warn() { ui_print "    [!!] $1"; }
 
 first_dir() {
   for item in "$@"; do
@@ -146,28 +164,42 @@ EOF
 }
 
 ui_print ""
-ui_print "- MFFM unified font installer"
-ui_print "  Root manager : $ROOT_IMPL"
-ui_print "  Font model   : $FONT_MODE"
-ui_print "  Font family  : $FONT_FAMILY"
+ui_print ""
+ui_print "  +----------------------------------------+"
+ui_print "  |          MFFMv14 FONT MODULE           |"
+ui_print "  |          MFFM / Mistu - 2026           |"
+ui_print "  +----------------------------------------+"
+ui_print ""
+ui_print "    Root manager : $ROOT_IMPL"
+ui_print "    Font model   : $FONT_MODE"
+ui_print "    Font family  : $FONT_FAMILY"
+
+section "1/4" "Installing primary font payload"
 
 for font_file in $FONT_FILES; do
   [ -f "$FONT_DIR/$font_file" ] || fail "Payload font is missing: $font_file"
   cp -f "$FONT_DIR/$font_file" "$SYS_FONT/$font_file" || fail "Could not install $font_file"
+  status_ok "$font_file"
 done
+
+section "2/4" "Patching Android font families"
 
 for xml in "$SYS_XML" "$SYS_FALLBACK"; do
   replace_family "$xml" sans-serif "$FONT_DIR/sans.xml"
   replace_family "$xml" sans-serif-condensed "$FONT_DIR/condensed.xml"
   replace_family "$xml" roboto-flex "$FONT_DIR/sans.xml"
 done
-ui_print "  Installed SANS-SERIF XML for $FONT_MODE fonts."
+status_ok "Sans-serif and Roboto Flex XML"
 
 if [ -n "$CLOCK_FONT" ] && [ -f "$FONT_DIR/$FONT_PRIMARY" ]; then
   cp -f "$FONT_DIR/$FONT_PRIMARY" "$PRODUCT_FONT/$CLOCK_FONT"
   add_clock_family
-  ui_print "  Installed Google Sans Clock family."
+  status_ok "Google Sans Clock family"
+else
+  status_skip "Google Sans Clock family"
 fi
+
+section "3/4" "Applying optional font resources"
 
 # Optional resources may be bundled or placed in /sdcard/MFFM.
 for prefix in Beng Serif; do
@@ -180,9 +212,9 @@ mono=$(find_first "$FONT_DIR" 'Mono*.ttf')
 if [ -n "$mono" ]; then
   cp -f "$mono" "$SYS_FONT/CutiveMono.ttf"
   cp -f "$mono" "$SYS_FONT/DroidSansMono.ttf"
-  ui_print "  Installed MONOSPACE font."
+  status_ok "Monospace font"
 else
-  ui_print "  Skipped MONOSPACE font."
+  status_skip "Monospace font not supplied"
 fi
 
 if [ -f "$FONT_DIR/Beng-Regular.ttf" ] && [ -f "$FONT_DIR/Beng-Medium.ttf" ] && [ -f "$FONT_DIR/Beng-Bold.ttf" ]; then
@@ -194,9 +226,9 @@ if [ -f "$FONT_DIR/Beng-Regular.ttf" ] && [ -f "$FONT_DIR/Beng-Medium.ttf" ] && 
     sed -i '/<family lang="und-Beng" variant="elegant">/,/<\/family>/c\<family lang="und-Beng" variant="elegant">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
     sed -i '/<family lang="und-Beng" variant="compact">/,/<\/family>/c\<family lang="und-Beng" variant="compact">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
   done
-  ui_print "  Installed BENGALI fonts."
+  status_ok "Bengali fonts"
 else
-  ui_print "  Skipped BENGALI fonts."
+  status_skip "Bengali fonts not supplied"
 fi
 
 if [ -f "$FONT_DIR/Serif-Regular.ttf" ] && [ -f "$FONT_DIR/Serif-Italic.ttf" ] && [ -f "$FONT_DIR/Serif-Bold.ttf" ] && [ -f "$FONT_DIR/Serif-BoldItalic.ttf" ]; then
@@ -204,23 +236,27 @@ if [ -f "$FONT_DIR/Serif-Regular.ttf" ] && [ -f "$FONT_DIR/Serif-Italic.ttf" ] &
   cp -f "$FONT_DIR/Serif-Italic.ttf" "$SYS_FONT/NotoSerif-Italic.ttf"
   cp -f "$FONT_DIR/Serif-Bold.ttf" "$SYS_FONT/NotoSerif-Bold.ttf"
   cp -f "$FONT_DIR/Serif-BoldItalic.ttf" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
-  ui_print "  Installed dedicated SERIF fonts."
+  status_ok "Dedicated serif fonts"
 else
   for xml in "$SYS_XML" "$SYS_FALLBACK"; do
     replace_family "$xml" serif "$FONT_DIR/serif.xml"
   done
-  ui_print "  Using the selected family for SERIF."
+  status_ok "Selected family mapped as serif"
 fi
+
+section "4/4" "Finalizing root integration"
 
 if [ "$KSU" = "true" ] || [ "$APATCH" = "true" ]; then
   if command -v setfattr >/dev/null 2>&1; then
     for directory in "$SYS_FONT" "$PRODUCT_FONT" "$SYS_ETC" "$PRODUCT_ETC"; do
       setfattr -n trusted.overlay.opaque -v y "$directory" 2>/dev/null
     done
-    ui_print "  Applied OverlayFS opaque attributes."
+    status_ok "OverlayFS opaque attributes"
   else
-    ui_print "  Warning: setfattr is unavailable; a mounting metamodule may be required."
+    status_warn "setfattr unavailable; mounting metamodule may be required"
   fi
+else
+  status_ok "Magisk module overlay"
 fi
 
 set_perm_recursive "$MODPATH" 0 0 0755 0644
@@ -229,14 +265,29 @@ for script in service.sh uninstall.sh post-mount.sh; do
 done
 rm -rf "$FONT_DIR"
 rm -f "$MODPATH/font-config.sh"
+status_ok "Permissions and cleanup"
 
 {
-  echo "MFFM unified installation completed"
+  echo "MFFMv14 installation completed"
   echo "root_manager=$ROOT_IMPL"
   echo "font_mode=$FONT_MODE"
   echo "font_family=$FONT_FAMILY"
   echo "system_xml=$ORIGINAL_FONTS_XML"
 } >> "$LOG_FILE" 2>/dev/null
 
-ui_print "- Done. Reboot to apply the font."
-ui_print "- Install log: $LOG_FILE"
+ui_print ""
+ui_print "  +----------------------------------------+"
+ui_print "  |       INSTALLATION SUCCESSFUL          |"
+ui_print "  +----------------------------------------+"
+ui_print ""
+ui_print "     __  __  _____  _____  __  __"
+ui_print "    |  \/  ||  ___||  ___||  \/  |"
+ui_print "    | |\/| || |_   | |_   | |\/| |"
+ui_print "    | |  | ||  _|  |  _|  | |  | |"
+ui_print "    |_|  |_||_|    |_|    |_|  |_|"
+ui_print ""
+ui_print "             © 2026 MFFM / Mistu"
+ui_print ""
+ui_print "    Reboot to apply the font."
+ui_print "    Log: $LOG_FILE"
+ui_print ""

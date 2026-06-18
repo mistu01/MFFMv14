@@ -22,27 +22,27 @@
       <axis tag="wght" stylevalue="900"/>
       <axis tag="wdth" stylevalue="100"/>
     </font>
-    <font weight="400" style="italic">DroidSans-Italic.ttf
+    <font weight="400" style="italic">DroidSans-Bold.ttf
       <axis tag="wght" stylevalue="400"/>
       <axis tag="wdth" stylevalue="100"/>
     </font>
-    <font weight="500" style="italic">DroidSans-Italic.ttf
+    <font weight="500" style="italic">DroidSans-Bold.ttf
       <axis tag="wght" stylevalue="500"/>
       <axis tag="wdth" stylevalue="100"/>
     </font>
-    <font weight="600" style="italic">DroidSans-Italic.ttf
+    <font weight="600" style="italic">DroidSans-Bold.ttf
       <axis tag="wght" stylevalue="600"/>
       <axis tag="wdth" stylevalue="100"/>
     </font>
-    <font weight="700" style="italic">DroidSans-Italic.ttf
+    <font weight="700" style="italic">DroidSans-Bold.ttf
       <axis tag="wght" stylevalue="700"/>
       <axis tag="wdth" stylevalue="100"/>
     </font>
-    <font weight="800" style="italic">DroidSans-Italic.ttf
+    <font weight="800" style="italic">DroidSans-Bold.ttf
       <axis tag="wght" stylevalue="800"/>
       <axis tag="wdth" stylevalue="100"/>
     </font>
-    <font weight="900" style="italic">DroidSans-Italic.ttf
+    <font weight="900" style="italic">DroidSans-Bold.ttf
       <axis tag="wght" stylevalue="900"/>
       <axis tag="wdth" stylevalue="100"/>
     </font>

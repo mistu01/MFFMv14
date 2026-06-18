@@ -10,7 +10,7 @@ Strong parts retained:
 - optional Bengali, serif, monospace, and Google font-provider handling;
 - signed ZIP verification.
 
-Constraints addressed in the unified template:
+Constraints addressed in the MFFMv14 template:
 
 - static logic was embedded in a large builder and generated shell block;
 - signing logic was duplicated inside `build.py`;
@@ -28,7 +28,7 @@ Strong parts retained:
 - reusable external ZipSignerust helper;
 - optional resource behavior.
 
-Constraints addressed and intentional conventions clarified in the unified template:
+Constraints addressed and intentional conventions clarified in the MFFMv14 template:
 
 - it assumed variable fonts and could not compile a static family;
 - builder and updater duplicated axis/config generation;
@@ -36,7 +36,7 @@ Constraints addressed and intentional conventions clarified in the unified templ
 - the installer parsed axes at install time and used Bash-only `[[ ... ]]` in a `/system/bin/sh` script;
 - several large XML patch paths overlapped, increasing maintenance and regression risk.
 
-## Unified architecture
+## MFFMv14 architecture
 
 The new template has one source of truth:
 

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# MFFMv14 ZIP Signing Helper
+# Copyright © 2026 MFFM / Mistu
+# Last modified: 2026-06-18
+# ==============================================================================
 """Download, cache, sign, and verify module ZIPs with ZipSignerust."""
 
 from __future__ import annotations
@@ -38,7 +43,7 @@ def _asset_name() -> str:
 
 
 def _request(url: str) -> urllib.request.Request:
-    return urllib.request.Request(url, headers={"User-Agent": "MFFM-unified-builder", "Accept": "application/vnd.github+json"})
+    return urllib.request.Request(url, headers={"User-Agent": "MFFMv14-builder", "Accept": "application/vnd.github+json"})
 
 
 def _ensure_binary(root: Path) -> Path:
@@ -121,4 +126,3 @@ def sign_zip(zip_path: Path, project_root: Path) -> Path:
     _run([str(binary), "sign", "--inplace", str(target), "--private-key", str(private), "--public-key", str(certificate)], "signing")
     _run([str(binary), "verify", str(target), "--public-key", str(certificate)], "verification")
     return target
-

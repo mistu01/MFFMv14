@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# MFFMv14 Font Module Builder
+# Copyright © 2026 MFFM / Mistu
+# Last modified: 2026-06-18
+# ==============================================================================
 """Compile static or variable fonts into one flashable MFFM module."""
 
 from __future__ import annotations
@@ -10,7 +15,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-from font_module import compile_fonts, slugify, update_module_metadata
+from font_module import compile_fonts, display_name_for_mode, slugify, update_module_metadata
 from zipsigner_auto import ZipSignerError, sign_zip
 
 
@@ -68,9 +73,10 @@ def build_module(args: argparse.Namespace, module_dir: Path = ROOT) -> Path | No
         keep_hinting=args.keep_hinting,
         prefix_family=not args.no_prefix,
     )
+    display_name = display_name_for_mode(args.name or result.family, result.mode)
     props = update_module_metadata(
         module_dir, result.family, result.mode,
-        name=args.name, version=args.version, version_code=args.version_code,
+        name=display_name, version=args.version, version_code=args.version_code,
     )
     print(f"Detected mode : {result.mode}")
     print(f"Font family   : {result.family}")
@@ -83,7 +89,7 @@ def build_module(args: argparse.Namespace, module_dir: Path = ROOT) -> Path | No
         print("Prepared module files; ZIP creation skipped.")
         return None
 
-    output = args.output_dir.resolve() / f"{props['id']}-{slugify(args.name or result.family)}-{props['version']}.zip"
+    output = args.output_dir.resolve() / f"{props['id']}-{slugify(display_name)}-{props['version']}.zip"
     if output.exists():
         output.unlink()
     write_zip(module_dir, output)

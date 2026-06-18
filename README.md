@@ -1,4 +1,4 @@
-# MFFM Unified Font Module Template
+# MFFMv14 Font Module Template
 
 One template builds and updates both static and variable Android font modules. The compiler detects the font model from OpenType tables and generates the correct installer XML:
 
@@ -15,6 +15,9 @@ and style. This applies equally to inputs such as `Regular.ttf`, `Bold.ttf`, or
 `Italic.ttf`.
 
 The flashable payload supports Magisk, KernelSU, and APatch. KernelSU users may still need their manager's mounting metamodule.
+
+Variable builds receive a single `VF` suffix in both the module display name
+and output ZIP filename. Static module names are left unchanged.
 
 ## Setup
 

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Migrate old static or variable MFFM ZIPs onto the unified template."""
+# ==============================================================================
+# MFFMv14 Legacy Module Updater
+# Copyright © 2026 MFFM / Mistu
+# Last modified: 2026-06-18
+# ==============================================================================
+"""Migrate old static or variable MFFM ZIPs onto the MFFMv14 template."""
 
 from __future__ import annotations
 
@@ -10,7 +15,7 @@ import zipfile
 from pathlib import Path
 
 from build import ROOT, write_zip
-from font_module import FONT_EXTENSIONS, clean_family_name, compile_fonts, read_props, slugify, update_module_metadata
+from font_module import FONT_EXTENSIONS, clean_family_name, compile_fonts, display_name_for_mode, read_props, slugify, update_module_metadata
 from zipsigner_auto import ZipSignerError, sign_zip
 
 
@@ -24,7 +29,7 @@ OLD_PRIMARY_NAMES = (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Update old MFFM module ZIPs to the unified template")
+    parser = argparse.ArgumentParser(description="Update old MFFM module ZIPs to the MFFMv14 template")
     parser.add_argument("--old-dir", type=Path, default=ROOT / "Old Modules")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "Updated Modules")
     parser.add_argument("--mode", choices=("auto", "static", "variable"), default="auto")
@@ -165,7 +170,10 @@ def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) ->
             keep_hinting=args.keep_hinting,
             prefix_family=not args.no_prefix,
         )
-        display = args.name or old_display_name(old_root) or result.family
+        display = display_name_for_mode(
+            args.name or old_display_name(old_root) or result.family,
+            result.mode,
+        )
         props = update_module_metadata(
             module_dir, result.family, result.mode,
             name=display, version=args.version, version_code=args.version_code,
