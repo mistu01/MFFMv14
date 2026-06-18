@@ -68,6 +68,61 @@ python build.py
 
 The compiler keeps every non-weight axis at its declared default. It selects `ital`/`slnt` appropriately for italic XML and emits only weights supported by the font's `wght` range.
 
+### On-device variable-axis configuration
+
+The first time a variable module is flashed, the installer creates an editable,
+font-specific configuration in `/sdcard/MFFM`:
+
+```text
+/sdcard/MFFM/MFFMv14_<Font_Name>_vf-<unique_identity>.conf
+```
+
+This user configuration is never included in the module ZIP. It persists on
+shared storage across module updates and reinstalls. The identity is a
+deterministic fingerprint of the module's font payload and axis schema, keeping
+different variable modules isolated even when their family names are similar.
+A typical file looks like:
+
+```ini
+CONFIG_SCHEMA=2
+MODULE_IDENTITY=vf-0123456789abcdefabcd
+
+# SANS-SERIF / UPRIGHT
+SANS_UPRIGHT_REGULAR_WGHT=400
+SANS_UPRIGHT_MEDIUM_WGHT=500
+SANS_UPRIGHT_WDTH=100
+
+# SANS-SERIF / ITALIC
+SANS_ITALIC_REGULAR_WGHT=400
+SANS_ITALIC_WDTH=100
+SANS_ITALIC_SLNT=-10
+
+# CONDENSED / UPRIGHT
+CONDENSED_UPRIGHT_REGULAR_WGHT=400
+CONDENSED_UPRIGHT_WDTH=75
+
+# CONDENSED / ITALIC
+CONDENSED_ITALIC_REGULAR_WGHT=400
+CONDENSED_ITALIC_WDTH=75
+CONDENSED_ITALIC_SLNT=-10
+```
+
+The generated file contains a usage guide and valid ranges. Named weight keys
+target one Android face, so setting `SANS_UPRIGHT_REGULAR_WGHT=450` changes only
+Regular. Sans and condensed profiles are independent, allowing condensed width
+without narrowing the normal family. Italic profiles receive explicit `ital`
+or `slnt` values when those axes exist. `AUTO` remains available as an optional
+way to restore the compiler-generated value for an individual key.
+
+After editing, save and reflash the same module. The installer validates every
+value and targets the exact family profile, style, and named weight in Android's
+XML. Empty, non-numeric, and out-of-range values produce a warning and are
+rewritten in the saved configuration using that field's compiled default.
+
+Do not edit `CONFIG_SCHEMA` or `MODULE_IDENTITY`. On reflash, the installer
+checks both before reading any axis value. A missing, outdated, or incorrect
+value causes the incompatible file to be replaced with fresh defaults.
+
 ## Useful compiler options
 
 ```powershell
@@ -116,6 +171,10 @@ The compiler produces `font-config.sh` and four XML fragments under `Files/`:
 
 `customize.sh` reads this contract. It does not inspect or guess font axes on-device. The `FONT_MODE` value is also printed during installation, which makes static/variable behavior visible in recovery logs.
 
+For variable builds, the internal contract also carries axis names and ranges
+so the installer can create and validate the external `/sdcard/MFFM` user
+configuration. The editable configuration itself is not packaged.
+
 ## Optional assets
 
 The installer accepts the conventions retained from both source templates:
@@ -125,3 +184,16 @@ The installer accepts the conventions retained from both source templates:
 - `Mono*.ttf`.
 
 Assets may be bundled in `Files/` before building or placed in `/sdcard/MFFM` on the device.
+
+## Installation logs
+
+Each flash saves a detailed shell debug log in the MFFM folder:
+
+```text
+/sdcard/MFFM/mffmv14_debug_YYYYMMDD_HHMMSS.log
+```
+
+Debug logging is enabled automatically. The file contains the shell execution trace,
+expanded commands, command errors, root-manager installer messages, MFFMv14 progress,
+configuration warnings, and fatal errors. It can be shared as-is for troubleshooting
+without enabling a separate debug option before flashing.

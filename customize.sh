@@ -6,8 +6,6 @@
 # ==============================================================================
 # Generated font-config.sh selects static or variable XML behavior.
 
-[ "$DEBUG" = "1" ] && set -x
-
 if ! command -v ui_print >/dev/null 2>&1; then
   ui_print() { echo "$1"; }
 fi
@@ -22,9 +20,40 @@ if ! command -v set_perm_recursive >/dev/null 2>&1; then
   }
 fi
 
-LOG_DIR=/sdcard/Download
-LOG_FILE="$LOG_DIR/mffmv14_install_$(date '+%Y%m%d_%H%M%S' 2>/dev/null || echo current).log"
+LOG_DIR=${LOG_DIR:-/sdcard/MFFM}
+LOG_FILE=${LOG_FILE:-"$LOG_DIR/mffmv14_debug_$(date '+%Y%m%d_%H%M%S' 2>/dev/null || echo current).log"}
 mkdir -p "$LOG_DIR" 2>/dev/null
+
+# update-binary normally enables this before root-manager setup. The fallback
+# also supports managers that launch customize.sh in a separate shell.
+DEBUG=${DEBUG:-1}
+if [ "$DEBUG" = "1" ] && [ -d "$LOG_DIR" ] && : >> "$LOG_FILE" 2>/dev/null; then
+  exec 2>> "$LOG_FILE"
+  PS4='+ [${0##*/}:${LINENO:-?}] '
+  set -x
+fi
+
+mffm_log_line() {
+  [ -n "$LOG_FILE" ] || return 0
+  printf '%s\n' "$1" >> "$LOG_FILE" 2>/dev/null
+}
+
+mffm_ui_print() {
+  local message
+  message=$1
+  mffm_log_line "$message"
+  if [ "${BOOTMODE:-false}" = "true" ]; then
+    printf '%s\n' "$message"
+  else
+    case "$OUTFD" in
+      ''|*[!0-9]*) printf '%s\n' "$message" ;;
+      *) printf 'ui_print %s\nui_print\n' "$message" >&$OUTFD ;;
+    esac
+  fi
+}
+
+# Keep readable installer messages alongside the shell execution trace.
+ui_print() { mffm_ui_print "$1"; }
 
 fail() {
   ui_print ""
@@ -108,7 +137,8 @@ MFFM_DIR=/sdcard/MFFM
 [ -n "$FONT_FILES" ] || fail "FONT_FILES is empty"
 [ -f "$FONT_DIR/sans.xml" ] || fail "Generated sans.xml is missing"
 
-mkdir -p "$SYS_FONT" "$SYS_ETC" "$PRODUCT_FONT" "$PRODUCT_ETC" "$MFFM_DIR"
+mkdir -p "$SYS_FONT" "$SYS_ETC" "$PRODUCT_FONT" "$PRODUCT_ETC" || fail "Could not create module overlay directories"
+mkdir -p "$MFFM_DIR" || fail "Could not create $MFFM_DIR for variable-font settings"
 [ -f "$ORIGINAL_FONTS_XML" ] || fail "Could not locate the live system fonts.xml"
 cp -f "$ORIGINAL_FONTS_XML" "$SYS_XML" || fail "Could not copy system fonts.xml"
 [ -f "$ORIGINAL_FALLBACK_XML" ] && cp -f "$ORIGINAL_FALLBACK_XML" "$SYS_FALLBACK"
@@ -163,6 +193,286 @@ EOF
   ' "$PRODUCT_XML" > "$PRODUCT_XML.tmp" && mv -f "$PRODUCT_XML.tmp" "$PRODUCT_XML"
 }
 
+config_value() {
+  local key
+  key=$1
+  sed -n "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*//p" "$VF_CONFIG_FILE" 2>/dev/null |
+    tail -n 1 |
+    sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//'
+}
+
+weight_label() {
+  case "$1" in
+    100) printf 'THIN' ;;
+    200) printf 'EXTRALIGHT' ;;
+    300) printf 'LIGHT' ;;
+    400) printf 'REGULAR' ;;
+    500) printf 'MEDIUM' ;;
+    600) printf 'SEMIBOLD' ;;
+    700) printf 'BOLD' ;;
+    800) printf 'EXTRABOLD' ;;
+    900) printf 'BLACK' ;;
+    *) printf 'WEIGHT_%s' "$1" ;;
+  esac
+}
+
+profile_title() {
+  case "$1" in
+    SANS_UPRIGHT) printf 'SANS-SERIF / UPRIGHT' ;;
+    SANS_ITALIC) printf 'SANS-SERIF / ITALIC' ;;
+    CONDENSED_UPRIGHT) printf 'CONDENSED / UPRIGHT' ;;
+    CONDENSED_ITALIC) printf 'CONDENSED / ITALIC' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+ensure_profile_keys() {
+  local profile axis_meta weights title axis_record axis_tag remainder axis_min axis_default axis_max
+  local config_key axis_key weight label wght_min wght_max
+  profile=$1
+  axis_meta=$2
+  weights=$3
+  title=$(profile_title "$profile")
+
+  if [ "$VF_CONFIG_CREATED" = "1" ]; then
+    {
+      printf '\n# ------------------------------------------------------------------------------\n'
+      printf '# %s\n' "$title"
+      printf '# ------------------------------------------------------------------------------\n'
+    } >> "$VF_CONFIG_FILE"
+  fi
+
+  for axis_record in $axis_meta; do
+    axis_tag=${axis_record%%|*}
+    remainder=${axis_record#*|}
+    axis_min=${remainder%%|*}
+    remainder=${remainder#*|}
+    axis_default=${remainder%%|*}
+    axis_max=${remainder##*|}
+    [ "$axis_tag" = "wght" ] && { wght_min=$axis_min; wght_max=$axis_max; }
+  done
+
+  for weight in $weights; do
+    label=$(weight_label "$weight")
+    config_key="${profile}_${label}_WGHT"
+    if ! grep -q "^[[:space:]]*$config_key[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+      {
+        printf '# Android %s (%s): variable wght range %s..%s\n' "$weight" "$label" "$wght_min" "$wght_max"
+        printf '%s=%s\n' "$config_key" "$weight"
+      } >> "$VF_CONFIG_FILE"
+    fi
+  done
+
+  for axis_record in $axis_meta; do
+    axis_tag=${axis_record%%|*}
+    [ "$axis_tag" = "wght" ] && continue
+    remainder=${axis_record#*|}
+    axis_min=${remainder%%|*}
+    remainder=${remainder#*|}
+    axis_default=${remainder%%|*}
+    axis_max=${remainder##*|}
+    axis_key=$(printf '%s' "$axis_tag" | tr '[:lower:]' '[:upper:]')
+    config_key="${profile}_${axis_key}"
+    if ! grep -q "^[[:space:]]*$config_key[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+      {
+        printf '# %s axis range %s..%s; compiled value %s\n' "$axis_tag" "$axis_min" "$axis_max" "$axis_default"
+        printf '%s=%s\n' "$config_key" "$axis_default"
+      } >> "$VF_CONFIG_FILE"
+    fi
+  done
+}
+
+reset_config_value() {
+  local config_key reset_value
+  config_key=$1
+  reset_value=$2
+  awk -v wanted_key="$config_key" -v wanted_value="$reset_value" '
+    $0 ~ "^[[:space:]]*" wanted_key "[[:space:]]*=" {
+      print wanted_key "=" wanted_value
+      replaced=1
+      next
+    }
+    { print }
+    END {
+      if (!replaced) print wanted_key "=" wanted_value
+    }
+  ' "$VF_CONFIG_FILE" > "$VF_CONFIG_FILE.tmp" && mv -f "$VF_CONFIG_FILE.tmp" "$VF_CONFIG_FILE"
+}
+
+validate_axis_value() {
+  local config_key axis_value axis_min axis_max reset_value
+  config_key=$1
+  axis_value=$2
+  axis_min=$3
+  axis_max=$4
+  reset_value=$5
+  case "$axis_value" in
+    AUTO|Auto|auto) return 1 ;;
+    "")
+      status_warn "$config_key was empty; reset to $reset_value"
+      reset_config_value "$config_key" "$reset_value"
+      return 1
+      ;;
+  esac
+  if ! printf '%s\n' "$axis_value" | grep -Eq '^-?([0-9]+([.][0-9]*)?|[.][0-9]+)$'; then
+    status_warn "$config_key='$axis_value' is invalid; reset to $reset_value"
+    reset_config_value "$config_key" "$reset_value"
+    return 1
+  fi
+  if ! awk -v value="$axis_value" -v minimum="$axis_min" -v maximum="$axis_max" \
+    'BEGIN { exit !(value >= minimum && value <= maximum) }'; then
+    status_warn "$config_key=$axis_value is outside $axis_min..$axis_max; reset to $reset_value"
+    reset_config_value "$config_key" "$reset_value"
+    return 1
+  fi
+  return 0
+}
+
+apply_axis_value() {
+  local style_name declared_weight axis_tag axis_value fragment_file
+  style_name=$1
+  declared_weight=$2
+  axis_tag=$3
+  axis_value=$4
+  shift 4
+  for fragment_file in "$@"; do
+    [ -f "$fragment_file" ] || continue
+    awk -v wanted_style="$style_name" -v wanted_weight="$declared_weight" \
+      -v wanted_tag="$axis_tag" -v wanted_value="$axis_value" '
+      /<font[[:space:]]/ {
+        active = index($0, "style=\"" wanted_style "\"") > 0
+        if (wanted_weight != "") {
+          active = active && index($0, "weight=\"" wanted_weight "\"") > 0
+        }
+      }
+      active && index($0, "<axis tag=\"" wanted_tag "\"") > 0 {
+        sub(/stylevalue="[^"]*"/, "stylevalue=\"" wanted_value "\"")
+      }
+      { print }
+      /<\/font>/ { active=0 }
+    ' "$fragment_file" > "$fragment_file.tmp" && mv -f "$fragment_file.tmp" "$fragment_file"
+  done
+}
+
+apply_profile() {
+  local profile xml_style axis_meta weights fragment_list axis_record axis_tag remainder axis_min
+  local axis_default axis_max axis_key config_key axis_value weight label wght_min wght_max
+  profile=$1
+  xml_style=$2
+  axis_meta=$3
+  weights=$4
+  shift 4
+  fragment_list="$*"
+
+  for axis_record in $axis_meta; do
+    axis_tag=${axis_record%%|*}
+    remainder=${axis_record#*|}
+    axis_min=${remainder%%|*}
+    remainder=${remainder#*|}
+    axis_default=${remainder%%|*}
+    axis_max=${remainder##*|}
+    [ "$axis_tag" = "wght" ] && { wght_min=$axis_min; wght_max=$axis_max; }
+  done
+
+  for weight in $weights; do
+    label=$(weight_label "$weight")
+    config_key="${profile}_${label}_WGHT"
+    axis_value=$(config_value "$config_key")
+    validate_axis_value "$config_key" "$axis_value" "$wght_min" "$wght_max" "$weight" || continue
+    apply_axis_value "$xml_style" "$weight" wght "$axis_value" $fragment_list
+  done
+
+  for axis_record in $axis_meta; do
+    axis_tag=${axis_record%%|*}
+    [ "$axis_tag" = "wght" ] && continue
+    remainder=${axis_record#*|}
+    axis_min=${remainder%%|*}
+    remainder=${remainder#*|}
+    axis_default=${remainder%%|*}
+    axis_max=${remainder##*|}
+    axis_key=$(printf '%s' "$axis_tag" | tr '[:lower:]' '[:upper:]')
+    config_key="${profile}_${axis_key}"
+    axis_value=$(config_value "$config_key")
+    validate_axis_value "$config_key" "$axis_value" "$axis_min" "$axis_max" "$axis_default" || continue
+    apply_axis_value "$xml_style" "" "$axis_tag" "$axis_value" $fragment_list
+  done
+}
+
+prepare_variable_config() {
+  safe_family=$(printf '%s' "$FONT_FAMILY" | tr -cs 'A-Za-z0-9._-' '_' | sed 's/^_*//;s/_*$//')
+  [ -n "$safe_family" ] || safe_family=Variable_Font
+  [ -n "$VF_CONFIG_ID" ] || fail "Variable module identity is missing"
+  [ "$VF_CONFIG_SCHEMA" = "2" ] || fail "Unsupported variable config schema: $VF_CONFIG_SCHEMA"
+  if ! printf '%s\n' "$VF_CONFIG_ID" | grep -Eq '^vf-[a-f0-9]{20}$'; then
+    fail "Variable module identity is invalid: $VF_CONFIG_ID"
+  fi
+  VF_CONFIG_FILE="$MFFM_DIR/MFFMv14_${safe_family}_${VF_CONFIG_ID}.conf"
+  VF_LEGACY_CONFIG="$MFFM_DIR/MFFMv14_${safe_family}_VF.conf"
+  VF_CONFIG_RESET=0
+
+  # Remove the pre-identity format so it cannot leak settings into this module.
+  if [ -f "$VF_LEGACY_CONFIG" ]; then
+    rm -f "$VF_LEGACY_CONFIG" || fail "Could not remove legacy variable configuration"
+    VF_CONFIG_RESET=1
+  fi
+
+  if [ -f "$VF_CONFIG_FILE" ]; then
+    saved_identity=$(sed -n 's/^[[:space:]]*MODULE_IDENTITY[[:space:]]*=[[:space:]]*//p' "$VF_CONFIG_FILE" |
+      tail -n 1 | sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//')
+    saved_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA[[:space:]]*=[[:space:]]*//p' "$VF_CONFIG_FILE" |
+      tail -n 1 | sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//')
+    if [ "$saved_identity" != "$VF_CONFIG_ID" ] || [ "$saved_schema" != "$VF_CONFIG_SCHEMA" ]; then
+      rm -f "$VF_CONFIG_FILE" || fail "Could not remove mismatched variable configuration"
+      VF_CONFIG_RESET=1
+    fi
+  fi
+
+  if [ ! -f "$VF_CONFIG_FILE" ]; then
+    cat > "$VF_CONFIG_FILE" <<EOF
+# ==============================================================================
+# MFFMv14 VARIABLE FONT CONFIGURATION
+# ==============================================================================
+# Font: $FONT_FAMILY
+# Module identity: $VF_CONFIG_ID
+#
+# CONFIG USAGE
+# ------------
+# 1. Edit only the numeric values below, save, then reflash this module.
+# 2. Named WGHT keys control one Android face. Example:
+#      SANS_UPRIGHT_REGULAR_WGHT=450
+#    changes only Regular (Android weight 400) to variable wght 450.
+# 3. SANS_* values affect sans-serif, serif fallback, and clock families.
+# 4. CONDENSED_* values affect only sans-serif-condensed.
+# 5. UPRIGHT and ITALIC are independent. Italic profiles expose ital/slnt
+#    with the exact values compiled from a single-font or separate-font setup.
+# 6. Every axis comment shows its valid range. Invalid or out-of-range values
+#    are reset to their compiled defaults automatically during reflash.
+# 7. AUTO may be used to restore the compiler-generated value for one key.
+# 8. Do not edit CONFIG_SCHEMA or MODULE_IDENTITY. A mismatch resets this file.
+# ==============================================================================
+CONFIG_SCHEMA=$VF_CONFIG_SCHEMA
+MODULE_IDENTITY=$VF_CONFIG_ID
+EOF
+    VF_CONFIG_CREATED=1
+  else
+    VF_CONFIG_CREATED=0
+  fi
+  [ -f "$VF_CONFIG_FILE" ] || fail "Could not create variable-axis configuration: $VF_CONFIG_FILE"
+  ensure_profile_keys SANS_UPRIGHT "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS"
+  ensure_profile_keys SANS_ITALIC "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS"
+  ensure_profile_keys CONDENSED_UPRIGHT "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS"
+  ensure_profile_keys CONDENSED_ITALIC "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS"
+
+  apply_profile SANS_UPRIGHT normal "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS" \
+    "$FONT_DIR/sans.xml" "$FONT_DIR/serif.xml" "$FONT_DIR/clock.xml"
+  apply_profile SANS_ITALIC italic "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS" \
+    "$FONT_DIR/sans.xml" "$FONT_DIR/serif.xml"
+  apply_profile CONDENSED_UPRIGHT normal "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS" \
+    "$FONT_DIR/condensed.xml"
+  apply_profile CONDENSED_ITALIC italic "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS" \
+    "$FONT_DIR/condensed.xml"
+}
+
 ui_print ""
 ui_print ""
 ui_print "  +----------------------------------------+"
@@ -173,6 +483,19 @@ ui_print ""
 ui_print "    Root manager : $ROOT_IMPL"
 ui_print "    Font model   : $FONT_MODE"
 ui_print "    Font family  : $FONT_FAMILY"
+
+if [ "$FONT_MODE" = "variable" ]; then
+  prepare_variable_config
+  ui_print "    Axis config  : $VF_CONFIG_FILE"
+  if [ "$VF_CONFIG_CREATED" = "1" ]; then
+    if [ "$VF_CONFIG_RESET" = "1" ]; then
+      status_warn "Replaced a legacy or mismatched axis configuration"
+    fi
+    status_ok "Created identity-bound variable-axis configuration"
+  else
+    status_ok "Loaded matching identity-bound axis configuration"
+  fi
+fi
 
 section "1/4" "Installing primary font payload"
 
@@ -267,14 +590,6 @@ rm -rf "$FONT_DIR"
 rm -f "$MODPATH/font-config.sh"
 status_ok "Permissions and cleanup"
 
-{
-  echo "MFFMv14 installation completed"
-  echo "root_manager=$ROOT_IMPL"
-  echo "font_mode=$FONT_MODE"
-  echo "font_family=$FONT_FAMILY"
-  echo "system_xml=$ORIGINAL_FONTS_XML"
-} >> "$LOG_FILE" 2>/dev/null
-
 ui_print ""
 ui_print "  +----------------------------------------+"
 ui_print "  |       INSTALLATION SUCCESSFUL          |"
@@ -289,5 +604,5 @@ ui_print ""
 ui_print "             © 2026 MFFM / Mistu"
 ui_print ""
 ui_print "    Reboot to apply the font."
-ui_print "    Log: $LOG_FILE"
+ui_print "    Debug log: $LOG_FILE"
 ui_print ""

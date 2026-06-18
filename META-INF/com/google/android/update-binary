@@ -9,7 +9,40 @@ umask 022
 OUTFD=$2
 ZIPFILE=$3
 
-ui_print() { echo "$1"; }
+mount /data 2>/dev/null
+
+LOG_DIR=/sdcard/MFFM
+LOG_FILE="$LOG_DIR/mffmv14_debug_$(date '+%Y%m%d_%H%M%S' 2>/dev/null || echo current).log"
+mkdir -p "$LOG_DIR" 2>/dev/null
+DEBUG=1
+export LOG_DIR LOG_FILE DEBUG
+
+if [ -d "$LOG_DIR" ] && : >> "$LOG_FILE" 2>/dev/null; then
+  exec 2>> "$LOG_FILE"
+  PS4='+ [${0##*/}:${LINENO:-?}] '
+  set -x
+fi
+
+mffm_log_line() {
+  [ -n "$LOG_FILE" ] || return 0
+  printf '%s\n' "$1" >> "$LOG_FILE" 2>/dev/null
+}
+
+mffm_ui_print() {
+  local message
+  message=$1
+  mffm_log_line "$message"
+  if [ "${BOOTMODE:-false}" = "true" ]; then
+    printf '%s\n' "$message"
+  else
+    case "$OUTFD" in
+      ''|*[!0-9]*) printf '%s\n' "$message" ;;
+      *) printf 'ui_print %s\nui_print\n' "$message" >&$OUTFD ;;
+    esac
+  fi
+}
+
+ui_print() { mffm_ui_print "$1"; }
 abort_root() {
   ui_print "*******************************"
   ui_print " Magisk 20.4+, KernelSU, or   "
@@ -18,15 +51,16 @@ abort_root() {
   exit 1
 }
 
-mount /data 2>/dev/null
-
 if [ -f /data/adb/ksu/bin/ksud ]; then
   [ -f /data/adb/ksu/bin/util_functions.sh ] && . /data/adb/ksu/bin/util_functions.sh
+  ui_print() { mffm_ui_print "$1"; }
 elif [ "$APATCH" = "true" ] || [ -f /data/adb/ap/bin/util_functions.sh ]; then
   [ -f /data/adb/ap/bin/util_functions.sh ] || abort_root
   . /data/adb/ap/bin/util_functions.sh
+  ui_print() { mffm_ui_print "$1"; }
 elif [ -f /data/adb/magisk/util_functions.sh ]; then
   . /data/adb/magisk/util_functions.sh
+  ui_print() { mffm_ui_print "$1"; }
   [ "${MAGISK_VER_CODE:-0}" -ge 20400 ] || abort_root
 else
   abort_root

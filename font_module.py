@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import re
 import shutil
 from dataclasses import dataclass
@@ -345,6 +346,53 @@ def _format_number(value: float) -> str:
     return str(int(value)) if float(value).is_integer() else f"{value:g}"
 
 
+def _axis_metadata(face: SourceFace, *, italic: bool) -> str:
+    """Render axis ranges plus the compiled value for one style profile."""
+    style_values = _axis_values(face, int(face.axes["wght"][1]), italic) or {}
+    return " ".join(
+        "|".join(
+            (
+                tag,
+                _format_number(minimum),
+                _format_number(style_values.get(tag, default)),
+                _format_number(maximum),
+            )
+        )
+        for tag, (minimum, default, maximum) in face.axes.items()
+    )
+
+
+def _variable_config_identity(faces: list[SourceFace]) -> str:
+    """Fingerprint the variable payload and schema for isolated user config."""
+    digest = hashlib.sha256()
+    seen_paths: set[Path] = set()
+    for face in sorted(
+        faces,
+        key=lambda item: (
+            item.path.name.lower(),
+            item.font_number if item.font_number is not None else -1,
+            item.style,
+        ),
+    ):
+        digest.update(face.path.name.encode("utf-8", errors="replace"))
+        digest.update(str(face.font_number).encode("ascii"))
+        digest.update(face.family.encode("utf-8", errors="replace"))
+        digest.update(face.style.encode("ascii"))
+        digest.update(_axis_metadata(face, italic=face.style == "italic").encode("ascii"))
+        resolved = face.path.resolve()
+        if resolved not in seen_paths:
+            seen_paths.add(resolved)
+            with resolved.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+    return "vf-" + digest.hexdigest()[:20]
+
+
+def _supported_weights(face: SourceFace) -> str:
+    minimum, _default, maximum = face.axes["wght"]
+    return " ".join(str(weight) for weight in WEIGHT_NAMES if minimum <= weight <= maximum)
+
+
 def _axis_values(face: SourceFace, weight: int, italic: bool) -> dict[str, float] | None:
     if "wght" not in face.axes:
         return None
@@ -567,6 +615,18 @@ def compile_fonts(
         f"FONT_PRIMARY={shell_quote(primary)}",
         f"CLOCK_FONT={shell_quote('GoogleSansClock-Regular' + Path(primary).suffix)}",
     ]
+    if mode == "variable":
+        upright, italic = _pick_variable_faces(faces)
+        config.extend(
+            (
+                "VF_CONFIG_SCHEMA='2'",
+                f"VF_UPRIGHT_AXIS_META={shell_quote(_axis_metadata(upright, italic=False))}",
+                f"VF_ITALIC_AXIS_META={shell_quote(_axis_metadata(italic, italic=True))}",
+                f"VF_UPRIGHT_WEIGHTS={shell_quote(_supported_weights(upright))}",
+                f"VF_ITALIC_WEIGHTS={shell_quote(_supported_weights(italic))}",
+                f"VF_CONFIG_ID={shell_quote(_variable_config_identity(faces))}",
+            )
+        )
     (module_dir / "font-config.sh").write_text("\n".join(config) + "\n", encoding="utf-8", newline="\n")
     return CompileResult(mode, family, tuple(selected), payload)
 
