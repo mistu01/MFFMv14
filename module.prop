@@ -1,9 +1,9 @@
 id=mffm14
-name=[MFFMv14] Uai Variable VF
-version=2026.06.19
-versionCode=202606190027
+name=[MFFMv14] GitLab Sans VF
+version=2026.07.05
+versionCode=202607050604
 author=MFFM
-description=Replaces Android's default Roboto family with "Uai Variable VF" (variable). Compatible with Magisk, KernelSU, and APatch.
+description=Replaces Android's default Roboto family with "GitLab Sans VF" (variable). Compatible with Magisk, KernelSU, and APatch.
 minMagisk=20400
 minKernelSU=10940
 minAPatch=11000

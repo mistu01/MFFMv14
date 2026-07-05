@@ -115,11 +115,53 @@ if command -v magisk >/dev/null 2>&1; then
 fi
 [ -n "$MIRROR" ] || MIRROR=$(first_dir /sbin/.magisk/mirror /debug_ramdisk/.magisk/mirror 2>/dev/null)
 
-ORIGINAL_SYSTEM=$(first_dir "$MIRROR/system" /system /system_root/system 2>/dev/null)
-ORIGINAL_PRODUCT=$(first_dir "$MIRROR/product" "$MIRROR/system/product" /product /system/product /system_root/system/product 2>/dev/null)
-ORIGINAL_FONTS_XML=$(first_file "$ORIGINAL_SYSTEM/etc/fonts.xml" /system/etc/fonts.xml /system_root/system/etc/fonts.xml 2>/dev/null)
-ORIGINAL_FALLBACK_XML=$(first_file "$ORIGINAL_SYSTEM/etc/font_fallback.xml" /system/etc/font_fallback.xml /system_root/system/etc/font_fallback.xml 2>/dev/null)
-ORIGINAL_PRODUCT_XML=$(first_file "$ORIGINAL_PRODUCT/etc/fonts_customization.xml" /product/etc/fonts_customization.xml /system/product/etc/fonts_customization.xml 2>/dev/null)
+refresh_mount_view() {
+  local dev mnt fs opt dump fsck file
+  ui_print "- Refreshing live system mount view for XML discovery."
+  for file in \
+    /system/etc/fonts.xml \
+    /system/etc/font_fallback.xml \
+    /system/product/etc/fonts_customization.xml \
+    /product/etc/fonts_customization.xml \
+    /system_ext/etc/fonts.xml \
+    /system_ext/etc/font_fallback.xml
+  do
+    if grep -q " $file " /proc/mounts 2>/dev/null; then
+      ui_print "  Unmounting overlay at $file"
+      umount "$file" 2>/dev/null || umount -l "$file" 2>/dev/null || :
+    fi
+  done
+
+  while read -r dev mnt fs opt dump fsck; do
+    [ -z "$mnt" ] && continue
+    case "$mnt" in
+      /system|/system/*|/product|/product/*|/system_ext|/system_ext/*)
+        case "$dev $mnt $fs $opt" in
+          *overlay*|*magisk*|*ksu*|*apatch*)
+            ui_print "  Unmounting overlay directory at $mnt"
+            umount "$mnt" 2>/dev/null || umount -l "$mnt" 2>/dev/null || :
+            ;;
+        esac
+        ;;
+    esac
+  done < /proc/mounts
+}
+
+find_original_xmls() {
+  ORIGINAL_SYSTEM=$(first_dir "$MIRROR/system" /system /system_root/system 2>/dev/null)
+  ORIGINAL_PRODUCT=$(first_dir "$MIRROR/product" "$MIRROR/system/product" /product /system/product /system_root/system/product 2>/dev/null)
+  ORIGINAL_FONTS_XML=$(first_file "$ORIGINAL_SYSTEM/etc/fonts.xml" /system/etc/fonts.xml /system_root/system/etc/fonts.xml 2>/dev/null)
+  ORIGINAL_FALLBACK_XML=$(first_file "$ORIGINAL_SYSTEM/etc/font_fallback.xml" /system/etc/font_fallback.xml /system_root/system/etc/font_fallback.xml 2>/dev/null)
+  ORIGINAL_PRODUCT_XML=$(first_file "$ORIGINAL_PRODUCT/etc/fonts_customization.xml" /product/etc/fonts_customization.xml /system/product/etc/fonts_customization.xml 2>/dev/null)
+}
+
+[ -z "$MIRROR" ] && refresh_mount_view
+find_original_xmls
+if [ -z "$ORIGINAL_FONTS_XML" ]; then
+  refresh_mount_view
+  find_original_xmls
+fi
+
 
 FONT_DIR="$MODPATH/Files"
 SYS_FONT="$MODPATH/system/fonts"
@@ -138,11 +180,13 @@ MFFM_DIR=/sdcard/MFFM
 [ -f "$FONT_DIR/sans.xml" ] || fail "Generated sans.xml is missing"
 
 mkdir -p "$SYS_FONT" "$SYS_ETC" "$PRODUCT_FONT" "$PRODUCT_ETC" || fail "Could not create module overlay directories"
+if [ "$MOUNTIFY" != "true" ] && [ ! -d "/data/adb/modules/mountify" ]; then
+  mkdir -p "$MODPATH/product/fonts" "$MODPATH/product/etc" || fail "Could not create root product overlay directories"
+fi
 mkdir -p "$MFFM_DIR" || fail "Could not create $MFFM_DIR for variable-font settings"
 [ -f "$ORIGINAL_FONTS_XML" ] || fail "Could not locate the live system fonts.xml"
 cp -f "$ORIGINAL_FONTS_XML" "$SYS_XML" || fail "Could not copy system fonts.xml"
 [ -f "$ORIGINAL_FALLBACK_XML" ] && cp -f "$ORIGINAL_FALLBACK_XML" "$SYS_FALLBACK"
-[ -f "$ORIGINAL_PRODUCT_XML" ] && cp -f "$ORIGINAL_PRODUCT_XML" "$PRODUCT_XML"
 
 replace_family() {
   xml=$1
@@ -153,14 +197,26 @@ replace_family() {
   grep -q "<family[^>]*name=\"$family\"" "$xml" 2>/dev/null || return 0
   fragment=$(cat "$fragment_file")
   awk -v target="$family" -v replacement="$fragment" '
-    $0 ~ "<family[^>]*name=\\\"" target "\\\"" {
-      print
-      print replacement
+    !inside && index($0, "<family") > 0 && index($0, "name=\"" target "\"") > 0 {
+      if (target == "sans-serif") {
+        print
+        print replacement
+        print "  </family>"
+        print "  <family>"
+      } else {
+        print
+        print replacement
+      }
       inside=1
       next
     }
     inside {
-      if ($0 ~ /<\/family>/) { print; inside=0 }
+      if (target == "sans-serif") {
+        print
+        if (index($0, "</family>") > 0) { inside=0 }
+      } else {
+        if (index($0, "</family>") > 0) { print; inside=0 }
+      }
       next
     }
     { print }
@@ -168,29 +224,17 @@ replace_family() {
 }
 
 add_clock_family() {
+  local xml
+  xml=${1:-"$PRODUCT_XML"}
+  [ -f "$ORIGINAL_PRODUCT_XML" ] || return 0
   fragment=$(cat "$FONT_DIR/clock.xml")
-  if [ ! -f "$PRODUCT_XML" ]; then
-    cat > "$PRODUCT_XML" <<EOF
+  cat > "$xml" <<EOF
 <fonts-modification version="1">
   <family customizationType="new-named-family" name="google-sans-clock">
 $fragment
   </family>
 </fonts-modification>
 EOF
-    return
-  fi
-  if grep -q 'name="google-sans-clock"' "$PRODUCT_XML"; then
-    replace_family "$PRODUCT_XML" google-sans-clock "$FONT_DIR/clock.xml"
-    return
-  fi
-  awk -v replacement="$fragment" '
-    /<\/fonts-modification>/ {
-      print "  <family customizationType=\"new-named-family\" name=\"google-sans-clock\">"
-      print replacement
-      print "  </family>"
-    }
-    { print }
-  ' "$PRODUCT_XML" > "$PRODUCT_XML.tmp" && mv -f "$PRODUCT_XML.tmp" "$PRODUCT_XML"
 }
 
 config_value() {
@@ -516,7 +560,11 @@ status_ok "Sans-serif and Roboto Flex XML"
 
 if [ -n "$CLOCK_FONT" ] && [ -f "$FONT_DIR/$FONT_PRIMARY" ]; then
   cp -f "$FONT_DIR/$FONT_PRIMARY" "$PRODUCT_FONT/$CLOCK_FONT"
-  add_clock_family
+  add_clock_family "$PRODUCT_XML"
+  if [ "$MOUNTIFY" != "true" ] && [ ! -d "/data/adb/modules/mountify" ]; then
+    cp -f "$FONT_DIR/$FONT_PRIMARY" "$MODPATH/product/fonts/$CLOCK_FONT"
+    add_clock_family "$MODPATH/product/etc/fonts_customization.xml"
+  fi
   status_ok "Google Sans Clock family"
 else
   status_skip "Google Sans Clock family"
@@ -574,6 +622,11 @@ if [ "$KSU" = "true" ] || [ "$APATCH" = "true" ]; then
     for directory in "$SYS_FONT" "$PRODUCT_FONT" "$SYS_ETC" "$PRODUCT_ETC"; do
       setfattr -n trusted.overlay.opaque -v y "$directory" 2>/dev/null
     done
+    if [ "$MOUNTIFY" != "true" ] && [ ! -d "/data/adb/modules/mountify" ]; then
+      for directory in "$MODPATH/product/fonts" "$MODPATH/product/etc"; do
+        setfattr -n trusted.overlay.opaque -v y "$directory" 2>/dev/null
+      done
+    fi
     status_ok "OverlayFS opaque attributes"
   else
     status_warn "setfattr unavailable; mounting metamodule may be required"

@@ -1,12 +1,16 @@
     <font weight="400" style="normal">DroidSans.ttf
+      <axis tag="opsz" stylevalue="28"/>
       <axis tag="wght" stylevalue="400"/>
     </font>
     <font weight="700" style="normal">DroidSans.ttf
+      <axis tag="opsz" stylevalue="28"/>
       <axis tag="wght" stylevalue="700"/>
     </font>
-    <font weight="400" style="italic">DroidSans.ttf
+    <font weight="400" style="italic">DroidSans-Bold.ttf
+      <axis tag="opsz" stylevalue="28"/>
       <axis tag="wght" stylevalue="400"/>
     </font>
-    <font weight="700" style="italic">DroidSans.ttf
+    <font weight="700" style="italic">DroidSans-Bold.ttf
+      <axis tag="opsz" stylevalue="28"/>
       <axis tag="wght" stylevalue="700"/>
     </font>
