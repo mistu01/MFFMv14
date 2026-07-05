@@ -11,7 +11,6 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import logging
-import os
 import re
 import shutil
 from dataclasses import dataclass
@@ -291,6 +290,20 @@ def _remove_hinting(font) -> None:
 
 
 log = logging.getLogger("font_metrics_rewriter")
+
+FFIX3_REFERENCE_UPM = 2048
+FFIX3_METRICS = (
+    ("hhea", "ascent", 2128),
+    ("hhea", "descent", -550),
+    ("hhea", "lineGap", 0),
+    ("OS/2", "sTypoAscender", 2128),
+    ("OS/2", "sTypoDescender", -550),
+    ("OS/2", "sTypoLineGap", 0),
+    ("OS/2", "sCapHeight", 1456),
+    ("OS/2", "sxHeight", 1082),
+    ("head", "yMax", 2163),
+    ("head", "yMin", -555),
+)
 
 # =============================================================================
 # REFERENCE METRICS (UPM = 2048)
@@ -757,16 +770,37 @@ class FontMetricRewriter:
         return changes
 
 
+def _scale_ffix3_value(value: int, units_per_em: int) -> int:
+    return int(value / FFIX3_REFERENCE_UPM * units_per_em)
+
+
+def _set_font_metric(font, table_name: str, field_name: str, value: int) -> None:
+    table = font.get(table_name)
+    if table is not None and hasattr(table, field_name):
+        setattr(table, field_name, value)
+
+
 def _fix_metrics(font) -> None:
-    reference_font_path = os.environ.get("REFERENCE_FONT_PATH")
-    rewriter = FontMetricRewriter(reference_font_path)
-    if rewriter._is_variable(font):
-        rewriter.rewrite_variable(font, include_italic=False, set_default_wght=True)
-    else:
-        rewriter.rewrite_static(font, include_italic=False)
+    head = font.get("head")
     os2 = font.get("OS/2")
-    if os2 is not None:
-        os2.fsSelection = int(getattr(os2, "fsSelection", 0)) | (1 << 7)
+    if head is None:
+        return
+
+    units_per_em = int(getattr(head, "unitsPerEm", FFIX3_REFERENCE_UPM))
+    for table_name, field_name, reference_value in FFIX3_METRICS:
+        _set_font_metric(
+            font,
+            table_name,
+            field_name,
+            _scale_ffix3_value(reference_value, units_per_em),
+        )
+
+    if os2 is None:
+        return
+
+    os2.fsSelection = int(getattr(os2, "fsSelection", 0)) & 0b01111111
+    if "fvar" in font:
+        os2.usWeightClass = 400
 
 
 def _glyphs_to_quadratic(glyphs, max_err=1.0, reverse_direction=True):
