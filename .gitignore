@@ -1,22 +1,58 @@
-*.zip
+# Font files
 *.ttf
 *.otf
 *.ttc
+*.otc
 *.woff
 *.woff2
+*.ttx
 
+# Archives
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+*.tgz
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+*.lnk
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# IDEs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# Module specifics
 dist/
 Updated Modules/
 .mffm-signer/
-__pycache__/
-*.py[cod]
-.venv/
-.idea/
-.vscode/
-.DS_Store
-Thumbs.db
+.temp_ttf_fonts/
 
-# Keep the input and generated payload directories in the template.
+# Ignore contents of Fonts and Files but keep the folders via .gitkeep
+Fonts/*
 !Fonts/.gitkeep
+Files/*
 !Files/.gitkeep
+
 

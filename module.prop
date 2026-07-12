@@ -1,9 +1,9 @@
 id=mffm14
-name=[MFFMv14] Anthropic Sans Variable VF
-version=2026.07.05
-versionCode=202607051956
+name=[MFFMv14] Config Mono VF
+version=2026.07.10
+versionCode=202607100355
 author=MFFM
-description=Replaces Android's default Roboto family with "Anthropic Sans Variable VF" (variable). Compatible with Magisk, KernelSU, and APatch.
+description=Replaces Android's default Roboto family with "Config Mono VF" (variable). Compatible with Magisk, KernelSU, and APatch.
 minMagisk=20400
 minKernelSU=10940
 minAPatch=11000

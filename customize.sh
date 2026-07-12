@@ -94,6 +94,65 @@ find_first() {
   find "$directory" -maxdepth 1 -type f -name "$pattern" 2>/dev/null | head -n 1
 }
 
+run_custom_scripts() {
+  local custom_script custom_list custom_output custom_status custom_trace line
+  custom_list="$MFFM_DIR/.mffmv14-custom-scripts.$$"
+  custom_output="$MFFM_DIR/.mffmv14-custom-output.$$"
+
+  find "$MFFM_DIR" -maxdepth 1 -type f -name '*.sh' 2>/dev/null | sort > "$custom_list"
+  if [ ! -s "$custom_list" ]; then
+    rm -f "$custom_list"
+    status_skip "No custom local scripts"
+    return 0
+  fi
+
+  export MODPATH FONT_DIR SYS_FONT SYS_ETC SYS_XML SYS_FALLBACK
+  export PRODUCT_FONT PRODUCT_ETC PRODUCT_XML MFFM_DIR
+  export FONT_MODE FONT_FAMILY FONT_FILES FONT_PRIMARY CLOCK_FONT
+  export LOG_DIR LOG_FILE
+  MFFM="$MFFM_DIR"
+  FONTDIR="$FONT_DIR"
+  SYSFONT="$SYS_FONT"
+  SYSETC="$SYS_ETC"
+  SYSXML="$SYS_XML"
+  SYSFALLBACK="$SYS_FALLBACK"
+  PRODUCTFONT="$PRODUCT_FONT"
+  PRODUCTETC="$PRODUCT_ETC"
+  PRODUCTXML="$PRODUCT_XML"
+  export MFFM FONTDIR SYSFONT SYSETC SYSXML SYSFALLBACK
+  export PRODUCTFONT PRODUCTETC PRODUCTXML
+
+  while IFS= read -r custom_script || [ -n "$custom_script" ]; do
+    [ -f "$custom_script" ] || continue
+    status_ok "Script: ${custom_script##*/}"
+
+    case $- in
+      *x*) custom_trace=1; set +x ;;
+      *) custom_trace=0 ;;
+    esac
+    (
+      cd "$MFFM_DIR" || exit 1
+      . "$custom_script"
+    ) > "$custom_output" 2>&1
+    custom_status=$?
+    [ "$custom_trace" = "1" ] && set -x
+
+    if [ -s "$custom_output" ]; then
+      while IFS= read -r line || [ -n "$line" ]; do
+        ui_print "    $line"
+      done < "$custom_output"
+    fi
+    rm -f "$custom_output"
+
+    [ "$custom_status" -eq 0 ] || {
+      rm -f "$custom_list"
+      fail "Custom local script failed (${custom_script##*/}, exit $custom_status)"
+    }
+    status_ok "Completed: ${custom_script##*/}"
+  done < "$custom_list"
+  rm -f "$custom_list"
+}
+
 copy_if_exists() {
   [ -f "$1" ] || return 1
   cp -f "$1" "$2"
@@ -541,7 +600,7 @@ if [ "$FONT_MODE" = "variable" ]; then
   fi
 fi
 
-section "1/4" "Installing primary font payload"
+section "1/5" "Installing primary font payload"
 
 for font_file in $FONT_FILES; do
   [ -f "$FONT_DIR/$font_file" ] || fail "Payload font is missing: $font_file"
@@ -549,7 +608,7 @@ for font_file in $FONT_FILES; do
   status_ok "$font_file"
 done
 
-section "2/4" "Patching Android font families"
+section "2/5" "Patching Android font families"
 
 for xml in "$SYS_XML" "$SYS_FALLBACK"; do
   replace_family "$xml" sans-serif "$FONT_DIR/sans.xml"
@@ -570,7 +629,7 @@ else
   status_skip "Google Sans Clock family"
 fi
 
-section "3/4" "Applying optional font resources"
+section "3/5" "Applying optional font resources"
 
 # Optional resources may be bundled or placed in /sdcard/MFFM.
 for prefix in Beng Serif; do
@@ -615,7 +674,7 @@ else
   status_ok "Selected family mapped as serif"
 fi
 
-section "4/4" "Finalizing root integration"
+section "4/5" "Finalizing root integration"
 
 if [ "$KSU" = "true" ] || [ "$APATCH" = "true" ]; then
   if command -v setfattr >/dev/null 2>&1; then
@@ -634,6 +693,10 @@ if [ "$KSU" = "true" ] || [ "$APATCH" = "true" ]; then
 else
   status_ok "Magisk module overlay"
 fi
+
+section "5/5" "Running custom local scripts"
+
+run_custom_scripts
 
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 for script in service.sh uninstall.sh post-mount.sh; do
