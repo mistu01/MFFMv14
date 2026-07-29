@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-# ==============================================================================
-# MFFMv14 ZIP Signing Helper
-# Copyright © 2026 MFFM / Mistu
-# Last modified: 2026-06-18
-# ==============================================================================
 """Download, cache, sign, and verify module ZIPs with ZipSignerust."""
 
 from __future__ import annotations
@@ -18,7 +13,6 @@ import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-
 
 API_URL = "https://api.github.com/repos/MrCarb0n/zipsignerust/releases/latest"
 CACHE_NAME = ".mffm-signer"
@@ -54,6 +48,7 @@ def _ensure_binary(root: Path) -> Path:
     if binary.exists():
         binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
         return binary
+
     try:
         with urllib.request.urlopen(_request(API_URL), timeout=30) as response:
             release = json.loads(response.read().decode("utf-8"))
@@ -78,16 +73,21 @@ def _ensure_keys(root: Path) -> tuple[Path, Path]:
     certificate = keys / "mffm-signing-cert.pem"
     if private.exists() and certificate.exists():
         return private, certificate
+
     keys.mkdir(parents=True, exist_ok=True)
     openssl = shutil.which("openssl")
     if openssl:
         proc = subprocess.run(
-            [openssl, "req", "-x509", "-newkey", "rsa:4096", "-sha256", "-nodes", "-days", "3650",
-             "-subj", "/CN=MFFM Module Signing/", "-keyout", str(private), "-out", str(certificate)],
-            text=True, capture_output=True,
+            [
+                openssl, "req", "-x509", "-newkey", "rsa:4096", "-sha256", "-nodes", "-days", "3650",
+                "-subj", "/CN=MFFM Module Signing/", "-keyout", str(private), "-out", str(certificate)
+            ],
+            text=True,
+            capture_output=True,
         )
         if proc.returncode == 0:
             return private, certificate
+
     try:
         from cryptography import x509
         from cryptography.hazmat.primitives import hashes, serialization
@@ -95,13 +95,19 @@ def _ensure_keys(root: Path) -> tuple[Path, Path]:
         from cryptography.x509.oid import NameOID
     except ImportError as exc:
         raise ZipSignerError("Signing keys are missing. Install OpenSSL or: python -m pip install cryptography") from exc
+
     key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
     subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "MFFM Module Signing")])
     now = datetime.now(timezone.utc)
     cert = (
-        x509.CertificateBuilder().subject_name(subject).issuer_name(issuer).public_key(key.public_key())
-        .serial_number(x509.random_serial_number()).not_valid_before(now - timedelta(minutes=5))
-        .not_valid_after(now + timedelta(days=3650)).sign(key, hashes.SHA256())
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(days=3650))
+        .sign(key, hashes.SHA256())
     )
     private.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
     certificate.write_bytes(cert.public_bytes(serialization.Encoding.PEM))

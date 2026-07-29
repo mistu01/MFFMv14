@@ -1,10 +1,5 @@
 #!/system/bin/sh
-# ==============================================================================
-# MFFMv14 Uninstall Script
-# Copyright © 2026 MFFM / Mistu
-# Last modified: 2026-06-18
-# ==============================================================================
-# Restore Google font-provider components when the module is removed.
+# Restore Google font-provider components when module is uninstalled.
 
 GMS=com.google.android.gms
 for component in \

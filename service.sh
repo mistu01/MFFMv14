@@ -1,10 +1,5 @@
 #!/system/bin/sh
-# ==============================================================================
-# MFFMv14 Boot Service
-# Copyright © 2026 MFFM / Mistu
-# Last modified: 2026-06-18
-# ==============================================================================
-# Disable Google Play Services font downloads after boot so they cannot override the module.
+# Disable Google Play Services font downloads post-boot to prevent overrides.
 
 until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do sleep 2; done
 sleep 2

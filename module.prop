@@ -1,9 +1,9 @@
 id=mffm14
-name=[MFFMv14] Config Mono VF
-version=2026.07.10
-versionCode=202607100355
+name=[MFFMv14] Inter Variable VF
+version=2026.07.30
+versionCode=202607300110
 author=MFFM
-description=Replaces Android's default Roboto family with "Config Mono VF" (variable). Compatible with Magisk, KernelSU, and APatch.
+description=Replaces Android's default Roboto family with "Inter Variable VF" (variable). Compatible with Magisk, KernelSU, and APatch.
 minMagisk=20400
 minKernelSU=10940
 minAPatch=11000

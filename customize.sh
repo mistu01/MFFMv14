@@ -1,10 +1,5 @@
 #!/system/bin/sh
-# ==============================================================================
 # MFFMv14 Font Module Installer
-# Script credits: MFFM / Mistu
-# Last modified: 2026-06-18
-# ==============================================================================
-# Generated font-config.sh selects static or variable XML behavior.
 
 if ! command -v ui_print >/dev/null 2>&1; then
   ui_print() { echo "$1"; }
@@ -24,8 +19,6 @@ LOG_DIR=${LOG_DIR:-/sdcard/MFFM}
 LOG_FILE=${LOG_FILE:-"$LOG_DIR/mffmv14_debug_$(date '+%Y%m%d_%H%M%S' 2>/dev/null || echo current).log"}
 mkdir -p "$LOG_DIR" 2>/dev/null
 
-# update-binary normally enables this before root-manager setup. The fallback
-# also supports managers that launch customize.sh in a separate shell.
 DEBUG=${DEBUG:-1}
 if [ "$DEBUG" = "1" ] && [ -d "$LOG_DIR" ] && : >> "$LOG_FILE" 2>/dev/null; then
   exec 2>> "$LOG_FILE"
@@ -39,8 +32,7 @@ mffm_log_line() {
 }
 
 mffm_ui_print() {
-  local message
-  message=$1
+  local message=$1
   mffm_log_line "$message"
   if [ "${BOOTMODE:-false}" = "true" ]; then
     printf '%s\n' "$message"
@@ -52,7 +44,6 @@ mffm_ui_print() {
   fi
 }
 
-# Keep readable installer messages alongside the shell execution trace.
 ui_print() { mffm_ui_print "$1"; }
 
 fail() {
@@ -221,7 +212,6 @@ if [ -z "$ORIGINAL_FONTS_XML" ]; then
   find_original_xmls
 fi
 
-
 FONT_DIR="$MODPATH/Files"
 SYS_FONT="$MODPATH/system/fonts"
 SYS_ETC="$MODPATH/system/etc"
@@ -282,23 +272,303 @@ replace_family() {
   ' "$xml" > "$xml.tmp" && mv -f "$xml.tmp" "$xml"
 }
 
-add_clock_family() {
-  local xml
-  xml=${1:-"$PRODUCT_XML"}
+PRODUCT_RUBIK_REGULAR="Rubik-Regular.ttf"
+PRODUCT_RUBIK_ITALIC="Rubik-Italic.ttf"
+
+is_google_sans_product_name() {
+  case "$1" in
+    sans-serif|google-sans|google-sans-*|variable-*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+resolve_product_rubik_sources() {
+  PRODUCT_HAS_DEDICATED_ITALIC=0
+  PRODUCT_RUBIK_REGULAR_SRC=$FONT_PRIMARY
+  PRODUCT_RUBIK_ITALIC_SRC=
+
+  set -- $FONT_FILES
+  if [ -n "$1" ]; then
+    PRODUCT_RUBIK_REGULAR_SRC=$1
+  fi
+  [ -n "$PRODUCT_RUBIK_REGULAR_SRC" ] || fail "No primary font available for product Rubik spoof"
+
+  if [ "$FONT_MODE" = "variable" ] && [ -n "$2" ] && [ "$2" != "$1" ]; then
+    PRODUCT_RUBIK_ITALIC_SRC=$2
+    PRODUCT_HAS_DEDICATED_ITALIC=1
+  fi
+}
+
+install_product_font_payload() {
+  local dest=$1
+  [ -n "$dest" ] || return 1
+  mkdir -p "$dest" || fail "Could not create $dest"
+  resolve_product_rubik_sources "$FONT_DIR/sans.xml"
+
+  [ -f "$FONT_DIR/$PRODUCT_RUBIK_REGULAR_SRC" ] || fail "Product upright source missing: $PRODUCT_RUBIK_REGULAR_SRC"
+  cp -f "$FONT_DIR/$PRODUCT_RUBIK_REGULAR_SRC" "$dest/$PRODUCT_RUBIK_REGULAR" || \
+    fail "Could not install $PRODUCT_RUBIK_REGULAR into $dest"
+
+  if [ "$PRODUCT_HAS_DEDICATED_ITALIC" = "1" ] && [ -n "$PRODUCT_RUBIK_ITALIC_SRC" ]; then
+    [ -f "$FONT_DIR/$PRODUCT_RUBIK_ITALIC_SRC" ] || fail "Product italic source missing: $PRODUCT_RUBIK_ITALIC_SRC"
+    cp -f "$FONT_DIR/$PRODUCT_RUBIK_ITALIC_SRC" "$dest/$PRODUCT_RUBIK_ITALIC" || \
+      fail "Could not install $PRODUCT_RUBIK_ITALIC into $dest"
+  fi
+}
+
+patch_product_fonts_customization() {
+  local xml=${1:-"$PRODUCT_XML"}
+  local sans_fragment="$FONT_DIR/sans.xml"
+
   [ -f "$ORIGINAL_PRODUCT_XML" ] || return 0
-  fragment=$(cat "$FONT_DIR/clock.xml")
-  cat > "$xml" <<EOF
-<fonts-modification version="1">
-  <family customizationType="new-named-family" name="google-sans-clock">
-$fragment
-  </family>
-</fonts-modification>
-EOF
+  [ -f "$sans_fragment" ] || fail "Generated sans.xml is missing"
+
+  if ! grep -qE '<(family-list|familyset|family)[^A-Za-z0-9_-][^>]*name="(sans-serif|google-sans|google-sans-[^"]*|variable-[^"]*)"' \
+    "$ORIGINAL_PRODUCT_XML" 2>/dev/null; then
+    PRODUCT_GS_PATCHED=0
+    return 0
+  fi
+
+  resolve_product_rubik_sources "$sans_fragment"
+  cp -f "$ORIGINAL_PRODUCT_XML" "$xml" || fail "Could not copy product fonts_customization.xml"
+
+  awk -v sans_file="$sans_fragment" \
+      -v rubik_regular="$PRODUCT_RUBIK_REGULAR" \
+      -v rubik_italic="$PRODUCT_RUBIK_ITALIC" \
+      -v has_dedicated_italic="$PRODUCT_HAS_DEDICATED_ITALIC" '
+    function abs(v) { return v < 0 ? -v : v }
+    function is_open_tag(line, open_tag) {
+      return match(line, "<" open_tag "[^A-Za-z0-9_-]")
+    }
+    function open_count(line, open_tag,   n, rest) {
+      n = 0; rest = line
+      while (match(rest, "<" open_tag "[^A-Za-z0-9_-]")) {
+        n++
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+      return n
+    }
+    function close_count(line, open_tag,   n, rest) {
+      n = 0; rest = line
+      while (match(rest, "</" open_tag ">")) {
+        n++
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+      return n
+    }
+    function extract_name(line) {
+      if (match(line, /name="[^"]+"/)) {
+        return substr(line, RSTART + 6, RLENGTH - 7)
+      }
+      return ""
+    }
+    function is_gs_name(name) {
+      return name == "sans-serif" || name ~ /^google-sans($|-)/ || name ~ /^variable-/
+    }
+    function attr_value(text, key,   pat) {
+      pat = key "=\"[^\"]+\""
+      if (match(text, pat)) {
+        return substr(text, RSTART + length(key) + 2, RLENGTH - length(key) - 3)
+      }
+      return ""
+    }
+    function store_face(weight, style, index_attr, axes,   key) {
+      if (weight == "") weight = "400"
+      if (style == "") style = "normal"
+      key = weight SUBSEP style
+      face_weight[key] = weight + 0
+      face_index[key] = index_attr
+      face_axes[key] = axes
+      if (style == "italic") {
+        italic_weights[++italic_count] = weight + 0
+        italic_key[weight + 0] = key
+      } else {
+        normal_weights[++normal_count] = weight + 0
+        normal_key[weight + 0] = key
+      }
+    }
+    function load_sans(path,   line, in_font, style, weight, index_attr, axes, file) {
+      in_font = 0
+      while ((getline line < path) > 0) {
+        if (!in_font && line ~ /<font[[:space:]]/) {
+          in_font = 1
+          style = attr_value(line, "style")
+          weight = attr_value(line, "weight")
+          index_attr = attr_value(line, "index")
+          axes = ""
+          file = ""
+          if (match(line, /[A-Za-z0-9._-]+\.(ttf|otf|ttc|otc)/)) {
+            file = substr(line, RSTART, RLENGTH)
+          }
+          if (line ~ /<\/font>/) {
+            store_face(weight, style, index_attr, axes)
+            in_font = 0
+          }
+          continue
+        }
+        if (in_font) {
+          if (match(line, /<axis[^>]*\/?>/)) {
+            if (axes != "") axes = axes "\n"
+            axes = axes line
+          }
+          if (file == "" && match(line, /[A-Za-z0-9._-]+\.(ttf|otf|ttc|otc)/)) {
+            file = substr(line, RSTART, RLENGTH)
+          }
+          if (line ~ /<\/font>/) {
+            store_face(weight, style, index_attr, axes)
+            in_font = 0
+          }
+        }
+      }
+      close(path)
+    }
+    function closest_key(want_weight, want_style,   i, best, best_diff, w, use_italic) {
+      use_italic = (want_style == "italic" && italic_count > 0)
+      if (use_italic) {
+        best = italic_key[italic_weights[1]]
+        best_diff = abs(italic_weights[1] - want_weight)
+        for (i = 2; i <= italic_count; i++) {
+          w = italic_weights[i]
+          if (abs(w - want_weight) < best_diff) {
+            best = italic_key[w]
+            best_diff = abs(w - want_weight)
+          }
+        }
+        return best
+      }
+      if (normal_count == 0) return ""
+      best = normal_key[normal_weights[1]]
+      best_diff = abs(normal_weights[1] - want_weight)
+      for (i = 2; i <= normal_count; i++) {
+        w = normal_weights[i]
+        if (abs(w - want_weight) < best_diff) {
+          best = normal_key[w]
+          best_diff = abs(w - want_weight)
+        }
+      }
+      return best
+    }
+    function choose_file(want_style) {
+      if (want_style == "italic" && has_dedicated_italic == "1" && italic_count > 0) {
+        return rubik_italic
+      }
+      return rubik_regular
+    }
+    function emit_font(indent, stock_weight, stock_style,   key, out, idx, n, i, axes_line) {
+      if (stock_weight == "") stock_weight = "400"
+      if (stock_style == "") stock_style = "normal"
+      key = closest_key(stock_weight + 0, stock_style)
+      if (key == "") {
+        print indent "<font weight=\"" stock_weight "\" style=\"" stock_style "\">" rubik_regular "</font>"
+        return
+      }
+      out = indent "<font weight=\"" stock_weight "\" style=\"" stock_style "\""
+      idx = face_index[key]
+      if (idx != "") out = out " index=\"" idx "\""
+      out = out ">" choose_file(stock_style)
+      if (face_axes[key] != "") {
+        print out
+        n = split(face_axes[key], axis_lines, "\n")
+        for (i = 1; i <= n; i++) {
+          axes_line = axis_lines[i]
+          sub(/^[[:space:]]+/, "", axes_line)
+          if (axes_line != "") print indent "  " axes_line
+        }
+        print indent "</font>"
+      } else {
+        print out "</font>"
+      }
+    }
+    function flush_font(   weight, style) {
+      if (!in_font_block) return
+      weight = attr_value(font_open, "weight")
+      style = attr_value(font_open, "style")
+      if (weight == "") weight = "400"
+      if (style == "") style = "normal"
+      if (font_indent == "") font_indent = "    "
+      emit_font(font_indent, weight, style)
+      in_font_block = 0
+      font_open = ""
+    }
+    function maybe_enter_gs(line,   nm) {
+      if (gs_active) return
+      if (is_open_tag(line, "family-list")) {
+        nm = extract_name(line)
+        if (nm != "" && is_gs_name(nm)) {
+          gs_active = 1; gs_tag = "family-list"
+          gs_depth = open_count(line, gs_tag) - close_count(line, gs_tag)
+          if (gs_depth <= 0) gs_active = 0
+          return
+        }
+      }
+      if (is_open_tag(line, "familyset")) {
+        nm = extract_name(line)
+        if (nm != "" && is_gs_name(nm)) {
+          gs_active = 1; gs_tag = "familyset"
+          gs_depth = open_count(line, gs_tag) - close_count(line, gs_tag)
+          if (gs_depth <= 0) gs_active = 0
+          return
+        }
+      }
+      if (is_open_tag(line, "family")) {
+        nm = extract_name(line)
+        if (nm != "" && is_gs_name(nm)) {
+          gs_active = 1; gs_tag = "family"
+          gs_depth = open_count(line, gs_tag) - close_count(line, gs_tag)
+          if (gs_depth <= 0) gs_active = 0
+        }
+      }
+    }
+    BEGIN {
+      normal_count = 0
+      italic_count = 0
+      gs_active = 0
+      gs_depth = 0
+      in_font_block = 0
+      entered_this_line = 0
+      load_sans(sans_file)
+    }
+    {
+      line = $0
+      entered_this_line = 0
+
+      if (!gs_active && !in_font_block) {
+        maybe_enter_gs(line)
+        if (gs_active) entered_this_line = 1
+      }
+
+      if (gs_active && !in_font_block && line ~ /<font([[:space:]>])/) {
+        in_font_block = 1
+        font_open = line
+        if (match(line, /^[[:space:]]*/)) font_indent = substr(line, RSTART, RLENGTH)
+        else font_indent = "    "
+        if (line ~ /<\/font>/) flush_font()
+      } else if (in_font_block) {
+        if (line ~ /<\/font>/) flush_font()
+      } else {
+        print line
+      }
+
+      if (gs_active && !in_font_block && !entered_this_line) {
+        gs_depth += open_count(line, gs_tag) - close_count(line, gs_tag)
+        if (gs_depth <= 0) {
+          gs_active = 0
+          gs_tag = ""
+          gs_depth = 0
+        }
+      }
+    }
+  ' "$xml" > "$xml.tmp" && mv -f "$xml.tmp" "$xml"
+
+  PRODUCT_GS_PATCHED=$(grep -cE '<(family-list|familyset|family)[^A-Za-z0-9_-][^>]*name="(sans-serif|google-sans|google-sans-[^"]*|variable-[^"]*)"' "$xml" 2>/dev/null || echo 0)
+  if ! grep -q "$PRODUCT_RUBIK_REGULAR" "$xml" 2>/dev/null; then
+    PRODUCT_GS_PATCHED=0
+  fi
+  return 0
 }
 
 config_value() {
-  local key
-  key=$1
+  local key=$1
   sed -n "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*//p" "$VF_CONFIG_FILE" 2>/dev/null |
     tail -n 1 |
     sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//'
@@ -330,12 +600,10 @@ profile_title() {
 }
 
 ensure_profile_keys() {
-  local profile axis_meta weights title axis_record axis_tag remainder axis_min axis_default axis_max
+  local profile=$1 axis_meta=$2 weights=$3
+  local title=$(profile_title "$profile")
+  local axis_record axis_tag remainder axis_min axis_default axis_max
   local config_key axis_key weight label wght_min wght_max
-  profile=$1
-  axis_meta=$2
-  weights=$3
-  title=$(profile_title "$profile")
 
   if [ "$VF_CONFIG_CREATED" = "1" ]; then
     {
@@ -386,9 +654,7 @@ ensure_profile_keys() {
 }
 
 reset_config_value() {
-  local config_key reset_value
-  config_key=$1
-  reset_value=$2
+  local config_key=$1 reset_value=$2
   awk -v wanted_key="$config_key" -v wanted_value="$reset_value" '
     $0 ~ "^[[:space:]]*" wanted_key "[[:space:]]*=" {
       print wanted_key "=" wanted_value
@@ -403,12 +669,7 @@ reset_config_value() {
 }
 
 validate_axis_value() {
-  local config_key axis_value axis_min axis_max reset_value
-  config_key=$1
-  axis_value=$2
-  axis_min=$3
-  axis_max=$4
-  reset_value=$5
+  local config_key=$1 axis_value=$2 axis_min=$3 axis_max=$4 reset_value=$5
   case "$axis_value" in
     AUTO|Auto|auto) return 1 ;;
     "")
@@ -432,11 +693,7 @@ validate_axis_value() {
 }
 
 apply_axis_value() {
-  local style_name declared_weight axis_tag axis_value fragment_file
-  style_name=$1
-  declared_weight=$2
-  axis_tag=$3
-  axis_value=$4
+  local style_name=$1 declared_weight=$2 axis_tag=$3 axis_value=$4 fragment_file
   shift 4
   for fragment_file in "$@"; do
     [ -f "$fragment_file" ] || continue
@@ -458,14 +715,10 @@ apply_axis_value() {
 }
 
 apply_profile() {
-  local profile xml_style axis_meta weights fragment_list axis_record axis_tag remainder axis_min
-  local axis_default axis_max axis_key config_key axis_value weight label wght_min wght_max
-  profile=$1
-  xml_style=$2
-  axis_meta=$3
-  weights=$4
+  local profile=$1 xml_style=$2 axis_meta=$3 weights=$4
   shift 4
-  fragment_list="$*"
+  local fragment_list="$*"
+  local axis_record axis_tag remainder axis_min axis_default axis_max axis_key config_key axis_value weight label wght_min wght_max
 
   for axis_record in $axis_meta; do
     axis_tag=${axis_record%%|*}
@@ -513,7 +766,6 @@ prepare_variable_config() {
   VF_LEGACY_CONFIG="$MFFM_DIR/MFFMv14_${safe_family}_VF.conf"
   VF_CONFIG_RESET=0
 
-  # Remove the pre-identity format so it cannot leak settings into this module.
   if [ -f "$VF_LEGACY_CONFIG" ]; then
     rm -f "$VF_LEGACY_CONFIG" || fail "Could not remove legacy variable configuration"
     VF_CONFIG_RESET=1
@@ -537,22 +789,6 @@ prepare_variable_config() {
 # ==============================================================================
 # Font: $FONT_FAMILY
 # Module identity: $VF_CONFIG_ID
-#
-# CONFIG USAGE
-# ------------
-# 1. Edit only the numeric values below, save, then reflash this module.
-# 2. Named WGHT keys control one Android face. Example:
-#      SANS_UPRIGHT_REGULAR_WGHT=450
-#    changes only Regular (Android weight 400) to variable wght 450.
-# 3. SANS_* values affect sans-serif, serif fallback, and clock families.
-# 4. CONDENSED_* values affect only sans-serif-condensed.
-# 5. UPRIGHT and ITALIC are independent. Italic profiles expose ital/slnt
-#    with the exact values compiled from a single-font or separate-font setup.
-# 6. Every axis comment shows its valid range. Invalid or out-of-range values
-#    are reset to their compiled defaults automatically during reflash.
-# 7. AUTO may be used to restore the compiler-generated value for one key.
-# 8. Do not edit CONFIG_SCHEMA or MODULE_IDENTITY. A mismatch resets this file.
-# ==============================================================================
 CONFIG_SCHEMA=$VF_CONFIG_SCHEMA
 MODULE_IDENTITY=$VF_CONFIG_ID
 EOF
@@ -617,21 +853,24 @@ for xml in "$SYS_XML" "$SYS_FALLBACK"; do
 done
 status_ok "Sans-serif and Roboto Flex XML"
 
-if [ -n "$CLOCK_FONT" ] && [ -f "$FONT_DIR/$FONT_PRIMARY" ]; then
-  cp -f "$FONT_DIR/$FONT_PRIMARY" "$PRODUCT_FONT/$CLOCK_FONT"
-  add_clock_family "$PRODUCT_XML"
+if [ -f "$ORIGINAL_PRODUCT_XML" ] && [ -f "$FONT_DIR/sans.xml" ]; then
+  install_product_font_payload "$PRODUCT_FONT"
+  patch_product_fonts_customization "$PRODUCT_XML"
   if [ "$MOUNTIFY" != "true" ] && [ ! -d "/data/adb/modules/mountify" ]; then
-    cp -f "$FONT_DIR/$FONT_PRIMARY" "$MODPATH/product/fonts/$CLOCK_FONT"
-    add_clock_family "$MODPATH/product/etc/fonts_customization.xml"
+    install_product_font_payload "$MODPATH/product/fonts"
+    patch_product_fonts_customization "$MODPATH/product/etc/fonts_customization.xml"
   fi
-  status_ok "Google Sans Clock family"
+  if [ "${PRODUCT_GS_PATCHED:-0}" -gt 0 ]; then
+    status_ok "Product Google Sans families pattern-patched ($PRODUCT_GS_PATCHED)"
+  else
+    status_skip "Product fonts_customization.xml has no Google Sans families to patch"
+  fi
 else
-  status_skip "Google Sans Clock family"
+  status_skip "Product fonts_customization.xml (not present on this ROM)"
 fi
 
 section "3/5" "Applying optional font resources"
 
-# Optional resources may be bundled or placed in /sdcard/MFFM.
 for prefix in Beng Serif; do
   bundled=$(find_first "$FONT_DIR" "$prefix*.zip")
   [ -n "$bundled" ] || bundled=$(find_first "$MFFM_DIR" "$prefix*.zip")

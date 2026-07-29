@@ -1,23 +1,15 @@
 #!/usr/bin/env python3
-# ==============================================================================
-# MFFMv14 Font Module Builder
-# Copyright © 2026 MFFM / Mistu
-# Last modified: 2026-06-18
-# ==============================================================================
-"""Compile static or variable fonts into one flashable MFFM module."""
+"""Compile static or variable fonts into a flashable MFFM Android module."""
 
 from __future__ import annotations
 
 import argparse
 import datetime as dt
-import shutil
-import sys
 import zipfile
 from pathlib import Path
 
 from font_module import compile_fonts, display_name_for_mode, slugify, update_module_metadata
 from zipsigner_auto import ZipSignerError, sign_zip
-
 
 ROOT = Path(__file__).resolve().parent
 PAYLOAD_NAMES = (
@@ -27,7 +19,7 @@ PAYLOAD_NAMES = (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build one static-or-variable Android font module")
+    parser = argparse.ArgumentParser(description="Build one static or variable Android font module")
     parser.add_argument("--fonts-dir", type=Path, default=ROOT / "Fonts", help="source font directory")
     parser.add_argument("--mode", choices=("auto", "static", "variable"), default="auto")
     parser.add_argument("--name", help="module display name override")
@@ -38,6 +30,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-sign", action="store_true", help="create an unsigned debugging ZIP")
     parser.add_argument("--keep-hinting", action="store_true", help="do not remove TrueType hinting")
     parser.add_argument("--no-prefix", action="store_true", help="do not prefix internal family metadata with MFFM")
+    parser.add_argument("--features", help="comma-separated OpenType feature tags to freeze (e.g. 'ss01,cv01')")
+    parser.add_argument("--interactive", action="store_true", default=None, help="force interactive feature prompt")
+    parser.add_argument("--no-interactive", action="store_false", dest="interactive", help="disable interactive feature prompt")
     return parser.parse_args()
 
 
@@ -68,31 +63,48 @@ def write_zip(module_dir: Path, output: Path) -> None:
 
 def build_module(args: argparse.Namespace, module_dir: Path = ROOT) -> Path | None:
     result = compile_fonts(
-        args.fonts_dir.resolve(), module_dir,
+        args.fonts_dir.resolve(),
+        module_dir,
         requested_mode=args.mode,
         keep_hinting=args.keep_hinting,
         prefix_family=not args.no_prefix,
+        features=args.features,
+        interactive_features=args.interactive,
     )
     display_name = display_name_for_mode(args.name or result.family, result.mode)
     props = update_module_metadata(
-        module_dir, result.family, result.mode,
-        name=display_name, version=args.version, version_code=args.version_code,
+        module_dir,
+        result.family,
+        result.mode,
+        name=display_name,
+        version=args.version,
+        version_code=args.version_code,
+        applied_features=result.applied_features,
     )
     print(f"Detected mode : {result.mode}")
     print(f"Font family   : {result.family}")
+    if result.applied_features:
+        print(f"Freezer sets  : {', '.join(result.applied_features)}")
     print(f"Source faces  : {len(result.faces)}")
     for face in result.faces:
         axes = ", ".join(face.axes) if face.variable else "static"
         print(f"  {face.label}: {face.weight} {face.style}{' condensed' if face.condensed else ''} [{axes}]")
     print(f"Payload fonts : {', '.join(result.payload_files)}")
+
     if args.no_zip:
         print("Prepared module files; ZIP creation skipped.")
         return None
 
-    output = args.output_dir.resolve() / f"{props['id']}-{slugify(display_name)}-{props['version']}.zip"
+    if result.applied_features and not any(f in slugify(display_name) for f in result.applied_features):
+        file_slug = slugify(f"{display_name} {' '.join(result.applied_features)}")
+    else:
+        file_slug = slugify(display_name)
+
+    output = args.output_dir.resolve() / f"{props['id']}-{file_slug}-{props['version']}.zip"
     if output.exists():
         output.unlink()
     write_zip(module_dir, output)
+
     if not args.no_sign:
         try:
             sign_zip(output, ROOT)
@@ -102,6 +114,7 @@ def build_module(args: argparse.Namespace, module_dir: Path = ROOT) -> Path | No
         print("Signature     : verified")
     else:
         print("Signature     : skipped (--no-sign)")
+
     print(f"Output        : {output}")
     return output
 

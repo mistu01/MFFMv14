@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-# ==============================================================================
-# MFFMv14 Legacy Module Updater
-# Copyright © 2026 MFFM / Mistu
-# Last modified: 2026-06-18
-# ==============================================================================
 """Migrate old static or variable MFFM ZIPs onto the MFFMv14 template."""
 
 from __future__ import annotations
@@ -15,9 +10,11 @@ import zipfile
 from pathlib import Path
 
 from build import ROOT, write_zip
-from font_module import FONT_EXTENSIONS, clean_family_name, compile_fonts, display_name_for_mode, read_props, slugify, update_module_metadata
+from font_module import (
+    FONT_EXTENSIONS, clean_family_name, compile_fonts, display_name_for_mode,
+    read_props, slugify, update_module_metadata,
+)
 from zipsigner_auto import ZipSignerError, sign_zip
-
 
 TEMPLATE_ITEMS = (
     "module.prop", "customize.sh", "service.sh", "uninstall.sh", "post-mount.sh", "META-INF",
@@ -69,12 +66,12 @@ def find_sources(old_root: Path) -> list[Path]:
         path = files_dir / name
         if path.is_file() and path not in candidates:
             candidates.append(path)
-    if not candidates:
+    if not candidates and files_dir.is_dir():
         candidates.extend(
             path for path in files_dir.iterdir()
             if path.is_file() and path.suffix.lower() in FONT_EXTENSIONS
             and not path.name.startswith(("Beng", "Serif", "Mono"))
-        ) if files_dir.is_dir() else None
+        )
     if not candidates:
         for directory in (old_root / "system" / "fonts", old_root):
             if directory.is_dir():
@@ -85,8 +82,6 @@ def find_sources(old_root: Path) -> list[Path]:
     if not candidates:
         raise SystemExit(f"No prepared primary font payload found in {old_root}")
 
-    # DroidSans-Bold.ttf was v13's italic variable payload. In static v12 the
-    # single collection is sufficient, so remove fallback extras after probing.
     primary = candidates[0]
     if primary.suffix.lower() in {".ttc", ".otc"}:
         return [primary]
@@ -156,7 +151,6 @@ def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) ->
         old_root = locate_module_root(extracted)
         sources = find_sources(old_root)
         for index, source in enumerate(sources):
-            # Preserve a style-bearing name where possible; metadata is the primary signal.
             target_name = source.name
             if (source_dir / target_name).exists():
                 target_name = f"{index}-{target_name}"

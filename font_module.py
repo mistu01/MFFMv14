@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-# ==============================================================================
-# MFFMv14 Shared Font Compiler
-# Copyright © 2026 MFFM / Mistu
-# Last modified: 2026-06-18
-# ==============================================================================
-"""Shared compiler core for the MFFMv14 static/variable template."""
+"""Shared font compiler core for the MFFMv14 static and variable module template."""
 
 from __future__ import annotations
 
@@ -13,35 +8,22 @@ import hashlib
 import logging
 import re
 import shutil
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Literal
 
-
 Mode = Literal["static", "variable"]
 FONT_EXTENSIONS = {".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2"}
 GENERATED_FILES = {
-    "DroidSans.ttf",
-    "DroidSans.otf",
-    "DroidSans.ttc",
-    "DroidSans-Italic.ttf",
-    "DroidSans-Italic.otf",
-    "DroidSans-Bold.ttf",
-    "sans.xml",
-    "condensed.xml",
-    "serif.xml",
-    "clock.xml",
+    "DroidSans.ttf", "DroidSans.otf", "DroidSans.ttc",
+    "DroidSans-Italic.ttf", "DroidSans-Italic.otf", "DroidSans-Bold.ttf",
+    "sans.xml", "condensed.xml", "serif.xml", "clock.xml",
 }
 WEIGHT_NAMES = {
-    100: "Thin",
-    200: "ExtraLight",
-    300: "Light",
-    400: "Regular",
-    500: "Medium",
-    600: "SemiBold",
-    700: "Bold",
-    800: "ExtraBold",
-    900: "Black",
+    100: "Thin", 200: "ExtraLight", 300: "Light", 400: "Regular",
+    500: "Medium", 600: "SemiBold", 700: "Bold", 800: "ExtraBold", 900: "Black",
 }
 WEIGHT_LABELS = (
     (r"extra[\s_-]*black|ultra[\s_-]*black", 900),
@@ -82,6 +64,7 @@ class CompileResult:
     family: str
     faces: tuple[SourceFace, ...]
     payload_files: tuple[str, ...]
+    applied_features: tuple[str, ...] = ()
 
 
 def require_fonttools():
@@ -121,7 +104,6 @@ def clean_family_name(value: str) -> str:
 
 
 def _base_family_name(value: str) -> str:
-    """Strip legacy per-face style suffixes from a family name."""
     style_words = (
         r"extra[\s_-]*light|ultra[\s_-]*light|semi[\s_-]*bold|demi[\s_-]*bold|"
         r"extra[\s_-]*bold|ultra[\s_-]*bold|extra[\s_-]*black|ultra[\s_-]*black|"
@@ -148,7 +130,6 @@ def slugify(value: str) -> str:
 
 
 def display_name_for_mode(value: str, mode: Mode) -> str:
-    """Add the public VF marker once for variable-font modules."""
     display = re.sub(r"\s+", " ", value).strip()
     if mode == "variable" and not re.search(r"(?i)(?:^|[\s_-])VF$", display):
         display = f"{display} VF"
@@ -192,6 +173,7 @@ def _inspect_font(path: Path, font_number: int | None) -> SourceFace:
     kwargs = {"lazy": True}
     if font_number is not None:
         kwargs["fontNumber"] = font_number
+
     with TTFont(str(path), **kwargs) as font:
         family_value = _name(font, 16, 1, 4) or path.stem
         style_name = _name(font, 17, 2) or path.stem
@@ -199,22 +181,22 @@ def _inspect_font(path: Path, font_number: int | None) -> SourceFace:
         head = font.get("head")
         metadata_label = f"{style_name} {family_value} {_name(font, 4)}".strip()
         label = f"{metadata_label} {path.stem}".lower()
+
         italic = bool(
-            "italic" in label
-            or "oblique" in label
+            "italic" in label or "oblique" in label
             or (os2 is not None and int(getattr(os2, "fsSelection", 0)) & 1)
             or (head is not None and int(getattr(head, "macStyle", 0)) & 2)
         )
         width_class = int(getattr(os2, "usWidthClass", 5)) if os2 is not None else 5
         condensed = width_class <= 4 or "condensed" in label or "narrow" in label
-        # Collection filenames are often generic (for example
-        # RobotoStatic-Regular.ttf), so metadata must win over the path.
         named_weight = _weight_from_label(metadata_label) or _weight_from_label(path.stem)
         weight = named_weight or _nearest_weight(int(getattr(os2, "usWeightClass", 400)) if os2 is not None else 400)
+
         axes: dict[str, tuple[float, float, float]] = {}
         if "fvar" in font:
             for axis in font["fvar"].axes:
                 axes[axis.axisTag] = (float(axis.minValue), float(axis.defaultValue), float(axis.maxValue))
+
         return SourceFace(
             path=path,
             font_number=font_number,
@@ -233,10 +215,7 @@ def discover_faces(fonts_dir: Path) -> list[SourceFace]:
     TTCollection, _font = require_fonttools()
     if not fonts_dir.is_dir():
         raise SystemExit(f"Font input directory does not exist: {fonts_dir}")
-    paths = sorted(
-        path for path in fonts_dir.iterdir()
-        if path.is_file() and path.suffix.lower() in FONT_EXTENSIONS
-    )
+    paths = sorted(path for path in fonts_dir.iterdir() if path.is_file() and path.suffix.lower() in FONT_EXTENSIONS)
     if not paths:
         raise SystemExit(f"No TTF, OTF, TTC, or OTC fonts found in {fonts_dir}")
 
@@ -271,10 +250,7 @@ def detect_mode(faces: Iterable[SourceFace], requested: str = "auto") -> Mode:
         return "variable"
     if variable_count == 0:
         return "static"
-    raise SystemExit(
-        "Mixed static and variable inputs are ambiguous. Keep one font model in Fonts/ "
-        "or pass --mode after removing the other files."
-    )
+    raise SystemExit("Mixed static and variable inputs are ambiguous. Keep one font model in Fonts/ or pass --mode.")
 
 
 def _remove_hinting(font) -> None:
@@ -283,8 +259,6 @@ def _remove_hinting(font) -> None:
             del font[table]
     if "glyf" in font:
         for glyph in font["glyf"].glyphs.values():
-            # fontTools expects a Program object while compiling. Its helper
-            # clears bytecode safely for both simple and composite glyphs.
             if hasattr(glyph, "removeHinting"):
                 glyph.removeHinting()
 
@@ -305,41 +279,19 @@ FFIX3_METRICS = (
     ("head", "yMin", -555),
 )
 
-# =============================================================================
-# REFERENCE METRICS (UPM = 2048)
-# =============================================================================
 REFERENCE_STATIC_UPRIGHT = {
-    ("head", "yMin"):                -555,
-    ("head", "yMax"):                 2163,
-    ("head", "macStyle"):              0,
-    ("hhea", "ascent"):               1900,
-    ("hhea", "descent"):              -500,
-    ("hhea", "lineGap"):                 0,
-    ("hhea", "caretSlopeRise"):           1,
-    ("hhea", "caretSlopeRun"):            0,
-    ("hhea", "caretOffset"):              0,
-    ("hhea", "reserved0"):                0,
-    ("hhea", "reserved1"):                0,
-    ("hhea", "reserved2"):                0,
-    ("hhea", "reserved3"):                0,
-    ("hhea", "metricDataFormat"):         0,
-    ("OS/2", "sTypoAscender"):        2146,
-    ("OS/2", "sTypoDescender"):       -555,
-    ("OS/2", "sTypoLineGap"):            0,
-    ("OS/2", "usWinAscent"):          2146,
-    ("OS/2", "usWinDescent"):          555,
-    ("OS/2", "sxHeight"):             1082,
-    ("OS/2", "sCapHeight"):           1456,
-    ("OS/2", "usDefaultChar"):           0,
-    ("OS/2", "usBreakChar"):            32,
-    ("OS/2", "usMaxContext"):            3,
-    ("post", "underlinePosition"):     -150,
-    ("post", "underlineThickness"):     100,
-    ("vhea", "ascent"):                 800,
-    ("vhea", "descent"):               -800,
-    ("vhea", "lineGap"):                  0,
-    ("post", "italicAngle"):              0.0,
-    ("hhea", "italicAngle"):              0,
+    ("head", "yMin"): -555, ("head", "yMax"): 2163, ("head", "macStyle"): 0,
+    ("hhea", "ascent"): 1900, ("hhea", "descent"): -500, ("hhea", "lineGap"): 0,
+    ("hhea", "caretSlopeRise"): 1, ("hhea", "caretSlopeRun"): 0, ("hhea", "caretOffset"): 0,
+    ("hhea", "reserved0"): 0, ("hhea", "reserved1"): 0, ("hhea", "reserved2"): 0, ("hhea", "reserved3"): 0,
+    ("hhea", "metricDataFormat"): 0,
+    ("OS/2", "sTypoAscender"): 2146, ("OS/2", "sTypoDescender"): -555, ("OS/2", "sTypoLineGap"): 0,
+    ("OS/2", "usWinAscent"): 2146, ("OS/2", "usWinDescent"): 555, ("OS/2", "sxHeight"): 1082,
+    ("OS/2", "sCapHeight"): 1456, ("OS/2", "usDefaultChar"): 0, ("OS/2", "usBreakChar"): 32,
+    ("OS/2", "usMaxContext"): 3,
+    ("post", "underlinePosition"): -150, ("post", "underlineThickness"): 100,
+    ("vhea", "ascent"): 800, ("vhea", "descent"): -800, ("vhea", "lineGap"): 0,
+    ("post", "italicAngle"): 0.0, ("hhea", "italicAngle"): 0,
 }
 
 REFERENCE_STATIC_ITALIC = dict(REFERENCE_STATIC_UPRIGHT)
@@ -351,26 +303,13 @@ REFERENCE_STATIC_ITALIC.update({
 REFERENCE_VAR = dict(REFERENCE_STATIC_UPRIGHT)
 
 WRITABLE_METRICS = [
-    ("head", "yMin"),
-    ("head", "yMax"),
-    ("hhea", "ascent"),
-    ("hhea", "descent"),
-    ("hhea", "lineGap"),
-    ("hhea", "caretSlopeRise"),
-    ("hhea", "caretSlopeRun"),
-    ("hhea", "caretOffset"),
-    ("OS/2", "sTypoAscender"),
-    ("OS/2", "sTypoDescender"),
-    ("OS/2", "sTypoLineGap"),
-    ("OS/2", "usWinAscent"),
-    ("OS/2", "usWinDescent"),
-    ("OS/2", "sxHeight"),
-    ("OS/2", "sCapHeight"),
-    ("post", "underlinePosition"),
-    ("post", "underlineThickness"),
-    ("vhea", "ascent"),
-    ("vhea", "descent"),
-    ("vhea", "lineGap"),
+    ("head", "yMin"), ("head", "yMax"),
+    ("hhea", "ascent"), ("hhea", "descent"), ("hhea", "lineGap"),
+    ("hhea", "caretSlopeRise"), ("hhea", "caretSlopeRun"), ("hhea", "caretOffset"),
+    ("OS/2", "sTypoAscender"), ("OS/2", "sTypoDescender"), ("OS/2", "sTypoLineGap"),
+    ("OS/2", "usWinAscent"), ("OS/2", "usWinDescent"), ("OS/2", "sxHeight"), ("OS/2", "sCapHeight"),
+    ("post", "underlinePosition"), ("post", "underlineThickness"),
+    ("vhea", "ascent"), ("vhea", "descent"), ("vhea", "lineGap"),
 ]
 
 ITALIC_METRICS = [
@@ -378,13 +317,8 @@ ITALIC_METRICS = [
     ("hhea", "italicAngle"),
 ]
 
-MVAR_METRIC_TAGS = {
-    "hasc", "hdsc", "hlgp", "tasc", "tdsc", "tlgp", "wasc", "wdsc", "unds", "undt", "dscs"
-}
-
-HVAR_METRIC_TAGS = {
-    "LsbMap",
-}
+MVAR_METRIC_TAGS = {"hasc", "hdsc", "hlgp", "tasc", "tdsc", "tlgp", "wasc", "wdsc", "unds", "undt", "dscs"}
+HVAR_METRIC_TAGS = {"LsbMap"}
 
 
 class FontMetricRewriter:
@@ -457,10 +391,7 @@ class FontMetricRewriter:
         return int(round(val * to_upm / from_upm))
 
     def _scale_all_references(self, target_upm: int) -> dict:
-        scaled = {}
-        for key, val in self.reference.items():
-            scaled[key] = self._scale(val, self.REFERENCE_UPM, target_upm)
-        return scaled
+        return {key: self._scale(val, self.REFERENCE_UPM, target_upm) for key, val in self.reference.items()}
 
     def extract_metrics(self, font, include_italic: bool = False) -> dict:
         metrics = {}
@@ -515,13 +446,7 @@ class FontMetricRewriter:
     @staticmethod
     def _postscript_safe_name(value: str) -> str:
         forbidden = set("[](){}<>/%")
-        chars = []
-        for char in value:
-            codepoint = ord(char)
-            if char.isspace() or char in forbidden:
-                continue
-            if 33 <= codepoint <= 126:
-                chars.append(char)
+        chars = [char for char in value if not char.isspace() and char not in forbidden and 33 <= ord(char) <= 126]
         return "".join(chars)
 
     def extract_family_name(self, font) -> str | None:
@@ -610,9 +535,7 @@ class FontMetricRewriter:
                 continue
             new_val = scaled[key]
             table = font.get(tbl)
-            if table is None:
-                continue
-            if not hasattr(table, fld):
+            if table is None or not hasattr(table, fld):
                 continue
             old_val = getattr(table, fld)
             if old_val == new_val:
@@ -753,7 +676,7 @@ class FontMetricRewriter:
             if axis.axisTag == "wght" and set_default_wght:
                 old_default = axis.defaultValue
                 axis.defaultValue = 400
-                log.info(f"fvar axis 'wght': default {old_default}→400")
+                log.info(f"fvar axis 'wght': default {old_default}->400")
                 changes["fvar.wght"] = (old_default, 400)
             if axis.axisTag not in udm_axes:
                 continue
@@ -765,7 +688,7 @@ class FontMetricRewriter:
                 axis.minValue = int(round(old_min * scale_factor))
             if old_max is not None:
                 axis.maxValue = int(round(old_max * scale_factor))
-            log.info(f"fvar axis '{axis.axisTag}': default {old_default}→{axis.defaultValue}, min {old_min}→{axis.minValue}, max {old_max}→{axis.maxValue}")
+            log.info(f"fvar axis '{axis.axisTag}': default {old_default}->{axis.defaultValue}, min {old_min}->{axis.minValue}, max {old_max}->{axis.maxValue}")
             changes[f"fvar.{axis.axisTag}"] = (old_default, axis.defaultValue)
         return changes
 
@@ -788,62 +711,52 @@ def _fix_metrics(font) -> None:
 
     units_per_em = int(getattr(head, "unitsPerEm", FFIX3_REFERENCE_UPM))
     for table_name, field_name, reference_value in FFIX3_METRICS:
-        _set_font_metric(
-            font,
-            table_name,
-            field_name,
-            _scale_ffix3_value(reference_value, units_per_em),
-        )
+        _set_font_metric(font, table_name, field_name, _scale_ffix3_value(reference_value, units_per_em))
 
     if os2 is None:
         return
-
     os2.fsSelection = int(getattr(os2, "fsSelection", 0)) & 0b01111111
     if "fvar" in font:
         os2.usWeightClass = 400
 
 
 def _glyphs_to_quadratic(glyphs, max_err=1.0, reverse_direction=True):
-    from fontTools.pens.ttGlyphPen import TTGlyphPen
     from fontTools.pens.cu2quPen import Cu2QuPen
-    quadGlyphs = {}
+    from fontTools.pens.ttGlyphPen import TTGlyphPen
+    quad_glyphs = {}
     for gname in glyphs.keys():
         glyph = glyphs[gname]
-        ttPen = TTGlyphPen(glyphs)
-        cu2quPen = Cu2QuPen(ttPen, max_err, reverse_direction=reverse_direction)
-        glyph.draw(cu2quPen)
-        quadGlyphs[gname] = ttPen.glyph()
-    return quadGlyphs
+        tt_pen = TTGlyphPen(glyphs)
+        cu2qu_pen = Cu2QuPen(tt_pen, max_err, reverse_direction=reverse_direction)
+        glyph.draw(cu2qu_pen)
+        quad_glyphs[gname] = tt_pen.glyph()
+    return quad_glyphs
 
 
-def _update_hmtx(ttFont, glyf):
-    hmtx = ttFont["hmtx"]
-    for glyphName, glyph in glyf.glyphs.items():
+def _update_hmtx(tt_font, glyf):
+    hmtx = tt_font["hmtx"]
+    for glyph_name, glyph in glyf.glyphs.items():
         if hasattr(glyph, "xMin"):
-            hmtx[glyphName] = (hmtx[glyphName][0], glyph.xMin)
+            hmtx[glyph_name] = (hmtx[glyph_name][0], glyph.xMin)
 
 
-def _otf_to_ttf(ttFont, post_format=2.0, max_err=1.0, reverse_direction=True):
+def _otf_to_ttf(tt_font, post_format=2.0, max_err=1.0, reverse_direction=True):
     from fontTools.ttLib import newTable
-    assert ttFont.sfntVersion == "OTTO"
-    assert "CFF " in ttFont or "CFF2" in ttFont
-    glyphOrder = ttFont.getGlyphOrder()
-    ttFont["loca"] = newTable("loca")
-    ttFont["glyf"] = glyf = newTable("glyf")
-    glyf.glyphOrder = glyphOrder
-    glyf.glyphs = _glyphs_to_quadratic(
-        ttFont.getGlyphSet(),
-        max_err=max_err,
-        reverse_direction=reverse_direction
-    )
-    if "CFF " in ttFont:
-        del ttFont["CFF "]
-    if "CFF2" in ttFont:
-        del ttFont["CFF2"]
-    glyf.compile(ttFont)
-    _update_hmtx(ttFont, glyf)
+    assert tt_font.sfntVersion == "OTTO"
+    assert "CFF " in tt_font or "CFF2" in tt_font
+    glyph_order = tt_font.getGlyphOrder()
+    tt_font["loca"] = newTable("loca")
+    tt_font["glyf"] = glyf = newTable("glyf")
+    glyf.glyphOrder = glyph_order
+    glyf.glyphs = _glyphs_to_quadratic(tt_font.getGlyphSet(), max_err=max_err, reverse_direction=reverse_direction)
+    if "CFF " in tt_font:
+        del tt_font["CFF "]
+    if "CFF2" in tt_font:
+        del tt_font["CFF2"]
+    glyf.compile(tt_font)
+    _update_hmtx(tt_font, glyf)
 
-    ttFont["maxp"] = maxp = newTable("maxp")
+    tt_font["maxp"] = maxp = newTable("maxp")
     maxp.tableVersion = 0x00010000
     maxp.maxZones = 1
     maxp.maxTwilightPoints = 0
@@ -852,23 +765,20 @@ def _otf_to_ttf(ttFont, post_format=2.0, max_err=1.0, reverse_direction=True):
     maxp.maxInstructionDefs = 0
     maxp.maxStackElements = 0
     maxp.maxSizeOfInstructions = 0
-    maxp.maxComponentElements = max(
-        len(g.components if hasattr(g, "components") else [])
-        for g in glyf.glyphs.values()
-    )
-    maxp.compile(ttFont)
+    maxp.maxComponentElements = max(len(g.components if hasattr(g, "components") else []) for g in glyf.glyphs.values())
+    maxp.compile(tt_font)
 
-    post = ttFont["post"]
+    post = tt_font["post"]
     post.formatType = post_format
     post.extraNames = []
     post.mapping = {}
-    post.glyphOrder = glyphOrder
+    post.glyphOrder = glyph_order
     try:
-        post.compile(ttFont)
+        post.compile(tt_font)
     except OverflowError:
         post.formatType = 3
         log.warning("Dropping glyph names, they do not fit in 'post' table.")
-    ttFont.sfntVersion = "\000\001\000\000"
+    tt_font.sfntVersion = "\000\001\000\000"
 
 
 def _ensure_ttf(input_path: Path, output_dir: Path) -> Path:
@@ -889,6 +799,7 @@ def _ensure_ttf(input_path: Path, output_dir: Path) -> Path:
             shutil.copy2(input_path, output_path)
             return output_path
         raise
+
     needs_save = False
     if font.flavor is not None:
         font.flavor = None
@@ -897,15 +808,16 @@ def _ensure_ttf(input_path: Path, output_dir: Path) -> Path:
         log.info(f"Converting CFF outlines to TrueType outlines for {input_path.name}")
         _otf_to_ttf(font)
         needs_save = True
+
     if needs_save or input_path.suffix.lower() != ".ttf":
         output_path.parent.mkdir(parents=True, exist_ok=True)
         font.save(str(output_path))
         font.close()
         return output_path
-    else:
-        font.close()
-        shutil.copy2(input_path, output_path)
-        return output_path
+
+    font.close()
+    shutil.copy2(input_path, output_path)
+    return output_path
 
 
 def _set_name(font, name_id: int, value: str) -> None:
@@ -949,32 +861,19 @@ def _format_number(value: float) -> str:
 
 
 def _axis_metadata(face: SourceFace, *, italic: bool) -> str:
-    """Render axis ranges plus the compiled value for one style profile."""
     style_values = _axis_values(face, int(face.axes["wght"][1]), italic) or {}
     return " ".join(
-        "|".join(
-            (
-                tag,
-                _format_number(minimum),
-                _format_number(style_values.get(tag, default)),
-                _format_number(maximum),
-            )
-        )
+        "|".join((tag, _format_number(minimum), _format_number(style_values.get(tag, default)), _format_number(maximum)))
         for tag, (minimum, default, maximum) in face.axes.items()
     )
 
 
 def _variable_config_identity(faces: list[SourceFace]) -> str:
-    """Fingerprint the variable payload and schema for isolated user config."""
     digest = hashlib.sha256()
     seen_paths: set[Path] = set()
     for face in sorted(
         faces,
-        key=lambda item: (
-            item.path.name.lower(),
-            item.font_number if item.font_number is not None else -1,
-            item.style,
-        ),
+        key=lambda item: (item.path.name.lower(), item.font_number if item.font_number is not None else -1, item.style),
     ):
         digest.update(face.path.name.encode("utf-8", errors="replace"))
         digest.update(str(face.font_number).encode("ascii"))
@@ -1066,9 +965,6 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
     TTCollection, _font = require_fonttools()
     ordered = _dedupe_static(faces)
 
-    # A single static face does not need a collection wrapper. Keep the
-    # canonical Android payload name and describe its real weight/style
-    # directly in XML (for example Bold.ttf -> 700 normal).
     if len(ordered) == 1:
         face = ordered[0]
         output_name = "DroidSans.ttf"
@@ -1081,11 +977,7 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
 
         xml = _font_xml(output_name, face.weight, face.style)
         entries = [(face.weight, face.style, xml)]
-        clock = _font_xml(
-            "GoogleSansClock-Regular.ttf",
-            face.weight,
-            face.style,
-        )
+        clock = _font_xml("GoogleSansClock-Regular.ttf", face.weight, face.style)
         _write_fragments(files_dir, entries, [], clock)
         return ordered, (output_name,)
 
@@ -1095,8 +987,6 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
             font = _open_font(face)
             _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
             fonts.append(font)
-        # Intentional compatibility convention: this is a TTC collection by
-        # content, but Android receives the historical .ttf payload name.
         output_name = "DroidSans.ttf"
         collection = TTCollection()
         collection.fonts = fonts
@@ -1112,7 +1002,11 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
         (condensed if face.condensed else normal).append((face.weight, face.style, xml))
     if not normal:
         normal = list(condensed)
-    regular_index = min(range(len(ordered)), key=lambda index: (ordered[index].style != "normal", abs(ordered[index].weight - 400), ordered[index].condensed))
+
+    regular_index = min(
+        range(len(ordered)),
+        key=lambda index: (ordered[index].style != "normal", abs(ordered[index].weight - 400), ordered[index].condensed),
+    )
     clock = _font_xml("GoogleSansClock-Regular.ttf", 400, "normal", index=regular_index)
     _write_fragments(files_dir, normal, condensed, clock)
     return ordered, (output_name,)
@@ -1152,10 +1046,8 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
     italic_name = upright_name
     _save_face(upright, files_dir / upright_name, keep_hinting=keep_hinting, prefix_family=prefix_family)
     payload = [upright_name]
+
     if italic != upright:
-        # Intentional Android compatibility/spoofing convention inherited
-        # from the variable template: the italic variable face is presented
-        # externally as DroidSans-Bold.ttf.
         italic_name = "DroidSans-Bold.ttf"
         _save_face(italic, files_dir / italic_name, keep_hinting=keep_hinting, prefix_family=prefix_family)
         payload.append(italic_name)
@@ -1169,6 +1061,7 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
     entries.sort(key=lambda item: (item[1] == "italic", item[0]))
     if not entries:
         raise SystemExit("The variable font has no usable wght axis values between 100 and 900")
+
     clock_axes = _axis_values(upright, 400, False)
     if clock_axes is None:
         closest = min(WEIGHT_NAMES, key=lambda weight: abs(weight - upright.axes["wght"][1]))
@@ -1179,6 +1072,130 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
     return [upright] + ([italic] if italic != upright else []), tuple(payload)
 
 
+def extract_opentype_features(font_path: Path) -> dict[str, str]:
+    """Inspect GSUB table to discover Stylistic Sets (ss01-ss20) and Character Variants (cv01-cv99)."""
+    _collection, TTFont = require_fonttools()
+    features: dict[str, str] = {}
+    try:
+        font = TTFont(str(font_path), lazy=True)
+    except Exception:
+        return features
+
+    try:
+        if "GSUB" not in font or font["GSUB"].table is None or font["GSUB"].table.FeatureList is None:
+            return features
+        gsub = font["GSUB"].table
+        name_table = font.get("name")
+        for record in gsub.FeatureList.FeatureRecord:
+            tag = record.FeatureTag
+            if tag and (tag.startswith("ss") or tag.startswith("cv")):
+                ui_name = ""
+                params = getattr(record.Feature, "FeatureParams", None)
+                if params:
+                    name_id = (
+                        getattr(params, "UINameID", None)
+                        or getattr(params, "FeatUILabelNameID", None)
+                        or getattr(params, "featUINameID", None)
+                        or getattr(params, "FirstParamUILabelNameID", None)
+                    )
+                    if name_id and name_table:
+                        for nrec in name_table.names:
+                            if nrec.nameID == name_id:
+                                try:
+                                    ui_name = nrec.toUnicode().strip()
+                                except Exception:
+                                    pass
+                                if ui_name:
+                                    break
+                features[tag] = ui_name
+    finally:
+        font.close()
+
+    return features
+
+
+def extract_features_from_fonts(font_paths: Iterable[Path]) -> dict[str, str]:
+    """Extract all available Stylistic Sets and Character Variants from multiple font files."""
+    aggregated: dict[str, str] = {}
+    for path in font_paths:
+        feats = extract_opentype_features(path)
+        for tag, name in feats.items():
+            if tag not in aggregated or (not aggregated[tag] and name):
+                aggregated[tag] = name
+    return dict(sorted(aggregated.items()))
+
+
+def prompt_feature_selection(available_features: dict[str, str]) -> list[str]:
+    """Prompt user interactively to select Stylistic Sets or Character Variants to freeze."""
+    if not available_features:
+        print("\nNo OpenType Stylistic Sets or Character Variants detected in input font(s).")
+        return []
+
+    print("\n------------------------------------------------------------")
+    print("OpenType Feature Freezer Tool Integration")
+    print("------------------------------------------------------------")
+    choice = input("Do you want to use any Stylistic Sets (for example ss01 Open digits), or Character Variants (for example cv01 Alternate One)? (y/N): ").strip().lower()
+    if choice not in ("y", "yes"):
+        print("Skipping feature freezing.")
+        return []
+
+    print("\nAvailable Stylistic Sets and Character Variants:")
+    for tag, name in sorted(available_features.items()):
+        label = f"  {tag}  -  {name}" if name else f"  {tag}"
+        print(label)
+
+    print("\n[Visual Preview]")
+    print("For visual representation of available sets, visit:")
+    print("https://www.adamjagosz.com/bulletproof/lettering and upload your font.")
+    print("------------------------------------------------------------\n")
+
+    user_entries = input("Enter your desired entries (comma or space separated, e.g. ss01, cv01): ").strip()
+    if not user_entries:
+        print("No features entered. Proceeding without feature freezing.")
+        return []
+
+    raw_tags = re.split(r"[,\s]+", user_entries)
+    selected = [t.lower() for t in raw_tags if t.strip()]
+    if selected:
+        print(f"Selected features to freeze: {', '.join(selected)}")
+    return selected
+
+
+def freeze_font_features(font_path: Path, features: list[str] | str) -> None:
+    """Freeze OpenType features into a font file using pyftfeatfreeze / opentype-feature-freezer."""
+    if isinstance(features, str):
+        feature_list = [f.strip() for f in features.split(",") if f.strip()]
+    else:
+        feature_list = [f.strip() for f in features if f.strip()]
+
+    if not feature_list:
+        return
+
+    feat_str = ",".join(feature_list)
+    executable = shutil.which("pyftfeatfreeze") or "pyftfeatfreeze"
+    temp_output = font_path.with_suffix(".frozen" + font_path.suffix)
+
+    cmd = [executable, "-f", feat_str, str(font_path), str(temp_output)]
+    log.info(f"Freezing features '{feat_str}' in {font_path.name}...")
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        if temp_output.exists():
+            shutil.move(temp_output, font_path)
+            print(f"Successfully froze features [{feat_str}] in {font_path.name}")
+        else:
+            log.warning(f"Feature freezer completed but output file missing for {font_path.name}")
+    except subprocess.CalledProcessError as exc:
+        if temp_output.exists():
+            temp_output.unlink()
+        err_msg = exc.stderr.strip() or exc.stdout.strip() or str(exc)
+        raise SystemExit(f"Failed to freeze features [{feat_str}] for {font_path.name}: {err_msg}") from exc
+    except FileNotFoundError:
+        raise SystemExit(
+            "opentype-feature-freezer (pyftfeatfreeze) is not installed or not in PATH.\n"
+            "Please install it using: pip install opentype-feature-freezer (or pipx install opentype-feature-freezer)"
+        )
+
+
 def compile_fonts(
     fonts_dir: Path,
     module_dir: Path,
@@ -1186,23 +1203,41 @@ def compile_fonts(
     requested_mode: str = "auto",
     keep_hinting: bool = False,
     prefix_family: bool = True,
+    features: list[str] | str | None = None,
+    interactive_features: bool | None = None,
 ) -> CompileResult:
     files_dir = module_dir / "Files"
     files_dir.mkdir(parents=True, exist_ok=True)
     for name in GENERATED_FILES:
         (files_dir / name).unlink(missing_ok=True)
 
-    # Preprocess fonts: decompress WOFF/WOFF2 and convert OTF (CFF) to TTF
     temp_fonts_dir = module_dir / ".temp_ttf_fonts"
     if temp_fonts_dir.exists():
         shutil.rmtree(temp_fonts_dir, ignore_errors=True)
     temp_fonts_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        # Scan and convert all discovered files from fonts_dir to temp_fonts_dir
         for path in fonts_dir.iterdir():
             if path.is_file() and path.suffix.lower() in FONT_EXTENSIONS:
                 _ensure_ttf(path, temp_fonts_dir)
+
+        temp_ttf_paths = sorted(p for p in temp_fonts_dir.iterdir() if p.is_file() and p.suffix.lower() in FONT_EXTENSIONS)
+        selected_features: list[str] = []
+
+        if features is not None:
+            if isinstance(features, str):
+                selected_features = [f.strip() for f in features.split(",") if f.strip()]
+            else:
+                selected_features = [f.strip() for f in features if f.strip()]
+        else:
+            should_prompt = interactive_features if interactive_features is not None else sys.stdin.isatty()
+            if should_prompt:
+                available = extract_features_from_fonts(temp_ttf_paths)
+                selected_features = prompt_feature_selection(available)
+
+        if selected_features:
+            for font_path in temp_ttf_paths:
+                freeze_font_features(font_path, selected_features)
 
         faces = discover_faces(temp_fonts_dir)
         mode = detect_mode(faces, requested_mode)
@@ -1217,12 +1252,6 @@ def compile_fonts(
 
         primary = payload[0]
         config = [
-            "# ==============================================================================",
-            "# MFFMv14 Generated Font Configuration",
-            "# Copyright © 2026 MFFM / Mistu",
-            "# Last modified: 2026-06-18",
-            "# Generated by build.py/update.py. Do not edit by hand.",
-            "# ==============================================================================",
             f"FONT_MODE={shell_quote(mode)}",
             f"FONT_FAMILY={shell_quote(family)}",
             f"FONT_FILES={shell_quote(' '.join(payload))}",
@@ -1242,16 +1271,27 @@ def compile_fonts(
                 )
             )
         (module_dir / "font-config.sh").write_text("\n".join(config) + "\n", encoding="utf-8", newline="\n")
-        return CompileResult(mode, family, tuple(selected), payload)
+        return CompileResult(mode, family, tuple(selected), payload, tuple(selected_features))
     finally:
-        # Clean up temporary fonts directory
         shutil.rmtree(temp_fonts_dir, ignore_errors=True)
 
 
-def update_module_metadata(module_dir: Path, family: str, mode: Mode, *, name: str | None = None, version: str | None = None, version_code: str | None = None) -> dict[str, str]:
+def update_module_metadata(
+    module_dir: Path,
+    family: str,
+    mode: Mode,
+    *,
+    name: str | None = None,
+    version: str | None = None,
+    version_code: str | None = None,
+    applied_features: Iterable[str] | None = None,
+) -> dict[str, str]:
     path = module_dir / "module.prop"
     props = read_props(path)
     display = display_name_for_mode(name or clean_family_name(family), mode)
+    if applied_features and not any(f"({f}" in display for f in applied_features):
+        feat_str = ", ".join(applied_features)
+        display = f"{display} ({feat_str})"
     now = dt.datetime.now().astimezone()
     version = version or now.strftime("%Y.%m.%d")
     version_code = version_code or now.strftime("%Y%m%d%H%M")

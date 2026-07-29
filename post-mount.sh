@@ -1,10 +1,5 @@
 #!/system/bin/sh
-# ==============================================================================
-# MFFMv14 Post-Mount Script
-# Copyright © 2026 MFFM / Mistu
-# Last modified: 2026-06-18
-# ==============================================================================
-# Re-apply OverlayFS opacity for KernelSU/APatch after their mount stage.
+# Re-apply OverlayFS opacity for KernelSU/APatch after mount.
 
 MODDIR=${0%/*}
 if [ "$KSU" = "true" ] || [ "$APATCH" = "true" ]; then
