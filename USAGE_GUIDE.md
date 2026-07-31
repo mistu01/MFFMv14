@@ -27,15 +27,20 @@ pipx install opentype-feature-freezer
 
 ---
 
-## 1. `build.py` — Font Module Compiler
+## 1. `build.py` — Universal Font Module Compiler
 
 ### Overview
-`build.py` compiles static or variable font files (`.ttf`, `.otf`, `.ttc`, `.otc`, `.woff`, `.woff2`) placed in the `Fonts/` directory into a flashable Android font module.
+`build.py` compiles static or variable font files (`.ttf`, `.otf`, `.ttc`, `.otc`, `.woff`, `.woff2`) from **any font family** placed in the `Fonts/` directory into a flashable Android font module.
 
 ### Features
-- **Auto-Detection**: Automatically detects whether input fonts are static or variable (`fvar` table present).
-- **OpenType Feature Freezer (`pyftfeatfreeze`)**: Interactively lists available Stylistic Sets (`ss01`–`ss20`) and Character Variants (`cv01`–`cv99`) with human-readable descriptions, provides a visual preview link (https://www.adamjagosz.com/bulletproof/lettering), and freezes user-selected features into the font.
-- **Dynamic File & Metadata Tagging**: Automatically appends applied feature tags (e.g. `(ss02, cv11)`) to the module display name in `module.prop` and the generated `.zip` output filename.
+- **Universal Font Support**: Automatically parses, converts, and compiles static (`.ttf`, `.otf`) and variable (`fvar` axes) fonts from any typeface (Roboto, Google Sans, Inter, Fira Code, JetBrains Mono, Atkinson, SF Pro, etc.).
+- **Comprehensive OpenType Feature Freezer (`pyftfeatfreeze`)**: Discovers **all** available OpenType Layout features (Stylistic Sets `ss01`–`ss20`, Character Variants `cv01`–`cv99`, `zero` Slashed Zero, `tnum` Tabular Figures, `pnum`, `salt`, `case`, `dlig`, etc.) present in your font. Features are dynamically categorized with safety recommendations (`[RECOMMENDED/SAFE]`, `[CAUTION]`, `[NOT RECOMMENDED/UNSAFE]`), provides visual preview links (https://www.adamjagosz.com/bulletproof/lettering & https://wakamaifondue.com/), and freezes user-selected features into default glyph mappings.
+- **Feature Safety Guidance**:
+  - **[SAFE TO FREEZE]**: Stylistic Sets (`ss01`..`ss20`), Character Variants (`cv01`..`cv99`), Slashed Zero (`zero`), Tabular Figures (`tnum`), Proportional Figures (`pnum`), Stylistic Alternates (`salt`), Case-Sensitive Forms (`case`), Discretionary Ligatures (`dlig`).
+  - **[CAUTION - USE WITH CARE]**: Position/Layout features (`frac`, `numr`, `dnom`, `subs`, `sups`, `sinf`, `ordn`) which shrink or reposition numbers globally across all text.
+  - **[NOT RECOMMENDED / UNSAFE]**: Master override features like `aalt` (Access All Alternates - enables all alternate glyphs simultaneously) and default engine features (`calt`, `kern`, `liga`, `ccmp`, `locl`).
+- **Centered Colon Feature Detection & Generation**: Automatically inspects input fonts to check if a centered colon feature (`colon.case` for clock `12:30` time display) exists. If missing, prompts the user interactively to generate & inject a vertically centered colon for digit displays.
+- **Dynamic File & Metadata Tagging**: Automatically appends applied feature tags (e.g. `(ss02, cv11)`, `(zero, tnum)`) to the module display name in `module.prop` and the generated `.zip` output filename.
 - **Auto-Signing**: Automatically signs generated ZIP packages using `zipsigner_auto.py` so they are ready to flash.
 
 ---
@@ -50,7 +55,9 @@ pipx install opentype-feature-freezer
 | `--version` | `<STRING>` | Override module version string. | `YYYY.MM.DD` |
 | `--version-code` | `<NUMBER>` | Override numeric `versionCode` property. | `YYYYMMDDHHMM` |
 | `--output-dir` | `<PATH>` | Destination directory for output `.zip` files. | `dist/` |
-| `--features` | `<TAGS>` | Comma-separated list of OpenType features to freeze (e.g., `'ss01,cv01'`). | None |
+| `--features` | `<TAGS>` | Comma-separated list of OpenType features to freeze (e.g., `'zero,tnum,ss01,cv01'`). | None |
+| `--centered-colon` | *Flag* | Force centered colon generation/injection for digits (`12:30` time display). | False |
+| `--no-centered-colon` | *Flag* | Disable centered colon injection. | False |
 | `--interactive` | *Flag* | Force interactive feature selection prompt regardless of TTY status. | False |
 | `--no-interactive` | *Flag* | Disable interactive feature selection prompt. | False |
 | `--keep-hinting` | *Flag* | Keep original TrueType hinting tables (`cvt`, `fpgm`, `prep`, etc.). | False (hints removed) |
@@ -63,7 +70,7 @@ pipx install opentype-feature-freezer
 ### `build.py` Usage Examples
 
 #### Example 1: Standard Interactive Build
-Install dependencies, then run without flags to enter the interactive OpenType feature freezer workflow:
+Install dependencies, place your font in `Fonts/`, and run:
 ```bash
 pip install -r requirements.txt
 python build.py
@@ -73,42 +80,50 @@ python build.py
 ------------------------------------------------------------
 OpenType Feature Freezer Tool Integration
 ------------------------------------------------------------
-Do you want to use any Stylistic Sets (for example ss01 Open digits), or Character Variants (for example cv01 Alternate One)? (y/N): y
+Do you want to freeze any OpenType layout features (Stylistic Sets, Character Variants, Slashed Zero, Tabular Figures, etc.)? (y/N): y
 
-Available Stylistic Sets and Character Variants:
-  cv01  -  Alternate one
-  cv11  -  Single-story a
-  ss01  -  Open digits
-  ss02  -  Disambiguation
+Available OpenType Layout Features:
+
+  [RECOMMENDED / SAFE TO FREEZE] (Stylistic & Character Alternates, Digit Toggles):
+    case   - Case-Sensitive Forms
+    cv01   - Alternate one
+    cv11   - Single-story a
+    ss01   - Open digits
+    ss02   - Disambiguation
+    tnum   - Tabular Figures
+    zero   - Slashed Zero
+
+  [CAUTION - USE WITH CARE] (Layout/Position features - shrinks/repositions text globally):
+    dnom   - Denominators (Shrinks all numbers into denominators)
+    frac   - Fractions (Shrinks and repositions all numbers into fraction form)
+
+  [NOT RECOMMENDED / SYSTEM & MASTER ALTERNATE FEATURES]:
+    aalt   - Access All Alternates (UNSAFE: Enables multiple/all alternate glyphs simultaneously across font)
+    calt   - Contextual Alternates (Enabled by default in font layout engines)
 
 [Visual Preview]
 For visual representation of available sets, visit:
 https://www.adamjagosz.com/bulletproof/lettering and upload your font.
 ------------------------------------------------------------
 
-Enter your desired entries (comma or space separated, e.g. ss01, cv01): ss02, cv11
-Selected features to freeze: ss02, cv11
-Successfully froze features [ss02,cv11] in InterVariable.ttf
+Enter your desired entries (comma or space separated, e.g. ss01, cv01, zero, tnum): zero, tnum, ss01
+Selected features to freeze: zero, tnum, ss01
+Successfully froze features [zero,tnum,ss01] in YourFont.ttf
 Detected mode : variable
-Font family   : Inter Variable
-Freezer sets  : ss02, cv11
-Source faces  : 2
-Payload fonts : DroidSans.ttf, DroidSans-Bold.ttf
+Font family   : Your Font Family
+Freezer sets  : zero, tnum, ss01
+Source faces  : 1
+Payload fonts : DroidSans.ttf
 Signature     : verified
-Output        : C:\Users\Admin\Desktop\MFFMv14\dist\mffm14-Inter-Variable-VF-ss02-cv11-2026.07.30.zip
+Output        : dist/mffm14-Your-Font-Family-zero-tnum-ss01-YYYY.MM.DD.zip
 ```
 
 #### Example 2: Non-Interactive Build with Specific Features
 Pass `--features` directly for headless execution or automated scripts:
 ```bash
-python build.py --features "ss02,ss03,cv11"
+python build.py --features "zero,tnum,ss01"
 ```
-**Output File:** `dist/mffm14-Inter-Variable-VF-ss02-ss03-cv11-YYYY.MM.DD.zip`
-
-#### Example 3: Custom Module Name, Version & Unsigned Output
-```bash
-python build.py --name "Custom Sans" --version "1.0.0" --version-code 100 --no-sign
-```
+**Output File:** `dist/mffm14-Your-Font-Family-zero-tnum-ss01-YYYY.MM.DD.zip`
 
 ---
 
@@ -116,52 +131,6 @@ python build.py --name "Custom Sans" --version "1.0.0" --version-code 100 --no-s
 
 ### Overview
 `update.py` batch processes older MFFM module ZIP files located in the `Old Modules/` directory, extracts their primary font assets, re-compiles them using the latest MFFMv14 template core, and outputs signed ZIPs into `Updated Modules/`.
-
----
-
-### Command-Line Arguments & Flags
-
-| Flag | Argument | Description | Default |
-| :--- | :--- | :--- | :--- |
-| `--old-dir` | `<PATH>` | Input directory containing legacy MFFM module ZIP files. | `Old Modules/` |
-| `--output-dir` | `<PATH>` | Output directory for migrated MFFMv14 ZIP modules. | `Updated Modules/` |
-| `--mode` | `auto`, `static`, `variable` | Font compilation mode. | `auto` |
-| `--name` | `<STRING>` | Override display name for all updated modules. | Extracted from old module |
-| `--version` | `<STRING>` | Override version string for updated modules. | Current date |
-| `--version-code` | `<NUMBER>` | Override numeric `versionCode`. | Current timestamp |
-| `--no-sign` | *Flag* | Create unsigned debugging ZIP modules. | False (signed) |
-| `--keep-hinting` | *Flag* | Do not strip TrueType hinting from source fonts. | False |
-| `--no-prefix` | *Flag* | Do not prefix internal font family metadata with `MFFM`. | False |
-| `--force` | *Flag* | Overwrite existing output ZIP files in the output directory. | False |
-| `--keep-temp` | *Flag* | Preserve temporary extraction and build workspace directories for diagnostics. | False |
-
----
-
-### `update.py` Usage Examples
-
-#### Example 1: Standard Batch Migration
-Place your legacy module `.zip` files in `Old Modules/` and run:
-```bash
-python update.py
-```
-**Output:**
-```text
-Updated old-font-module.zip
-  mode   : variable
-  family : Roboto Flex VF
-  output : C:\Users\Admin\Desktop\MFFMv14\Updated Modules\mffm14-Roboto-Flex-VF-2026.07.30.zip
-Updated 1 module(s).
-```
-
-#### Example 2: Force Overwrite Existing Updated Modules
-```bash
-python update.py --force
-```
-
-#### Example 3: Batch Update with Custom Destination and Debugging Output
-```bash
-python update.py --old-dir "./my_old_zips" --output-dir "./migrated_zips" --no-sign --keep-temp
-```
 
 ---
 
@@ -174,8 +143,8 @@ pip install -r requirements.txt
 # 1. Standard interactive build from Fonts/ directory
 python build.py
 
-# 2. Freeze specific features non-interactively
-python build.py --features "ss01,cv01"
+# 2. Freeze specific features for any font (e.g. slashed zero, tabular figures, stylistic sets)
+python build.py --features "zero,tnum,ss01,cv01"
 
 # 3. Create unsigned debug build
 python build.py --no-sign

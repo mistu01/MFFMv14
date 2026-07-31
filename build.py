@@ -33,6 +33,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--features", help="comma-separated OpenType feature tags to freeze (e.g. 'ss01,cv01')")
     parser.add_argument("--interactive", action="store_true", default=None, help="force interactive feature prompt")
     parser.add_argument("--no-interactive", action="store_false", dest="interactive", help="disable interactive feature prompt")
+    parser.add_argument("--centered-colon", action="store_true", default=None, help="force centered colon generation/injection for digits (12:30)")
+    parser.add_argument("--no-centered-colon", action="store_false", dest="centered_colon", help="disable centered colon injection")
     return parser.parse_args()
 
 
@@ -70,6 +72,7 @@ def build_module(args: argparse.Namespace, module_dir: Path = ROOT) -> Path | No
         prefix_family=not args.no_prefix,
         features=args.features,
         interactive_features=args.interactive,
+        centered_colon=args.centered_colon,
     )
     display_name = display_name_for_mode(args.name or result.family, result.mode)
     props = update_module_metadata(

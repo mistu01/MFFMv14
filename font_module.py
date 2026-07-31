@@ -1072,8 +1072,54 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
     return [upright] + ([italic] if italic != upright else []), tuple(payload)
 
 
+STANDARD_FEATURE_NAMES: dict[str, str] = {
+    "aalt": "Access All Alternates",
+    "calt": "Contextual Alternates",
+    "case": "Case-Sensitive Forms",
+    "ccmp": "Glyph Composition / Decomposition",
+    "cpsp": "Capital Spacing",
+    "dlig": "Discretionary Ligatures",
+    "dnom": "Denominators",
+    "frac": "Fractions",
+    "kern": "Kerning",
+    "liga": "Standard Ligatures",
+    "locl": "Localized Forms",
+    "lnum": "Lining Figures",
+    "numr": "Numerators",
+    "onum": "Oldstyle Figures",
+    "ordn": "Ordinals",
+    "pnum": "Proportional Figures",
+    "salt": "Stylistic Alternates",
+    "sinf": "Scientific Inferiors",
+    "subs": "Subscript",
+    "sups": "Superscript",
+    "tnum": "Tabular Figures",
+    "zero": "Slashed Zero",
+}
+
+UNSAFE_FEATURES: dict[str, str] = {
+    "aalt": "UNSAFE: Enables multiple/all alternate glyphs simultaneously across font",
+    "calt": "Enabled by default in font layout engines (Contextual)",
+    "ccmp": "System layout feature",
+    "locl": "System script/language feature",
+    "kern": "System layout feature",
+    "liga": "Standard Ligature (Enabled by default in font layout engines)",
+}
+
+CAUTION_FEATURES: dict[str, str] = {
+    "frac": "NOT RECOMMENDED TO FREEZE: Alters normal number sequences (e.g. 123456 -> 1²3456) system-wide!",
+    "numr": "Numerators (Shrinks letters/numbers into superior position)",
+    "dnom": "Denominators (Shrinks letters/numbers into inferior position)",
+    "subs": "Subscript (Shrinks/lowers letters/numbers into subscript)",
+    "sups": "Superscript (Shrinks/raises letters/numbers into superscript)",
+    "sinf": "Scientific Inferiors (Shrinks numbers into inferior position)",
+    "ordn": "Ordinals (Shrinks letters into ordinal position)",
+    "onum": "Changes default numbers to oldstyle height",
+}
+
+
 def extract_opentype_features(font_path: Path) -> dict[str, str]:
-    """Inspect GSUB table to discover Stylistic Sets (ss01-ss20) and Character Variants (cv01-cv99)."""
+    """Inspect GSUB table to discover all available OpenType Layout features for any font."""
     _collection, TTFont = require_fonttools()
     features: dict[str, str] = {}
     try:
@@ -1088,26 +1134,35 @@ def extract_opentype_features(font_path: Path) -> dict[str, str]:
         name_table = font.get("name")
         for record in gsub.FeatureList.FeatureRecord:
             tag = record.FeatureTag
-            if tag and (tag.startswith("ss") or tag.startswith("cv")):
-                ui_name = ""
-                params = getattr(record.Feature, "FeatureParams", None)
-                if params:
-                    name_id = (
-                        getattr(params, "UINameID", None)
-                        or getattr(params, "FeatUILabelNameID", None)
-                        or getattr(params, "featUINameID", None)
-                        or getattr(params, "FirstParamUILabelNameID", None)
-                    )
-                    if name_id and name_table:
-                        for nrec in name_table.names:
-                            if nrec.nameID == name_id:
-                                try:
-                                    ui_name = nrec.toUnicode().strip()
-                                except Exception:
-                                    pass
-                                if ui_name:
-                                    break
-                features[tag] = ui_name
+            if not tag:
+                continue
+            ui_name = ""
+            params = getattr(record.Feature, "FeatureParams", None)
+            if params:
+                name_id = (
+                    getattr(params, "UINameID", None)
+                    or getattr(params, "FeatUILabelNameID", None)
+                    or getattr(params, "featUINameID", None)
+                    or getattr(params, "FirstParamUILabelNameID", None)
+                )
+                if name_id and name_table:
+                    for nrec in name_table.names:
+                        if nrec.nameID == name_id:
+                            try:
+                                ui_name = nrec.toUnicode().strip()
+                            except Exception:
+                                pass
+                            if ui_name:
+                                break
+            if not ui_name:
+                if tag in STANDARD_FEATURE_NAMES:
+                    ui_name = STANDARD_FEATURE_NAMES[tag]
+                elif tag.startswith("ss") and tag[2:].isdigit():
+                    ui_name = f"Stylistic Set {int(tag[2:])}"
+                elif tag.startswith("cv") and tag[2:].isdigit():
+                    ui_name = f"Character Variant {int(tag[2:])}"
+
+            features[tag] = ui_name
     finally:
         font.close()
 
@@ -1115,7 +1170,7 @@ def extract_opentype_features(font_path: Path) -> dict[str, str]:
 
 
 def extract_features_from_fonts(font_paths: Iterable[Path]) -> dict[str, str]:
-    """Extract all available Stylistic Sets and Character Variants from multiple font files."""
+    """Extract all available OpenType Layout features from multiple font files."""
     aggregated: dict[str, str] = {}
     for path in font_paths:
         feats = extract_opentype_features(path)
@@ -1125,44 +1180,137 @@ def extract_features_from_fonts(font_paths: Iterable[Path]) -> dict[str, str]:
     return dict(sorted(aggregated.items()))
 
 
+def font_has_centered_colon(font_path: Path) -> bool:
+    """Check if font has a built-in centered colon feature (colon.case, colon.centered, or GSUB case/calt colon rules)."""
+    _collection, TTFont = require_fonttools()
+    try:
+        font = TTFont(str(font_path), lazy=True)
+    except Exception:
+        return True
+
+    try:
+        glyph_order = font.getGlyphOrder()
+        for name in ("colon.case", "colon.centered", "colon.cap", "colon.case.tf", "colon.centered.tf"):
+            if name in glyph_order:
+                return True
+        if "GSUB" in font and font["GSUB"].table is not None:
+            gsub = font["GSUB"].table
+            if gsub.FeatureList and gsub.FeatureList.FeatureRecord:
+                records = {rec.FeatureTag: rec.Feature for rec in gsub.FeatureList.FeatureRecord if rec.FeatureTag}
+                if "case" in records:
+                    lookups = gsub.LookupList.Lookup
+                    for lidx in records["case"].LookupListIndex:
+                        if lidx < len(lookups):
+                            for st in getattr(lookups[lidx], "SubTable", []):
+                                mapping = getattr(st, "mapping", {})
+                                if "colon" in mapping:
+                                    return True
+    finally:
+        font.close()
+
+    return False
+
+
+def prompt_add_centered_colon_if_missing(font_paths: Iterable[Path], interactive: bool = False) -> bool:
+    """Check if input font(s) lack centered colon support and prompt user interactively to add it."""
+    if not interactive:
+        return False
+
+    font_list = list(font_paths)
+    missing = [p for p in font_list if not font_has_centered_colon(p)]
+    if not missing:
+        return False
+
+    print("\n------------------------------------------------------------")
+    print("Centered Colon Feature Check")
+    print("------------------------------------------------------------")
+    print(f"No centered colon feature (e.g. colon.case for clock 12:30 display) detected in: {', '.join(p.name for p in missing)}")
+    choice = input("Do you want to generate & add a vertically centered colon feature for digits/time displays? (y/N): ").strip().lower()
+    if choice in ("y", "yes"):
+        print("Centered colon generation approved.")
+        return True
+    return False
+
+
 def prompt_feature_selection(available_features: dict[str, str]) -> list[str]:
-    """Prompt user interactively to select Stylistic Sets or Character Variants to freeze."""
+    """Prompt user interactively to view all OpenType features with safety recommendations and select ones to freeze."""
     if not available_features:
-        print("\nNo OpenType Stylistic Sets or Character Variants detected in input font(s).")
+        print("\nNo OpenType Layout features detected in input font(s).")
         return []
 
     print("\n------------------------------------------------------------")
     print("OpenType Feature Freezer Tool Integration")
     print("------------------------------------------------------------")
-    choice = input("Do you want to use any Stylistic Sets (for example ss01 Open digits), or Character Variants (for example cv01 Alternate One)? (y/N): ").strip().lower()
+    choice = input("Do you want to freeze any OpenType layout features (Stylistic Sets, Character Variants, Slashed Zero, Tabular Figures, etc.)? (y/N): ").strip().lower()
     if choice not in ("y", "yes"):
         print("Skipping feature freezing.")
         return []
 
-    print("\nAvailable Stylistic Sets and Character Variants:")
-    for tag, name in sorted(available_features.items()):
-        label = f"  {tag}  -  {name}" if name else f"  {tag}"
-        print(label)
+    safe_feats = {k: v for k, v in available_features.items() if k not in UNSAFE_FEATURES and k not in CAUTION_FEATURES}
+    caution_feats = {k: v for k, v in available_features.items() if k in CAUTION_FEATURES}
+    unsafe_feats = {k: v for k, v in available_features.items() if k in UNSAFE_FEATURES}
 
-    print("\n[Visual Preview]")
-    print("For visual representation of available sets, visit:")
-    print("https://www.adamjagosz.com/bulletproof/lettering and upload your font.")
+    print("\nAvailable OpenType Layout Features:")
+
+    if safe_feats:
+        print("\n  [RECOMMENDED / SAFE TO FREEZE] (Stylistic & Character Alternates, Digit Toggles):")
+        for tag, name in sorted(safe_feats.items()):
+            label = f"    {tag:<6} - {name}" if name else f"    {tag}"
+            print(label)
+
+    if caution_feats:
+        print("\n  [CAUTION - USE WITH CARE] (Layout/Position features - shrinks/repositions text globally):")
+        for tag, name in sorted(caution_feats.items()):
+            note = CAUTION_FEATURES.get(tag, "")
+            label = f"    {tag:<6} - {name}" if name else f"    {tag}"
+            if note:
+                label += f" ({note})"
+            print(label)
+
+    if unsafe_feats:
+        print("\n  [NOT RECOMMENDED / SYSTEM & MASTER ALTERNATE FEATURES]:")
+        for tag, name in sorted(unsafe_feats.items()):
+            note = UNSAFE_FEATURES.get(tag, "")
+            label = f"    {tag:<6} - {name}" if name else f"    {tag}"
+            if note:
+                label += f" ({note})"
+            print(label)
+
+    print("\n[Visual Preview & Feature Inspection]")
+    print("For visual representation and testing of available features, upload your font to:")
+    print("  • https://www.adamjagosz.com/bulletproof/lettering")
+    print("  • https://wakamaifondue.com/")
     print("------------------------------------------------------------\n")
 
-    user_entries = input("Enter your desired entries (comma or space separated, e.g. ss01, cv01): ").strip()
+    user_entries = input("Enter your desired entries (comma or space separated, e.g. ss01, cv01, zero, tnum): ").strip()
     if not user_entries:
         print("No features entered. Proceeding without feature freezing.")
         return []
 
     raw_tags = re.split(r"[,\s]+", user_entries)
     selected = [t.lower() for t in raw_tags if t.strip()]
+
+    warned = False
+    for tag in selected:
+        if tag in UNSAFE_FEATURES:
+            print(f"\n  [WARNING] '{tag}' is classified as UNSAFE ({UNSAFE_FEATURES[tag]}).")
+            warned = True
+
+    if warned:
+        confirm = input("Are you sure you want to include these unsafe feature(s)? (y/N): ").strip().lower()
+        if confirm not in ("y", "yes"):
+            selected = [t for t in selected if t not in UNSAFE_FEATURES]
+            print(f"Filtered out unsafe features. Proceeding with: {', '.join(selected) if selected else 'None'}")
+
     if selected:
         print(f"Selected features to freeze: {', '.join(selected)}")
     return selected
 
 
 def freeze_font_features(font_path: Path, features: list[str] | str) -> None:
-    """Freeze OpenType features into a font file using pyftfeatfreeze / opentype-feature-freezer."""
+    """Freeze OpenType features into a font file using pyftfeatfreeze for 1-to-1 cmap remappings
+    and GSUB lookup promotion into default 'calt'/'liga' features for multi-glyph/contextual rules (like dlig, frac, hlig).
+    """
     if isinstance(features, str):
         feature_list = [f.strip() for f in features.split(",") if f.strip()]
     else:
@@ -1171,29 +1319,212 @@ def freeze_font_features(font_path: Path, features: list[str] | str) -> None:
     if not feature_list:
         return
 
-    feat_str = ",".join(feature_list)
-    executable = shutil.which("pyftfeatfreeze") or "pyftfeatfreeze"
-    temp_output = font_path.with_suffix(".frozen" + font_path.suffix)
+    _collection, TTFont = require_fonttools()
 
-    cmd = [executable, "-f", feat_str, str(font_path), str(temp_output)]
-    log.info(f"Freezing features '{feat_str}' in {font_path.name}...")
+    contextual_candidates = {"dlig", "hlig", "clig", "rvrn"}
+    contextual_feats = [f for f in feature_list if f.lower() in contextual_candidates]
+    single_feats = [f for f in feature_list if f.lower() not in contextual_candidates]
+
+    temp_output = font_path.with_suffix(".frozen" + font_path.suffix)
+    if temp_output.exists():
+        temp_output.unlink()
+
+    if single_feats:
+        feat_str = ",".join(single_feats)
+        executable = shutil.which("pyftfeatfreeze") or "pyftfeatfreeze"
+        cmd = [executable, "-f", feat_str, str(font_path), str(temp_output)]
+        log.info(f"Freezing 1-to-1 features '{feat_str}' in {font_path.name}...")
+        try:
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as exc:
+            if temp_output.exists():
+                temp_output.unlink()
+            err_msg = exc.stderr.strip() or exc.stdout.strip() or str(exc)
+            raise SystemExit(f"Failed to freeze features [{feat_str}] for {font_path.name}: {err_msg}") from exc
+        except FileNotFoundError:
+            raise SystemExit(
+                "opentype-feature-freezer (pyftfeatfreeze) is not installed or not in PATH.\n"
+                "Please install it using: pip install opentype-feature-freezer (or pipx install opentype-feature-freezer)"
+            )
+    else:
+        shutil.copy2(font_path, temp_output)
+
+    if contextual_feats:
+        try:
+            font = TTFont(str(temp_output))
+            if "GSUB" in font and font["GSUB"].table is not None and font["GSUB"].table.FeatureList is not None:
+                gsub = font["GSUB"].table
+                records = {rec.FeatureTag: rec.Feature for rec in gsub.FeatureList.FeatureRecord if rec.FeatureTag}
+                target_feat = records.get("calt") or records.get("liga")
+                if not target_feat:
+                    from fontTools.ttLib.tables.otTables import FeatureRecord, Feature
+                    new_rec = FeatureRecord()
+                    new_rec.FeatureTag = "calt"
+                    new_rec.Feature = Feature()
+                    new_rec.Feature.LookupListIndex = []
+                    new_rec.Feature.FeatureParams = None
+                    gsub.FeatureList.FeatureRecord.append(new_rec)
+                    target_feat = new_rec.Feature
+
+                tags_to_promote = set(contextual_feats)
+
+                def collect_lookup_and_children(lookup_idx: int, collected_indices: set[int]) -> None:
+                    if lookup_idx in collected_indices or lookup_idx >= len(gsub.LookupList.Lookup):
+                        return
+                    collected_indices.add(lookup_idx)
+                    lookup = gsub.LookupList.Lookup[lookup_idx]
+                    for st in getattr(lookup, "SubTable", []):
+                        sub_recs = getattr(st, "SubstLookupRecord", None)
+                        if sub_recs:
+                            for sr in sub_recs:
+                                collect_lookup_and_children(sr.LookupListIndex, collected_indices)
+
+                indices_to_promote: set[int] = set()
+                for tag in tags_to_promote:
+                    if tag in records:
+                        for idx in records[tag].LookupListIndex:
+                            collect_lookup_and_children(idx, indices_to_promote)
+
+                if indices_to_promote:
+                    # Sort numerically to preserve OpenType lookup execution sequence
+                    added = 0
+                    for idx in sorted(indices_to_promote):
+                        if idx not in target_feat.LookupListIndex:
+                            target_feat.LookupListIndex.append(idx)
+                            added += 1
+                    if added:
+                        log.info(f"Promoted {added} contextual feature lookups (including dependencies) into default active layout feature for {font_path.name}")
+                font.save(str(temp_output))
+            font.close()
+        except Exception as exc:
+            log.warning(f"Could not promote contextual lookups in {font_path.name}: {exc}")
+
+    if temp_output.exists():
+        shutil.move(temp_output, font_path)
+        print(f"Successfully froze features [{','.join(feature_list)}] in {font_path.name}")
+
+
+def inject_centered_colon(font_path: Path) -> bool:
+    """Inject a contextual digit colon rule (digit + colon + digit -> digit + colon.case + digit) into calt
+    so colons center automatically for clock displays (12:30) without affecting paragraph body text (note: example).
+    """
+    _collection, TTFont = require_fonttools()
+    from fontTools.ttLib.tables.otTables import ChainContextSubst, Coverage, Lookup, SingleSubst, SubstLookupRecord
+
     try:
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
-        if temp_output.exists():
-            shutil.move(temp_output, font_path)
-            print(f"Successfully froze features [{feat_str}] in {font_path.name}")
-        else:
-            log.warning(f"Feature freezer completed but output file missing for {font_path.name}")
-    except subprocess.CalledProcessError as exc:
-        if temp_output.exists():
-            temp_output.unlink()
-        err_msg = exc.stderr.strip() or exc.stdout.strip() or str(exc)
-        raise SystemExit(f"Failed to freeze features [{feat_str}] for {font_path.name}: {err_msg}") from exc
-    except FileNotFoundError:
-        raise SystemExit(
-            "opentype-feature-freezer (pyftfeatfreeze) is not installed or not in PATH.\n"
-            "Please install it using: pip install opentype-feature-freezer (or pipx install opentype-feature-freezer)"
-        )
+        font = TTFont(str(font_path))
+    except Exception as exc:
+        log.warning(f"Could not open {font_path.name} for centered colon injection: {exc}")
+        return False
+
+    try:
+        glyph_order = font.getGlyphOrder()
+        if "colon" not in glyph_order:
+            font.close()
+            return False
+
+        centered_glyph = None
+        for candidate in ("colon.case.tf", "colon.case", "colon.centered", "colon.cap", "colon.centered.tf"):
+            if candidate in glyph_order:
+                centered_glyph = candidate
+                break
+
+        if not centered_glyph or "GSUB" not in font or font["GSUB"].table is None:
+            font.close()
+            return False
+
+        gsub = font["GSUB"].table
+        if gsub.FeatureList is None or not gsub.FeatureList.FeatureRecord:
+            font.close()
+            return False
+
+        records = {rec.FeatureTag: rec.Feature for rec in gsub.FeatureList.FeatureRecord if rec.FeatureTag}
+        target_feat = records.get("calt") or records.get("liga")
+        if not target_feat:
+            from fontTools.ttLib.tables.otTables import Feature, FeatureRecord
+            new_rec = FeatureRecord()
+            new_rec.FeatureTag = "calt"
+            new_rec.Feature = Feature()
+            new_rec.Feature.LookupListIndex = []
+            new_rec.Feature.FeatureParams = None
+            gsub.FeatureList.FeatureRecord.append(new_rec)
+            target_feat = new_rec.Feature
+
+        # 1. SingleSubst lookup: colon -> colon.case, colon.tf -> colon.case.tf
+        s_lookup = Lookup()
+        s_lookup.LookupType = 1
+        s_lookup.LookupFlag = 0
+        st1 = SingleSubst()
+        st1.Format = 1
+        st1.mapping = {}
+        if "colon" in glyph_order and "colon.case" in glyph_order:
+            st1.mapping["colon"] = "colon.case"
+        if "colon.tf" in glyph_order and "colon.case.tf" in glyph_order:
+            st1.mapping["colon.tf"] = "colon.case.tf"
+        if not st1.mapping:
+            st1.mapping["colon"] = centered_glyph
+
+        st1.mapping = dict(sorted(st1.mapping.items(), key=lambda item: font.getGlyphID(item[0])))
+        s_lookup.SubTable = [st1]
+        gsub.LookupList.Lookup.append(s_lookup)
+        s_lidx = len(gsub.LookupList.Lookup) - 1
+
+        # 2. ChainContextSubst lookup matching digit + colon + digit
+        c_lookup = Lookup()
+        c_lookup.LookupType = 6
+        c_lookup.LookupFlag = 0
+
+        st6 = ChainContextSubst()
+        st6.Format = 3
+
+        # Extract pure digit glyphs (excluding regular alphabet letters whose hex names contain 0-9)
+        pure_digits: set[str] = set()
+        cmap = font.getBestCmap()
+        for codepoint, gname in cmap.items():
+            if (0x0030 <= codepoint <= 0x0039) or (0xFF10 <= codepoint <= 0xFF19) or (0x0660 <= codepoint <= 0x0669) or (0x0966 <= codepoint <= 0x096F):
+                pure_digits.add(gname)
+
+        exact_digit_bases = {"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
+        for g in glyph_order:
+            parts = g.split(".")
+            if parts[0].lower() in exact_digit_bases:
+                pure_digits.add(g)
+
+        sorted_digits = sorted(list(pure_digits), key=lambda g: font.getGlyphID(g))
+
+        bcov = Coverage()
+        bcov.glyphs = sorted_digits
+        icov = Coverage()
+        icov.glyphs = sorted([g for g in ("colon", "colon.tf") if g in glyph_order], key=lambda g: font.getGlyphID(g))
+        lcov = Coverage()
+        lcov.glyphs = sorted_digits
+
+        st6.BacktrackGlyphCount = 1
+        st6.BacktrackCoverage = [bcov]
+        st6.InputGlyphCount = 1
+        st6.InputCoverage = [icov]
+        st6.LookAheadGlyphCount = 1
+        st6.LookAheadCoverage = [lcov]
+
+        srec = SubstLookupRecord()
+        srec.SequenceIndex = 0
+        srec.LookupListIndex = s_lidx
+        st6.SubstLookupRecord = [srec]
+
+        c_lookup.SubTable = [st6]
+        gsub.LookupList.Lookup.append(c_lookup)
+        c_lidx = len(gsub.LookupList.Lookup) - 1
+
+        if c_lidx not in target_feat.LookupListIndex:
+            target_feat.LookupListIndex.append(c_lidx)
+            log.info(f"Injected contextual digit colon lookup [{c_lidx}] into default active layout feature for {font_path.name}")
+
+        font.save(str(font_path))
+        font.close()
+        return True
+    except Exception as exc:
+        log.warning(f"Failed to inject contextual centered colon into {font_path.name}: {exc}")
+        return False
 
 
 def compile_fonts(
@@ -1205,6 +1536,7 @@ def compile_fonts(
     prefix_family: bool = True,
     features: list[str] | str | None = None,
     interactive_features: bool | None = None,
+    centered_colon: bool | None = None,
 ) -> CompileResult:
     files_dir = module_dir / "Files"
     files_dir.mkdir(parents=True, exist_ok=True)
@@ -1224,6 +1556,7 @@ def compile_fonts(
         temp_ttf_paths = sorted(p for p in temp_fonts_dir.iterdir() if p.is_file() and p.suffix.lower() in FONT_EXTENSIONS)
         selected_features: list[str] = []
 
+        do_colon = centered_colon
         if features is not None:
             if isinstance(features, str):
                 selected_features = [f.strip() for f in features.split(",") if f.strip()]
@@ -1232,12 +1565,18 @@ def compile_fonts(
         else:
             should_prompt = interactive_features if interactive_features is not None else sys.stdin.isatty()
             if should_prompt:
+                if do_colon is None:
+                    do_colon = prompt_add_centered_colon_if_missing(temp_ttf_paths, interactive=should_prompt)
                 available = extract_features_from_fonts(temp_ttf_paths)
                 selected_features = prompt_feature_selection(available)
 
         if selected_features:
             for font_path in temp_ttf_paths:
                 freeze_font_features(font_path, selected_features)
+
+        if do_colon:
+            for font_path in temp_ttf_paths:
+                inject_centered_colon(font_path)
 
         faces = discover_faces(temp_fonts_dir)
         mode = detect_mode(faces, requested_mode)
