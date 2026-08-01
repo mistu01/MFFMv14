@@ -1407,9 +1407,12 @@ def freeze_font_features(font_path: Path, features: list[str] | str) -> None:
 def inject_centered_colon(font_path: Path) -> bool:
     """Inject a contextual digit colon rule (digit + colon + digit -> digit + colon.case + digit) into calt
     so colons center automatically for clock displays (12:30) without affecting paragraph body text (note: example).
+    If the font lacks a centered colon glyph, generates colon.case dynamically.
     """
     _collection, TTFont = require_fonttools()
-    from fontTools.ttLib.tables.otTables import ChainContextSubst, Coverage, Lookup, SingleSubst, SubstLookupRecord
+    from fontTools.pens.transformPen import TransformPen
+    from fontTools.pens.ttGlyphPen import TTGlyphPen
+    from fontTools.ttLib.tables.otTables import ChainContextSubst, Coverage, Lookup, SingleSubst, SubstLookupRecord, FeatureRecord, Feature
 
     try:
         font = TTFont(str(font_path))
@@ -1429,40 +1432,109 @@ def inject_centered_colon(font_path: Path) -> bool:
                 centered_glyph = candidate
                 break
 
-        if not centered_glyph or "GSUB" not in font or font["GSUB"].table is None:
+        # Dynamically generate colon.case if font lacks a pre-existing centered colon glyph
+        if not centered_glyph and "glyf" in font:
+            glyf = font["glyf"]
+            hmtx = font["hmtx"]
+
+            coords, _, _ = glyf["colon"].getCoordinates(glyf)
+            if coords:
+                y_coords = [y for _, y in coords]
+                colon_yMin, colon_yMax = min(y_coords), max(y_coords)
+                colon_center = (colon_yMin + colon_yMax) / 2
+
+                digit_y_maxes = []
+                for d in ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "0", "1", "2", "3"):
+                    if d in glyph_order:
+                        d_coords, _, _ = glyf[d].getCoordinates(glyf)
+                        if d_coords:
+                            digit_y_maxes.append(max(y for _, y in d_coords))
+
+                cap_height = getattr(font.get("OS/2"), "sCapHeight", None) or 1400
+                target_center = (max(digit_y_maxes) / 2) if digit_y_maxes else (cap_height / 2)
+                dy = round(target_center - colon_center)
+                if dy > 30:
+                    pen = TTGlyphPen(font.getGlyphSet())
+                    tpen = TransformPen(pen, (1, 0, 0, 1, 0, dy))
+                    font.getGlyphSet()["colon"].draw(tpen)
+
+                    centered_glyph = "colon.case"
+                    font.setGlyphOrder(glyph_order + [centered_glyph])
+                    glyf[centered_glyph] = pen.glyph()
+                    hmtx[centered_glyph] = hmtx["colon"]
+                    glyph_order = font.getGlyphOrder()
+                    log.info(f"Dynamically generated [{centered_glyph}] with vertical offset dy=+{dy} for {font_path.name}")
+
+        if not centered_glyph:
             font.close()
             return False
+
+        # Ensure GSUB table exists
+        if "GSUB" not in font or font["GSUB"].table is None:
+            from fontTools.ttLib.tables.otTables import GSUB, FeatureList, LookupList, ScriptList
+            gsub = font["GSUB"].table = GSUB()
+            gsub.Version = 0x00010000
+            gsub.ScriptList = ScriptList()
+            gsub.FeatureList = FeatureList()
+            gsub.LookupList = LookupList()
+            gsub.ScriptList.ScriptRecord = []
+            gsub.FeatureList.FeatureRecord = []
+            gsub.LookupList.Lookup = []
 
         gsub = font["GSUB"].table
-        if gsub.FeatureList is None or not gsub.FeatureList.FeatureRecord:
-            font.close()
-            return False
+        if gsub.FeatureList is None:
+            gsub.FeatureList = FeatureList()
+        if gsub.FeatureList.FeatureRecord is None:
+            gsub.FeatureList.FeatureRecord = []
+        if gsub.LookupList is None:
+            gsub.LookupList = LookupList()
+        if gsub.LookupList.Lookup is None:
+            gsub.LookupList.Lookup = []
 
         records = {rec.FeatureTag: rec.Feature for rec in gsub.FeatureList.FeatureRecord if rec.FeatureTag}
-        target_feat = records.get("calt") or records.get("liga")
-        if not target_feat:
-            from fontTools.ttLib.tables.otTables import Feature, FeatureRecord
+        calt_rec_idx = None
+        for idx, rec in enumerate(gsub.FeatureList.FeatureRecord):
+            if rec.FeatureTag == "calt":
+                calt_rec_idx = idx
+                target_feat = rec.Feature
+                break
+
+        if calt_rec_idx is None:
             new_rec = FeatureRecord()
             new_rec.FeatureTag = "calt"
             new_rec.Feature = Feature()
             new_rec.Feature.LookupListIndex = []
             new_rec.Feature.FeatureParams = None
             gsub.FeatureList.FeatureRecord.append(new_rec)
+            calt_rec_idx = len(gsub.FeatureList.FeatureRecord) - 1
             target_feat = new_rec.Feature
 
-        # 1. SingleSubst lookup: colon -> colon.case, colon.tf -> colon.case.tf
+        # Ensure calt_rec_idx is registered in ScriptList for DFLT and latn scripts
+        if gsub.ScriptList and gsub.ScriptList.ScriptRecord:
+            for srec in gsub.ScriptList.ScriptRecord:
+                script = srec.Script
+                lang_sys_list = []
+                if script.DefaultLangSys:
+                    lang_sys_list.append(script.DefaultLangSys)
+                if script.LangSysRecord:
+                    for lrec in script.LangSysRecord:
+                        lang_sys_list.append(lrec.LangSys)
+
+                for lsys in lang_sys_list:
+                    if calt_rec_idx not in lsys.FeatureIndex:
+                        lsys.FeatureIndex.append(calt_rec_idx)
+
+        # 1. SingleSubst lookup: colon -> centered_glyph
         s_lookup = Lookup()
         s_lookup.LookupType = 1
         s_lookup.LookupFlag = 0
         st1 = SingleSubst()
         st1.Format = 1
         st1.mapping = {}
-        if "colon" in glyph_order and "colon.case" in glyph_order:
-            st1.mapping["colon"] = "colon.case"
+        if "colon" in glyph_order:
+            st1.mapping["colon"] = centered_glyph
         if "colon.tf" in glyph_order and "colon.case.tf" in glyph_order:
             st1.mapping["colon.tf"] = "colon.case.tf"
-        if not st1.mapping:
-            st1.mapping["colon"] = centered_glyph
 
         st1.mapping = dict(sorted(st1.mapping.items(), key=lambda item: font.getGlyphID(item[0])))
         s_lookup.SubTable = [st1]
@@ -1477,7 +1549,6 @@ def inject_centered_colon(font_path: Path) -> bool:
         st6 = ChainContextSubst()
         st6.Format = 3
 
-        # Extract pure digit glyphs (excluding regular alphabet letters whose hex names contain 0-9)
         pure_digits: set[str] = set()
         cmap = font.getBestCmap()
         for codepoint, gname in cmap.items():
