@@ -1,9 +1,9 @@
 id=mffm14
-name=[MFFMv14] Giphurs VF (ss01, ss08)
-version=2026.08.02
-versionCode=202608020133
-author=MFFM
-description=Replaces Android's default Roboto family with "Giphurs VF (ss01, ss08)" (variable). Compatible with Magisk, KernelSU, and APatch.
+name=[MFFMv14] Amazon Mistu Ember
+version=2026.08.05
+versionCode=202608050353
+author=Mistu
+description=Replaces Android's default Roboto family with "Amazon Mistu Ember" (static). Compatible with Magisk, KernelSU, and APatch.
 minMagisk=20400
 minKernelSU=10940
 minAPatch=11000

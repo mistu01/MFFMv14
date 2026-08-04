@@ -19,7 +19,8 @@ FONT_EXTENSIONS = {".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2"}
 GENERATED_FILES = {
     "DroidSans.ttf", "DroidSans.otf", "DroidSans.ttc",
     "DroidSans-Italic.ttf", "DroidSans-Italic.otf", "DroidSans-Bold.ttf",
-    "sans.xml", "condensed.xml", "serif.xml", "clock.xml",
+    "sans.xml", "condensed.xml", "serif.xml", "mono.xml",
+    "Mono.ttf", "DroidSansMono.ttf", "CutiveMono.ttf",
 }
 WEIGHT_NAMES = {
     100: "Thin", 200: "ExtraLight", 300: "Light", 400: "Regular",
@@ -31,11 +32,11 @@ WEIGHT_LABELS = (
     (r"semi[\s_-]*bold|demi[\s_-]*bold", 600),
     (r"extra[\s_-]*light|ultra[\s_-]*light", 200),
     (r"thin|hairline", 100),
+    (r"black|heavy", 900),
+    (r"bold", 700),
+    (r"medium", 500),
     (r"light", 300),
     (r"regular|normal|book|roman", 400),
-    (r"medium", 500),
-    (r"bold", 700),
-    (r"black|heavy", 900),
 )
 
 
@@ -51,6 +52,7 @@ class SourceFace:
     variable: bool
     axes: dict[str, tuple[float, float, float]]
     sfnt_version: str
+    category: str = "sans"
 
     @property
     def label(self) -> str:
@@ -125,8 +127,15 @@ def _weight_from_label(label: str) -> int | None:
     return None
 
 
+def clean_slug_name(value: str) -> str:
+    cleaned = re.sub(r"(?i)\b(?:MFFM|Mistu|Variable)\b", "", value)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -_")
+    return cleaned or "Font"
+
+
 def slugify(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9]+", "-", value).strip("-") or "font"
+    cleaned = clean_slug_name(value)
+    return re.sub(r"[^A-Za-z0-9]+", "-", cleaned).strip("-") or "font"
 
 
 def display_name_for_mode(value: str, mode: Mode) -> str:
@@ -168,7 +177,7 @@ def _open_font(face: SourceFace, *, lazy: bool = False):
     return TTFont(str(face.path), **kwargs)
 
 
-def _inspect_font(path: Path, font_number: int | None) -> SourceFace:
+def _inspect_font(path: Path, font_number: int | None, category: str = "sans") -> SourceFace:
     _collection, TTFont = require_fonttools()
     kwargs = {"lazy": True}
     if font_number is not None:
@@ -189,8 +198,16 @@ def _inspect_font(path: Path, font_number: int | None) -> SourceFace:
         )
         width_class = int(getattr(os2, "usWidthClass", 5)) if os2 is not None else 5
         condensed = width_class <= 4 or "condensed" in label or "narrow" in label
-        named_weight = _weight_from_label(metadata_label) or _weight_from_label(path.stem)
-        weight = named_weight or _nearest_weight(int(getattr(os2, "usWeightClass", 400)) if os2 is not None else 400)
+        os2_w = int(getattr(os2, "usWeightClass", 0)) if os2 is not None else 0
+        stem_w = _weight_from_label(path.stem)
+
+        if os2_w in WEIGHT_NAMES:
+            weight = os2_w
+        elif stem_w:
+            weight = stem_w
+        else:
+            named_weight = _weight_from_label(style_name) or _weight_from_label(metadata_label)
+            weight = named_weight or _nearest_weight(os2_w or 400)
 
         axes: dict[str, tuple[float, float, float]] = {}
         if "fvar" in font:
@@ -208,6 +225,7 @@ def _inspect_font(path: Path, font_number: int | None) -> SourceFace:
             variable=bool(axes),
             axes=axes,
             sfnt_version=str(font.sfntVersion),
+            category=category,
         )
 
 
@@ -215,24 +233,45 @@ def discover_faces(fonts_dir: Path) -> list[SourceFace]:
     TTCollection, _font = require_fonttools()
     if not fonts_dir.is_dir():
         raise SystemExit(f"Font input directory does not exist: {fonts_dir}")
-    paths = sorted(path for path in fonts_dir.iterdir() if path.is_file() and path.suffix.lower() in FONT_EXTENSIONS)
-    if not paths:
+
+    file_entries: list[tuple[Path, str]] = []
+    for p in sorted(fonts_dir.rglob("*")):
+        if p.is_file() and p.suffix.lower() in FONT_EXTENSIONS:
+            rel_parts = [part.lower() for part in p.relative_to(fonts_dir).parts[:-1]]
+            if any(part in ("monospace", "mono") for part in rel_parts):
+                cat = "mono"
+            elif any(part == "serif" for part in rel_parts):
+                cat = "serif"
+            elif any(part in ("sans", "sans-serif") for part in rel_parts):
+                cat = "sans"
+            else:
+                stem_lower = p.stem.lower()
+                if any(m in stem_lower for m in ("mono", "code", "consolas", "courier")):
+                    cat = "mono"
+                elif "serif" in stem_lower and "sans" not in stem_lower:
+                    cat = "serif"
+                else:
+                    cat = "sans"
+            file_entries.append((p, cat))
+
+    if not file_entries:
         raise SystemExit(f"No TTF, OTF, TTC, or OTC fonts found in {fonts_dir}")
 
     faces: list[SourceFace] = []
-    for path in paths:
+    for path, cat in file_entries:
         try:
             collection = TTCollection(str(path), lazy=True)
         except Exception as exc:
             if exc.__class__.__name__ != "TTLibFileIsCollectionError" and path.suffix.lower() in {".ttc", ".otc"}:
                 raise SystemExit(f"Could not read collection {path}: {exc}") from exc
-            faces.append(_inspect_font(path, None))
+            faces.append(_inspect_font(path, None, category=cat))
         else:
             try:
                 count = len(collection.fonts)
             finally:
                 collection.close()
-            faces.extend(_inspect_font(path, index) for index in range(count))
+            faces.extend(_inspect_font(path, index, category=cat) for index in range(count))
+
     return faces
 
 
@@ -785,8 +824,16 @@ def _ensure_ttf(input_path: Path, output_dir: Path) -> Path:
     from fontTools.ttLib import TTFont
     output_path = output_dir / (input_path.stem + ".ttf")
     if input_path.suffix.lower() in {".ttc", ".otc"}:
-        shutil.copy2(input_path, output_path)
-        return output_path
+        TTCollection, _ = require_fonttools()
+        try:
+            collection = TTCollection(str(input_path))
+            for i in range(len(collection.fonts)):
+                sub_path = output_dir / f"{input_path.stem}_{i}.ttf"
+                collection.fonts[i].save(str(sub_path))
+            return output_dir / f"{input_path.stem}_0.ttf"
+        except Exception:
+            shutil.copy2(input_path, output_path)
+            return output_path
 
     try:
         font = TTFont(str(input_path))
@@ -834,18 +881,40 @@ def _set_name(font, name_id: int, value: str) -> None:
         table.setName(value, name_id, 3, 1, 0x409)
 
 
-def _prefix_metadata(font, prefix: str) -> None:
-    family = _name(font, 16, 1) or "Font"
-    if family.lower().startswith(prefix.strip().lower()):
-        return
-    new_family = f"{prefix}{family}".strip()
+def transform_family_name(family: str) -> str:
+    cleaned = re.sub(r"(?i)\bmffm\b", "", family).strip(" -_")
+    words = cleaned.split()
+    if not words:
+        return "Mistu"
+    if "Mistu" in words:
+        return cleaned
+    if len(words) == 1:
+        return f"{words[0]} Mistu"
+    else:
+        return f"{words[0]} Mistu {' '.join(words[1:])}"
+
+
+def _apply_custom_metadata(font) -> None:
+    raw_family = _name(font, 16, 1) or "Font"
+    new_family = transform_family_name(raw_family)
     style = _name(font, 17, 2) or "Regular"
     full_name = f"{new_family} {style}".strip()
     postscript = re.sub(r"[^A-Za-z0-9-]", "", f"{new_family.replace(' ', '')}-{style.replace(' ', '')}")[:63]
+
     for name_id in (1, 16):
         _set_name(font, name_id, new_family)
     _set_name(font, 4, full_name)
     _set_name(font, 6, postscript)
+
+    version_str = _name(font, 5) or "Version 1.000"
+    if not version_str.endswith(";Mistu"):
+        if version_str.endswith(";"):
+            new_version_str = f"{version_str}Mistu"
+        else:
+            new_version_str = f"{version_str};Mistu"
+        _set_name(font, 5, new_version_str)
+
+    _set_name(font, 8, "Mistu @ MFFM Inc.")
 
 
 def _process_font(font, *, keep_hinting: bool, prefix_family: bool) -> None:
@@ -853,7 +922,7 @@ def _process_font(font, *, keep_hinting: bool, prefix_family: bool) -> None:
         _remove_hinting(font)
     _fix_metrics(font)
     if prefix_family:
-        _prefix_metadata(font, "MFFM ")
+        _apply_custom_metadata(font)
 
 
 def _format_number(value: float) -> str:
@@ -926,18 +995,72 @@ def _font_xml(filename: str, weight: int, style: str, *, index: int | None = Non
     return "\n".join(lines)
 
 
+def _generate_full_family_xml(faces: list[SourceFace], filename: str, get_index_fn) -> list[str]:
+    """Generates XML lines for a set of faces (full 100..900 for variable, exact faces for static)."""
+    lines: list[str] = []
+    upright_faces = [f for f in faces if f.style == "normal"]
+    italic_faces = [f for f in faces if f.style == "italic"]
+
+    for style, s_faces in (("normal", upright_faces), ("italic", italic_faces)):
+        if not s_faces:
+            continue
+        var_face = next((f for f in s_faces if f.variable and "wght" in f.axes), None)
+        if var_face is not None:
+            idx = get_index_fn(var_face)
+            for weight in WEIGHT_NAMES:
+                axes = _axis_values(var_face, weight, style == "italic")
+                if axes is not None:
+                    lines.append(_font_xml(filename, weight, style, index=idx, axes=axes))
+        else:
+            for face in s_faces:
+                idx = get_index_fn(face)
+                lines.append(_font_xml(filename, face.weight, face.style, index=idx))
+    return lines
+
+
 def _static_sort(face: SourceFace) -> tuple[int, int, int, str, int]:
     return (int(face.condensed), int(face.style == "italic"), face.weight, face.path.name.lower(), face.font_number or 0)
 
 
+def _face_preference_score(face: SourceFace) -> int:
+    name = face.path.stem.lower()
+    score = 0
+    if "hairline" in name: score -= 10
+    if "thin" in name: score += 10
+    if "extralight" in name: score += 10
+    if "ultralight" in name: score -= 5
+    if "regular" in name: score += 20
+    if "normal" in name: score += 15
+    if "book" in name: score -= 5
+    if "medium" in name: score += 10
+    if "semibold" in name: score += 10
+    if "demibold" in name: score -= 5
+    if "extrabold" in name: score += 10
+    if "ultrabold" in name: score -= 5
+    if "black" in name: score += 10
+    if "heavy" in name: score -= 5
+    if face.font_number is None:
+        score += 5
+    return score
+
+
 def _dedupe_static(faces: list[SourceFace]) -> list[SourceFace]:
-    found: dict[tuple[int, str, bool], SourceFace] = {}
-    for face in sorted(faces, key=_static_sort):
+    grouped: dict[tuple[int, str, bool], list[SourceFace]] = {}
+    for face in faces:
         key = (face.weight, face.style, face.condensed)
-        if key in found:
-            raise SystemExit(f"Duplicate static face for {key}: {found[key].label} and {face.label}")
-        found[key] = face
-    return sorted(found.values(), key=_static_sort)
+        grouped.setdefault(key, []).append(face)
+
+    selected: list[SourceFace] = []
+    for key, group in grouped.items():
+        if len(group) == 1:
+            selected.append(group[0])
+        else:
+            best = max(group, key=_face_preference_score)
+            other_labels = [f.label for f in group if f != best]
+            log.info(f"Duplicate face slot {key}: selected {best.label} over {', '.join(other_labels)}")
+            selected.append(best)
+
+    return sorted(selected, key=_static_sort)
 
 
 def _serif_fragment(entries: list[tuple[int, str, str]]) -> str:
@@ -952,20 +1075,22 @@ def _serif_fragment(entries: list[tuple[int, str, str]]) -> str:
     return "\n".join(selected)
 
 
-def _write_fragments(files_dir: Path, normal: list[tuple[int, str, str]], condensed: list[tuple[int, str, str]], clock: str) -> None:
+def _write_fragments(files_dir: Path, normal: list[tuple[int, str, str]], condensed: list[tuple[int, str, str]], has_custom_serif: bool = False) -> None:
     normal_xml = "\n".join(xml for _weight, _style, xml in normal)
     condensed_xml = "\n".join(xml for _weight, _style, xml in (condensed or normal))
     (files_dir / "sans.xml").write_text(normal_xml + "\n", encoding="utf-8", newline="\n")
     (files_dir / "condensed.xml").write_text(condensed_xml + "\n", encoding="utf-8", newline="\n")
-    (files_dir / "serif.xml").write_text(_serif_fragment(normal) + "\n", encoding="utf-8", newline="\n")
-    (files_dir / "clock.xml").write_text(clock + "\n", encoding="utf-8", newline="\n")
+    if not has_custom_serif:
+        (files_dir / "serif.xml").write_text(_serif_fragment(normal) + "\n", encoding="utf-8", newline="\n")
 
 
-def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool) -> tuple[list[SourceFace], tuple[str, ...]]:
+def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, mono_faces: list[SourceFace] | None = None, serif_faces: list[SourceFace] | None = None) -> tuple[list[SourceFace], tuple[str, ...], int | None]:
     TTCollection, _font = require_fonttools()
     ordered = _dedupe_static(faces)
+    fonts = []
+    mono_index: int | None = None
 
-    if len(ordered) == 1:
+    if len(ordered) == 1 and not mono_faces and not serif_faces:
         face = ordered[0]
         output_name = "DroidSans.ttf"
         font = _open_font(face)
@@ -977,16 +1102,35 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
 
         xml = _font_xml(output_name, face.weight, face.style)
         entries = [(face.weight, face.style, xml)]
-        clock = _font_xml("GoogleSansClock-Regular.ttf", face.weight, face.style)
-        _write_fragments(files_dir, entries, [], clock)
-        return ordered, (output_name,)
+        _write_fragments(files_dir, entries, [])
+        return ordered, (output_name,), None
 
-    fonts = []
     try:
         for face in ordered:
             font = _open_font(face)
             _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
             fonts.append(font)
+
+        mface_idx_map: dict[int, int] = {}
+        if mono_faces:
+            for mface in mono_faces:
+                mfont = _open_font(mface)
+                _process_font(mfont, keep_hinting=keep_hinting, prefix_family=prefix_family)
+                midx = len(fonts)
+                mface_idx_map[id(mface)] = midx
+                if mono_index is None:
+                    mono_index = midx
+                fonts.append(mfont)
+
+        sface_idx_map: dict[int, int] = {}
+        if serif_faces:
+            for sface in serif_faces:
+                sfont = _open_font(sface)
+                _process_font(sfont, keep_hinting=keep_hinting, prefix_family=prefix_family)
+                sidx = len(fonts)
+                sface_idx_map[id(sface)] = sidx
+                fonts.append(sfont)
+
         output_name = "DroidSans.ttf"
         collection = TTCollection()
         collection.fonts = fonts
@@ -994,6 +1138,14 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
     finally:
         for font in fonts:
             font.close()
+
+    if mono_faces:
+        mono_lines = _generate_full_family_xml(mono_faces, "DroidSans.ttf", lambda f: mface_idx_map[id(f)])
+        (files_dir / "mono.xml").write_text("\n".join(mono_lines) + "\n", encoding="utf-8", newline="\n")
+
+    if serif_faces:
+        serif_lines = _generate_full_family_xml(serif_faces, "DroidSans.ttf", lambda f: sface_idx_map[id(f)])
+        (files_dir / "serif.xml").write_text("\n".join(serif_lines) + "\n", encoding="utf-8", newline="\n")
 
     normal: list[tuple[int, str, str]] = []
     condensed: list[tuple[int, str, str]] = []
@@ -1003,13 +1155,8 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
     if not normal:
         normal = list(condensed)
 
-    regular_index = min(
-        range(len(ordered)),
-        key=lambda index: (ordered[index].style != "normal", abs(ordered[index].weight - 400), ordered[index].condensed),
-    )
-    clock = _font_xml("GoogleSansClock-Regular.ttf", 400, "normal", index=regular_index)
-    _write_fragments(files_dir, normal, condensed, clock)
-    return ordered, (output_name,)
+    _write_fragments(files_dir, normal, condensed, has_custom_serif=bool(serif_faces))
+    return ordered, (output_name,), mono_index
 
 
 def _pick_variable_faces(faces: list[SourceFace]) -> tuple[SourceFace, SourceFace]:
@@ -1040,36 +1187,68 @@ def _save_face(face: SourceFace, output: Path, *, keep_hinting: bool, prefix_fam
         font.close()
 
 
-def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool) -> tuple[list[SourceFace], tuple[str, ...]]:
+def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, mono_faces: list[SourceFace] | None = None, serif_faces: list[SourceFace] | None = None) -> tuple[list[SourceFace], tuple[str, ...], int | None]:
+    TTCollection, _font = require_fonttools()
     upright, italic = _pick_variable_faces(faces)
-    upright_name = f"DroidSans{_variable_extension(upright)}"
-    italic_name = upright_name
-    _save_face(upright, files_dir / upright_name, keep_hinting=keep_hinting, prefix_family=prefix_family)
-    payload = [upright_name]
+    output_name = "DroidSans.ttf"
+    var_fonts = []
+    mono_index: int | None = None
 
+    upright_font = _open_font(upright)
+    _process_font(upright_font, keep_hinting=keep_hinting, prefix_family=prefix_family)
+    var_fonts.append(upright_font)
+    upright_idx = 0
+
+    italic_idx = 0
     if italic != upright:
-        italic_name = "DroidSans-Bold.ttf"
-        _save_face(italic, files_dir / italic_name, keep_hinting=keep_hinting, prefix_family=prefix_family)
-        payload.append(italic_name)
+        italic_font = _open_font(italic)
+        _process_font(italic_font, keep_hinting=keep_hinting, prefix_family=prefix_family)
+        italic_idx = len(var_fonts)
+        var_fonts.append(italic_font)
+
+    mface_idx_map: dict[int, int] = {}
+    if mono_faces:
+        for mface in mono_faces:
+            mfont = _open_font(mface)
+            _process_font(mfont, keep_hinting=keep_hinting, prefix_family=prefix_family)
+            midx = len(var_fonts)
+            mface_idx_map[id(mface)] = midx
+            if mono_index is None:
+                mono_index = midx
+            var_fonts.append(mfont)
+        mono_lines = _generate_full_family_xml(mono_faces, output_name, lambda f: mface_idx_map[id(f)])
+        (files_dir / "mono.xml").write_text("\n".join(mono_lines) + "\n", encoding="utf-8", newline="\n")
+
+    sface_idx_map: dict[int, int] = {}
+    if serif_faces:
+        for sface in serif_faces:
+            sfont = _open_font(sface)
+            _process_font(sfont, keep_hinting=keep_hinting, prefix_family=prefix_family)
+            sidx = len(var_fonts)
+            sface_idx_map[id(sface)] = sidx
+            var_fonts.append(sfont)
+        serif_lines = _generate_full_family_xml(serif_faces, output_name, lambda f: sface_idx_map[id(f)])
+        (files_dir / "serif.xml").write_text("\n".join(serif_lines) + "\n", encoding="utf-8", newline="\n")
+
+    collection = TTCollection()
+    collection.fonts = var_fonts
+    collection.save(str(files_dir / output_name))
+    for font in var_fonts:
+        font.close()
+    payload = [output_name]
 
     entries: list[tuple[int, str, str]] = []
-    for style, face, filename in (("normal", upright, upright_name), ("italic", italic, italic_name)):
+    for style, face, idx in (("normal", upright, upright_idx), ("italic", italic, italic_idx)):
         for weight in WEIGHT_NAMES:
             axes = _axis_values(face, weight, style == "italic")
             if axes is not None:
-                entries.append((weight, style, _font_xml(filename, weight, style, axes=axes)))
+                entries.append((weight, style, _font_xml(output_name, weight, style, index=idx, axes=axes)))
     entries.sort(key=lambda item: (item[1] == "italic", item[0]))
     if not entries:
         raise SystemExit("The variable font has no usable wght axis values between 100 and 900")
 
-    clock_axes = _axis_values(upright, 400, False)
-    if clock_axes is None:
-        closest = min(WEIGHT_NAMES, key=lambda weight: abs(weight - upright.axes["wght"][1]))
-        clock_axes = _axis_values(upright, closest, False)
-    clock_name = "GoogleSansClock-Regular" + _variable_extension(upright)
-    clock = _font_xml(clock_name, 400, "normal", axes=clock_axes)
-    _write_fragments(files_dir, entries, [], clock)
-    return [upright] + ([italic] if italic != upright else []), tuple(payload)
+    _write_fragments(files_dir, entries, [], has_custom_serif=bool(serif_faces))
+    return [upright] + ([italic] if italic != upright else []), tuple(payload), mono_index
 
 
 STANDARD_FEATURE_NAMES: dict[str, str] = {
@@ -1232,18 +1411,18 @@ def prompt_add_centered_colon_if_missing(font_paths: Iterable[Path], interactive
     return False
 
 
-def prompt_feature_selection(available_features: dict[str, str]) -> list[str]:
+def prompt_feature_selection(available_features: dict[str, str], category_name: str = "Sans-serif") -> list[str]:
     """Prompt user interactively to view all OpenType features with safety recommendations and select ones to freeze."""
     if not available_features:
-        print("\nNo OpenType Layout features detected in input font(s).")
+        print(f"\nNo OpenType Layout features detected in {category_name} font(s).")
         return []
 
     print("\n------------------------------------------------------------")
-    print("OpenType Feature Freezer Tool Integration")
+    print(f"OpenType Feature Freezer Tool Integration — {category_name}")
     print("------------------------------------------------------------")
-    choice = input("Do you want to freeze any OpenType layout features (Stylistic Sets, Character Variants, Slashed Zero, Tabular Figures, etc.)? (y/N): ").strip().lower()
+    choice = input(f"Do you want to freeze any OpenType layout features for {category_name} font family? (y/N): ").strip().lower()
     if choice not in ("y", "yes"):
-        print("Skipping feature freezing.")
+        print(f"Skipping feature freezing for {category_name}.")
         return []
 
     safe_feats = {k: v for k, v in available_features.items() if k not in UNSAFE_FEATURES and k not in CAUTION_FEATURES}
@@ -1415,7 +1594,10 @@ def inject_centered_colon(font_path: Path) -> bool:
     from fontTools.ttLib.tables.otTables import ChainContextSubst, Coverage, Lookup, SingleSubst, SubstLookupRecord, FeatureRecord, Feature
 
     try:
-        font = TTFont(str(font_path))
+        try:
+            font = TTFont(str(font_path))
+        except Exception:
+            font = TTFont(str(font_path), fontNumber=0)
     except Exception as exc:
         log.warning(f"Could not open {font_path.name} for centered colon injection: {exc}")
         return False
@@ -1598,6 +1780,22 @@ def inject_centered_colon(font_path: Path) -> bool:
         return False
 
 
+def _separate_primary_and_optional_faces(all_faces: list[SourceFace], files_dir: Path) -> tuple[list[SourceFace], list[SourceFace], list[SourceFace]]:
+    sans_faces: list[SourceFace] = []
+    mono_faces: list[SourceFace] = []
+    serif_faces: list[SourceFace] = []
+
+    for face in all_faces:
+        if face.category == "mono":
+            mono_faces.append(face)
+        elif face.category == "serif":
+            serif_faces.append(face)
+        else:
+            sans_faces.append(face)
+
+    return (sans_faces or all_faces), _dedupe_static(mono_faces), _dedupe_static(serif_faces)
+
+
 def compile_fonts(
     fonts_dir: Path,
     module_dir: Path,
@@ -1606,6 +1804,8 @@ def compile_fonts(
     keep_hinting: bool = False,
     prefix_family: bool = True,
     features: list[str] | str | None = None,
+    mono_features: list[str] | str | None = None,
+    serif_features: list[str] | str | None = None,
     interactive_features: bool | None = None,
     centered_colon: bool | None = None,
 ) -> CompileResult:
@@ -1613,6 +1813,7 @@ def compile_fonts(
     files_dir.mkdir(parents=True, exist_ok=True)
     for name in GENERATED_FILES:
         (files_dir / name).unlink(missing_ok=True)
+    (files_dir / "clock.xml").unlink(missing_ok=True)
 
     temp_fonts_dir = module_dir / ".temp_ttf_fonts"
     if temp_fonts_dir.exists():
@@ -1620,45 +1821,110 @@ def compile_fonts(
     temp_fonts_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        for path in fonts_dir.iterdir():
+        source_entries: list[tuple[Path, str]] = []
+        for path in sorted(fonts_dir.rglob("*")):
             if path.is_file() and path.suffix.lower() in FONT_EXTENSIONS:
-                _ensure_ttf(path, temp_fonts_dir)
+                rel_parts = [part.lower() for part in path.relative_to(fonts_dir).parts[:-1]]
+                if any(part in ("monospace", "mono") for part in rel_parts):
+                    cat = "mono"
+                elif any(part == "serif" for part in rel_parts):
+                    cat = "serif"
+                elif any(part in ("sans", "sans-serif") for part in rel_parts):
+                    cat = "sans"
+                else:
+                    stem_lower = path.stem.lower()
+                    if any(m in stem_lower for m in ("mono", "code", "consolas", "courier")):
+                        cat = "mono"
+                    elif "serif" in stem_lower and "sans" not in stem_lower:
+                        cat = "serif"
+                    else:
+                        cat = "sans"
+                source_entries.append((path, cat))
 
-        temp_ttf_paths = sorted(p for p in temp_fonts_dir.iterdir() if p.is_file() and p.suffix.lower() in FONT_EXTENSIONS)
-        selected_features: list[str] = []
+        for path, cat in source_entries:
+            sub_dir = temp_fonts_dir / cat
+            sub_dir.mkdir(parents=True, exist_ok=True)
+            _ensure_ttf(path, sub_dir)
 
+        all_faces = discover_faces(temp_fonts_dir)
+        faces, mono_faces, serif_faces = _separate_primary_and_optional_faces(all_faces, files_dir)
+
+        sans_ttf_paths = sorted({face.path for face in faces})
+        mono_ttf_paths = sorted({face.path for face in mono_faces})
+        serif_ttf_paths = sorted({face.path for face in serif_faces})
+
+        applied_features: list[str] = []
         do_colon = centered_colon
-        if features is not None:
-            if isinstance(features, str):
-                selected_features = [f.strip() for f in features.split(",") if f.strip()]
-            else:
-                selected_features = [f.strip() for f in features if f.strip()]
-        else:
-            should_prompt = interactive_features if interactive_features is not None else sys.stdin.isatty()
-            if should_prompt:
-                if do_colon is None:
-                    do_colon = prompt_add_centered_colon_if_missing(temp_ttf_paths, interactive=should_prompt)
-                available = extract_features_from_fonts(temp_ttf_paths)
-                selected_features = prompt_feature_selection(available)
+        should_prompt = interactive_features if interactive_features is not None else sys.stdin.isatty()
 
-        if selected_features:
-            for font_path in temp_ttf_paths:
-                freeze_font_features(font_path, selected_features)
+        if features is not None or mono_features is not None or serif_features is not None:
+            def parse_feat(val):
+                if val is None:
+                    return []
+                if isinstance(val, str):
+                    return [f.strip() for f in val.split(",") if f.strip()]
+                return [f.strip() for f in val if f.strip()]
+
+            sans_feats = parse_feat(features)
+            mono_feats = parse_feat(mono_features) if mono_features is not None else sans_feats
+            serif_feats = parse_feat(serif_features) if serif_features is not None else sans_feats
+
+            for p in sans_ttf_paths:
+                freeze_font_features(p, sans_feats)
+            for p in mono_ttf_paths:
+                freeze_font_features(p, mono_feats)
+            for p in serif_ttf_paths:
+                freeze_font_features(p, serif_feats)
+
+            applied_features.extend(list(dict.fromkeys(sans_feats + mono_feats + serif_feats)))
+        elif should_prompt:
+            if do_colon is None:
+                do_colon = prompt_add_centered_colon_if_missing(sans_ttf_paths, interactive=should_prompt)
+
+            if sans_ttf_paths:
+                avail_sans = extract_features_from_fonts(sans_ttf_paths)
+                if avail_sans:
+                    feat_sans = prompt_feature_selection(avail_sans, category_name="Sans-serif")
+                    if feat_sans:
+                        for p in sans_ttf_paths:
+                            freeze_font_features(p, feat_sans)
+                        applied_features.extend(feat_sans)
+
+            if mono_ttf_paths:
+                avail_mono = extract_features_from_fonts(mono_ttf_paths)
+                if avail_mono:
+                    feat_mono = prompt_feature_selection(avail_mono, category_name="Monospace")
+                    if feat_mono:
+                        for p in mono_ttf_paths:
+                            freeze_font_features(p, feat_mono)
+                        applied_features.extend(feat_mono)
+
+            if serif_ttf_paths:
+                avail_serif = extract_features_from_fonts(serif_ttf_paths)
+                if avail_serif:
+                    feat_serif = prompt_feature_selection(avail_serif, category_name="Serif")
+                    if feat_serif:
+                        for p in serif_ttf_paths:
+                            freeze_font_features(p, feat_serif)
+                        applied_features.extend(feat_serif)
 
         if do_colon:
-            for font_path in temp_ttf_paths:
+            for font_path in sans_ttf_paths:
                 inject_centered_colon(font_path)
 
-        faces = discover_faces(temp_fonts_dir)
+        all_faces = discover_faces(temp_fonts_dir)
+        faces, mono_faces, serif_faces = _separate_primary_and_optional_faces(all_faces, files_dir)
         mode = detect_mode(faces, requested_mode)
         families = {face.family for face in faces}
         if len(families) > 1:
             raise SystemExit("Input files contain multiple font families: " + ", ".join(sorted(families)))
         family = next(iter(families))
+        if prefix_family:
+            family = transform_family_name(family)
         if mode == "static":
-            selected, payload = _compile_static(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family)
+            selected, payload, mono_index = _compile_static(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, mono_faces=mono_faces, serif_faces=serif_faces)
         else:
-            selected, payload = _compile_variable(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family)
+            selected, payload, mono_index = _compile_variable(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, mono_faces=mono_faces, serif_faces=serif_faces)
 
         primary = payload[0]
         config = [
@@ -1668,6 +1934,8 @@ def compile_fonts(
             f"FONT_PRIMARY={shell_quote(primary)}",
             f"CLOCK_FONT={shell_quote('GoogleSansClock-Regular' + Path(primary).suffix)}",
         ]
+        if mono_index is not None:
+            config.append(f"MONO_INDEX={shell_quote(str(mono_index))}")
         if mode == "variable":
             upright, italic = _pick_variable_faces(faces)
             config.extend(
@@ -1681,7 +1949,7 @@ def compile_fonts(
                 )
             )
         (module_dir / "font-config.sh").write_text("\n".join(config) + "\n", encoding="utf-8", newline="\n")
-        return CompileResult(mode, family, tuple(selected), payload, tuple(selected_features))
+        return CompileResult(mode, family, tuple(selected), payload, tuple(applied_features))
     finally:
         shutil.rmtree(temp_fonts_dir, ignore_errors=True)
 

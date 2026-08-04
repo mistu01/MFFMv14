@@ -19,6 +19,13 @@ LOG_DIR=${LOG_DIR:-/sdcard/MFFM}
 LOG_FILE=${LOG_FILE:-"$LOG_DIR/mffmv14_debug_$(date '+%Y%m%d_%H%M%S' 2>/dev/null || echo current).log"}
 mkdir -p "$LOG_DIR" 2>/dev/null
 
+# Clean old log files from previous installations in LOG_DIR before initializing fresh log
+if [ -d "$LOG_DIR" ]; then
+  for old_log in "$LOG_DIR"/mffmv14_debug_*.log "$LOG_DIR"/*.log; do
+    [ -f "$old_log" ] && [ "$old_log" != "$LOG_FILE" ] && rm -f "$old_log" 2>/dev/null
+  done
+fi
+
 DEBUG=${DEBUG:-1}
 if [ "$DEBUG" = "1" ] && [ -d "$LOG_DIR" ] && : >> "$LOG_FILE" 2>/dev/null; then
   exec 2>> "$LOG_FILE"
@@ -241,13 +248,14 @@ replace_family() {
   xml=$1
   family=$2
   fragment_file=$3
+  mode=${4:-"replace"}
   [ -f "$xml" ] || return 0
   [ -f "$fragment_file" ] || return 0
   grep -q "<family[^>]*name=\"$family\"" "$xml" 2>/dev/null || return 0
   fragment=$(cat "$fragment_file")
-  awk -v target="$family" -v replacement="$fragment" '
+  awk -v target="$family" -v replacement="$fragment" -v mode="$mode" '
     !inside && index($0, "<family") > 0 && index($0, "name=\"" target "\"") > 0 {
-      if (target == "sans-serif") {
+      if (target == "sans-serif" || mode == "split") {
         print
         print replacement
         print "  </family>"
@@ -260,7 +268,7 @@ replace_family() {
       next
     }
     inside {
-      if (target == "sans-serif") {
+      if (target == "sans-serif" || mode == "split" || mode == "prepend") {
         print
         if (index($0, "</family>") > 0) { inside=0 }
       } else {
@@ -305,14 +313,14 @@ install_product_font_payload() {
   mkdir -p "$dest" || fail "Could not create $dest"
   resolve_product_rubik_sources "$FONT_DIR/sans.xml"
 
-  [ -f "$FONT_DIR/$PRODUCT_RUBIK_REGULAR_SRC" ] || fail "Product upright source missing: $PRODUCT_RUBIK_REGULAR_SRC"
-  cp -f "$FONT_DIR/$PRODUCT_RUBIK_REGULAR_SRC" "$dest/$PRODUCT_RUBIK_REGULAR" || \
-    fail "Could not install $PRODUCT_RUBIK_REGULAR into $dest"
-
-  if [ "$PRODUCT_HAS_DEDICATED_ITALIC" = "1" ] && [ -n "$PRODUCT_RUBIK_ITALIC_SRC" ]; then
-    [ -f "$FONT_DIR/$PRODUCT_RUBIK_ITALIC_SRC" ] || fail "Product italic source missing: $PRODUCT_RUBIK_ITALIC_SRC"
-    cp -f "$FONT_DIR/$PRODUCT_RUBIK_ITALIC_SRC" "$dest/$PRODUCT_RUBIK_ITALIC" || \
-      fail "Could not install $PRODUCT_RUBIK_ITALIC into $dest"
+  if [ -f "$FONT_DIR/DroidSans.ttf" ]; then
+    cp -f "$FONT_DIR/DroidSans.ttf" "$dest/$PRODUCT_RUBIK_REGULAR" || fail "Could not install $PRODUCT_RUBIK_REGULAR into $dest"
+    cp -f "$FONT_DIR/DroidSans.ttf" "$dest/$PRODUCT_RUBIK_ITALIC" || fail "Could not install $PRODUCT_RUBIK_ITALIC into $dest"
+  else
+    for font_file in $FONT_FILES; do
+      [ -f "$FONT_DIR/$font_file" ] || fail "Product font payload missing: $font_file"
+      cp -f "$FONT_DIR/$font_file" "$dest/$font_file" || fail "Could not install $font_file into $dest"
+    done
   fi
 }
 
@@ -766,19 +774,28 @@ prepare_variable_config() {
   VF_LEGACY_CONFIG="$MFFM_DIR/MFFMv14_${safe_family}_VF.conf"
   VF_CONFIG_RESET=0
 
-  if [ -f "$VF_LEGACY_CONFIG" ]; then
-    rm -f "$VF_LEGACY_CONFIG" || fail "Could not remove legacy variable configuration"
-    VF_CONFIG_RESET=1
-  fi
-
-  if [ -f "$VF_CONFIG_FILE" ]; then
-    saved_identity=$(sed -n 's/^[[:space:]]*MODULE_IDENTITY[[:space:]]*=[[:space:]]*//p' "$VF_CONFIG_FILE" |
-      tail -n 1 | sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//')
-    saved_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA[[:space:]]*=[[:space:]]*//p' "$VF_CONFIG_FILE" |
-      tail -n 1 | sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//')
-    if [ "$saved_identity" != "$VF_CONFIG_ID" ] || [ "$saved_schema" != "$VF_CONFIG_SCHEMA" ]; then
-      rm -f "$VF_CONFIG_FILE" || fail "Could not remove mismatched variable configuration"
+  # Clean old or stale config files from previous installations/font modules in MFFM_DIR
+  if [ -d "$MFFM_DIR" ]; then
+    local old_cfg old_count=0
+    for old_cfg in "$MFFM_DIR"/*.conf "$MFFM_DIR"/MFFMv14_*.conf; do
+      [ -f "$old_cfg" ] || continue
+      if [ "$old_cfg" = "$VF_CONFIG_FILE" ]; then
+        saved_identity=$(sed -n 's/^[[:space:]]*MODULE_IDENTITY[[:space:]]*=[[:space:]]*//p' "$old_cfg" 2>/dev/null |
+          tail -n 1 | sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//')
+        saved_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA[[:space:]]*=[[:space:]]*//p' "$old_cfg" 2>/dev/null |
+          tail -n 1 | sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//')
+        if [ "$saved_identity" = "$VF_CONFIG_ID" ] && [ "$saved_schema" = "$VF_CONFIG_SCHEMA" ]; then
+          # Valid matching config for this specific module -> KEEP & USE IT!
+          continue
+        fi
+      fi
+      # Old, stale, or mismatched font config -> clean it up!
+      rm -f "$old_cfg" 2>/dev/null
+      old_count=$((old_count + 1))
       VF_CONFIG_RESET=1
+    done
+    if [ $old_count -gt 0 ]; then
+      ui_print "  [OK] Cleaned $old_count old/stale config file(s) from $MFFM_DIR"
     fi
   fi
 
@@ -803,7 +820,7 @@ EOF
   ensure_profile_keys CONDENSED_ITALIC "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS"
 
   apply_profile SANS_UPRIGHT normal "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS" \
-    "$FONT_DIR/sans.xml" "$FONT_DIR/serif.xml" "$FONT_DIR/clock.xml"
+    "$FONT_DIR/sans.xml" "$FONT_DIR/serif.xml"
   apply_profile SANS_ITALIC italic "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS" \
     "$FONT_DIR/sans.xml" "$FONT_DIR/serif.xml"
   apply_profile CONDENSED_UPRIGHT normal "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS" \
@@ -876,14 +893,30 @@ for prefix in Beng Serif; do
   [ -n "$bundled" ] || bundled=$(find_first "$MFFM_DIR" "$prefix*.zip")
   [ -n "$bundled" ] && unzip -oq "$bundled" -d "$FONT_DIR"
 done
-mono=$(find_first "$FONT_DIR" 'Mono*.ttf')
-[ -n "$mono" ] || mono=$(find_first "$MFFM_DIR" 'Mono*.ttf')
-if [ -n "$mono" ]; then
-  cp -f "$mono" "$SYS_FONT/CutiveMono.ttf"
-  cp -f "$mono" "$SYS_FONT/DroidSansMono.ttf"
-  status_ok "Monospace font"
+if [ -f "$FONT_DIR/mono.xml" ]; then
+  for xml in "$SYS_XML" "$SYS_FALLBACK"; do
+    [ -f "$xml" ] || continue
+    replace_family "$xml" monospace "$FONT_DIR/mono.xml"
+    replace_family "$xml" cutive-mono "$FONT_DIR/mono.xml"
+    replace_family "$xml" droidsans-mono "$FONT_DIR/mono.xml"
+    if [ ! -f "$FONT_DIR/serif.xml" ]; then
+      replace_family "$xml" serif-monospace "$FONT_DIR/mono.xml" "prepend"
+    fi
+  done
+  status_ok "Native Monospace font (bundled in DroidSans.ttf)"
+elif [ -f "$FONT_DIR/CutiveMono.ttf" ] && [ -f "$FONT_DIR/DroidSansMono.ttf" ]; then
+  cp -f "$FONT_DIR/CutiveMono.ttf" "$SYS_FONT/CutiveMono.ttf"
+  cp -f "$FONT_DIR/DroidSansMono.ttf" "$SYS_FONT/DroidSansMono.ttf"
+  status_ok "Native Monospace font (module standalone files)"
 else
-  status_skip "Monospace font not supplied"
+  ext_mono=$(find_first "$MFFM_DIR" 'Mono*.ttf')
+  if [ -n "$ext_mono" ]; then
+    cp -f "$ext_mono" "$SYS_FONT/CutiveMono.ttf"
+    cp -f "$ext_mono" "$SYS_FONT/DroidSansMono.ttf"
+    status_ok "External Monospace font (copied from MFFM folder)"
+  else
+    status_skip "Monospace font not supplied"
+  fi
 fi
 
 if [ -f "$FONT_DIR/Beng-Regular.ttf" ] && [ -f "$FONT_DIR/Beng-Medium.ttf" ] && [ -f "$FONT_DIR/Beng-Bold.ttf" ]; then
@@ -900,17 +933,35 @@ else
   status_skip "Bengali fonts not supplied"
 fi
 
-if [ -f "$FONT_DIR/Serif-Regular.ttf" ] && [ -f "$FONT_DIR/Serif-Italic.ttf" ] && [ -f "$FONT_DIR/Serif-Bold.ttf" ] && [ -f "$FONT_DIR/Serif-BoldItalic.ttf" ]; then
-  cp -f "$FONT_DIR/Serif-Regular.ttf" "$SYS_FONT/NotoSerif-Regular.ttf"
-  cp -f "$FONT_DIR/Serif-Italic.ttf" "$SYS_FONT/NotoSerif-Italic.ttf"
-  cp -f "$FONT_DIR/Serif-Bold.ttf" "$SYS_FONT/NotoSerif-Bold.ttf"
-  cp -f "$FONT_DIR/Serif-BoldItalic.ttf" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
-  status_ok "Dedicated serif fonts"
-else
+if [ -f "$FONT_DIR/serif.xml" ]; then
   for xml in "$SYS_XML" "$SYS_FALLBACK"; do
-    replace_family "$xml" serif "$FONT_DIR/serif.xml"
+    [ -f "$xml" ] || continue
+    replace_family "$xml" serif "$FONT_DIR/serif.xml" "split"
+    replace_family "$xml" noto-serif "$FONT_DIR/serif.xml" "split"
+    replace_family "$xml" serif-monospace "$FONT_DIR/serif.xml" "split"
   done
-  status_ok "Selected family mapped as serif"
+  status_ok "Native Serif font (bundled in DroidSans.ttf)"
+elif [ -f "$FONT_DIR/NotoSerif-Regular.ttf" ] && [ -f "$FONT_DIR/NotoSerif-Bold.ttf" ]; then
+  cp -f "$FONT_DIR/NotoSerif-Regular.ttf" "$SYS_FONT/NotoSerif-Regular.ttf"
+  [ -f "$FONT_DIR/NotoSerif-Italic.ttf" ] && cp -f "$FONT_DIR/NotoSerif-Italic.ttf" "$SYS_FONT/NotoSerif-Italic.ttf"
+  cp -f "$FONT_DIR/NotoSerif-Bold.ttf" "$SYS_FONT/NotoSerif-Bold.ttf"
+  [ -f "$FONT_DIR/NotoSerif-BoldItalic.ttf" ] && cp -f "$FONT_DIR/NotoSerif-BoldItalic.ttf" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
+  status_ok "Native Serif font (module standalone files)"
+else
+  ext_s_reg=$(find_first "$MFFM_DIR" 'Serif-Regular.ttf')
+  ext_s_ital=$(find_first "$MFFM_DIR" 'Serif-Italic.ttf')
+  ext_s_bold=$(find_first "$MFFM_DIR" 'Serif-Bold.ttf')
+  ext_s_bital=$(find_first "$MFFM_DIR" 'Serif-BoldItalic.ttf')
+
+  if [ -n "$ext_s_reg" ] && [ -n "$ext_s_bold" ]; then
+    cp -f "$ext_s_reg" "$SYS_FONT/NotoSerif-Regular.ttf"
+    [ -n "$ext_s_ital" ] && cp -f "$ext_s_ital" "$SYS_FONT/NotoSerif-Italic.ttf"
+    cp -f "$ext_s_bold" "$SYS_FONT/NotoSerif-Bold.ttf"
+    [ -n "$ext_s_bital" ] && cp -f "$ext_s_bital" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
+    status_ok "External Serif fonts (copied from MFFM folder)"
+  else
+    status_skip "Dedicated serif fonts not supplied"
+  fi
 fi
 
 section "4/5" "Finalizing root integration"
