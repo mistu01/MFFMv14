@@ -23,12 +23,19 @@ This guide provides a comprehensive technical reference for creating, flashing, 
 5. [Legacy Module Migration (`update.py`)](#5-legacy-module-migration-updatepy)
 6. [Debugging & Troubleshooting](#6-debugging--troubleshooting)
 7. [Development & Tests](#7-development--tests)
+8. [Building on Android with Termux](#8-building-on-android-with-termux)
+   - [Python & Dependency Setup](#python--dependency-setup)
+   - [Where to Keep the Repository](#where-to-keep-the-repository)
+   - [Building & Flashing from the Phone](#building--flashing-from-the-phone)
+   - [Termux Troubleshooting](#termux-troubleshooting)
 
 ---
 
 ## 1. Prerequisites & Environment Setup
 
 Ensure Python 3.9 or newer is installed on your system. Before compiling fonts or running migration scripts, install all required dependencies:
+
+Building on the phone itself is supported — see [section 8](#8-building-on-android-with-termux) for Termux.
 
 ```bash
 pip install -r requirements.txt
@@ -252,3 +259,97 @@ committed. Coverage is split into three parts:
 
 The same commands run in CI (`.github/workflows/ci.yml`), together with `shellcheck -s sh` over the
 installer scripts and one `build.py --no-interactive --no-sign` build.
+
+---
+
+## 8. Building on Android with Termux
+
+The whole toolchain runs on the phone: MFFMv14 is pure Python plus POSIX shell, and the signer has a
+native `aarch64` build, so no PC is required. Install Termux from
+[F-Droid](https://f-droid.org/packages/com.termux/) or
+[GitHub](https://github.com/termux/termux-app/releases) — the Play Store build is outdated and
+cannot install current packages.
+
+### Python & Dependency Setup
+
+```bash
+pkg update && pkg upgrade
+# git is only needed if you clone instead of unpacking a release archive.
+pkg install python python-pip git openssl python-brotli python-cryptography
+pip install --upgrade pip
+```
+
+Install `brotli` and `cryptography` with `pkg`, **not** `pip`: both are C/Rust extensions, and the
+Termux packages ship prebuilt binaries while `pip` would try to compile them (`cryptography` needs a
+full Rust toolchain). With those two already present, the remaining requirements are pure Python:
+
+```bash
+pip install -r requirements.txt   # resolves to fonttools + opentype-feature-freezer
+```
+
+Grant access to your font files once, which creates `~/storage/`:
+
+```bash
+termux-setup-storage
+```
+
+### Where to Keep the Repository
+
+**Keep the project inside Termux' own home directory** (`~/MFFMv14`), not under
+`~/storage/shared` (`/sdcard`):
+
+```bash
+cd ~ && git clone https://github.com/mistu01/MFFMv14.git && cd MFFMv14
+```
+
+Signing downloads the pinned `zipsignerust-android-arm64` binary into `<project>/.mffm-signer/bin/`
+and executes it. Shared storage is mounted `noexec`, so a project placed there fails at the signing
+step with a permission error even though every other step works.
+
+Source fonts may live anywhere — point the builder at them instead of moving them:
+
+```bash
+python build.py --fonts-dir ~/storage/shared/Download/MyFont
+```
+
+### Building & Flashing from the Phone
+
+```bash
+python build.py --no-interactive
+```
+
+The ZIP lands in `dist/`. Install it without leaving the terminal, using the CLI of your root
+manager (each needs root, so run it under `su`):
+
+```bash
+su -c "magisk --install-module $PWD/dist/mffm14-*.zip"    # Magisk
+su -c "ksud module install $PWD/dist/mffm14-*.zip"        # KernelSU
+su -c "apd module install $PWD/dist/mffm14-*.zip"         # APatch
+```
+
+Then reboot. Alternatively copy the ZIP to shared storage and flash it from the manager app:
+
+```bash
+cp dist/mffm14-*.zip ~/storage/shared/Download/
+```
+
+For a variable module you can tune the axes and re-apply them from the same shell — no re-flash:
+
+```bash
+nano ~/storage/shared/MFFM/MFFMv14_*.conf
+su -c font-config
+```
+
+(see [Variable Font Dynamic Axis Tuning](#variable-font-dynamic-axis-tuning-conf-files); a reboot is
+still needed for running apps to pick up new values.)
+
+### Termux Troubleshooting
+
+| Symptom | Cause & fix |
+|---|---|
+| `Could not obtain ZipSignerust` | No network, or GitHub is unreachable. Build with `--no-sign` and flash from the manager app, which does not verify the signature. |
+| Permission denied when signing | The project sits on shared storage (`noexec`). Move it to `~/`. |
+| `Signing keys are missing` | `openssl` is not installed and `cryptography` is unavailable — `pkg install openssl python-cryptography`. |
+| `pip` tries to build `cryptography`/`brotli` and fails | The Termux packages were not installed first: `pkg install python-brotli python-cryptography`, then re-run `pip install -r requirements.txt`. |
+| `No supported ZipSignerust binary for Linux …` | A 32-bit Termux on a 64-bit phone reports `armv7l`; that asset is pinned too, so upgrade Termux rather than forcing the build. |
+| Fonts in `~/storage/shared` are not found | `termux-setup-storage` has not been run, or the Android storage permission was denied. |
