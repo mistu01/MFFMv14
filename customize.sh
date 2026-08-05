@@ -116,7 +116,7 @@ run_custom_scripts() {
 
   export MODPATH FONT_DIR SYS_FONT SYS_ETC SYS_XML SYS_FALLBACK
   export PRODUCT_FONT PRODUCT_ETC PRODUCT_XML MFFM_DIR
-  export FONT_MODE FONT_FAMILY FONT_FILES FONT_PRIMARY CLOCK_FONT
+  export FONT_MODE FONT_FAMILY FONT_FILES FONT_PRIMARY
   export LOG_DIR LOG_FILE
   MFFM="$MFFM_DIR"
   FONTDIR="$FONT_DIR"
@@ -164,6 +164,31 @@ run_custom_scripts() {
 copy_if_exists() {
   [ -f "$1" ] || return 1
   cp -f "$1" "$2"
+}
+
+# The Bengali families are keyed by lang/variant rather than name, so replace_family cannot be
+# reused. awk keeps this consistent with the other XML edits: toybox sed mishandles `c\` with
+# embedded newlines.
+replace_beng_family() {
+  local xml=$1 variant=$2
+  [ -f "$xml" ] || return 0
+  grep -q "<family lang=\"und-Beng\" variant=\"$variant\">" "$xml" 2>/dev/null || return 0
+  awk -v variant="$variant" '
+    !inside && index($0, "<family lang=\"und-Beng\" variant=\"" variant "\">") > 0 {
+      print "  <family lang=\"und-Beng\" variant=\"" variant "\">"
+      print "    <font weight=\"400\" style=\"normal\">NotoSansBengali-VF.ttf</font>"
+      print "    <font weight=\"500\" style=\"normal\">NotoSerifBengali-VF.ttf</font>"
+      print "    <font weight=\"700\" style=\"normal\">NotoSansBengaliUI-VF.ttf</font>"
+      print "  </family>"
+      if (index($0, "</family>") == 0) { inside=1 }
+      next
+    }
+    inside {
+      if (index($0, "</family>") > 0) { inside=0 }
+      next
+    }
+    { print }
+  ' "$xml" > "$xml.tmp" && mv -f "$xml.tmp" "$xml"
 }
 
 # Fonts are installed several times under $MODPATH (system overlay plus one or two product
@@ -274,6 +299,12 @@ replace_family() {
   [ -f "$xml" ] || return 0
   [ -f "$fragment_file" ] || return 0
   grep -q "<family[^>]*name=\"$family\"" "$xml" 2>/dev/null || return 0
+  # The awk program below assumes the opening tag, the fonts, and </family> are on separate lines.
+  # A single-line or self-closing family would make it swallow everything up to the next </family>.
+  if grep -qE "<family[^>]*name=\"$family\"[^>]*(/>|>.*</family>)" "$xml" 2>/dev/null; then
+    status_warn "Skipping $family in ${xml##*/}: this ROM writes the family on one line"
+    return 0
+  fi
   fragment=$(cat "$fragment_file")
   awk -v target="$family" -v replacement="$fragment" -v mode="$mode" '
     !inside && index($0, "<family") > 0 && index($0, "name=\"" target "\"") > 0 {
@@ -305,13 +336,6 @@ replace_family() {
 PRODUCT_RUBIK_REGULAR="Rubik-Regular.ttf"
 PRODUCT_RUBIK_ITALIC="Rubik-Italic.ttf"
 
-is_google_sans_product_name() {
-  case "$1" in
-    sans-serif|google-sans|google-sans-*|variable-*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 resolve_product_rubik_sources() {
   PRODUCT_HAS_DEDICATED_ITALIC=0
   PRODUCT_RUBIK_REGULAR_SRC=$FONT_PRIMARY
@@ -333,7 +357,7 @@ install_product_font_payload() {
   local dest=$1
   [ -n "$dest" ] || return 1
   mkdir -p "$dest" || fail "Could not create $dest"
-  resolve_product_rubik_sources "$FONT_DIR/sans.xml"
+  resolve_product_rubik_sources
 
   if [ -f "$FONT_DIR/DroidSans.ttf" ]; then
     link_or_copy "$FONT_DIR/DroidSans.ttf" "$dest/$PRODUCT_RUBIK_REGULAR" || fail "Could not install $PRODUCT_RUBIK_REGULAR into $dest"
@@ -364,7 +388,7 @@ patch_product_fonts_customization() {
     return 0
   fi
 
-  resolve_product_rubik_sources "$sans_fragment"
+  resolve_product_rubik_sources
   cp -f "$ORIGINAL_PRODUCT_XML" "$xml" || fail "Could not copy product fonts_customization.xml"
 
   awk -v sans_file="$sans_fragment" \
@@ -922,7 +946,12 @@ section "3/5" "Applying optional font resources"
 for prefix in Beng Serif; do
   bundled=$(find_first "$FONT_DIR" "$prefix*.zip")
   [ -n "$bundled" ] || bundled=$(find_first "$MFFM_DIR" "$prefix*.zip")
-  [ -n "$bundled" ] && unzip -oq "$bundled" -d "$FONT_DIR"
+  [ -n "$bundled" ] || continue
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -oq "$bundled" -d "$FONT_DIR" || status_warn "Could not extract ${bundled##*/}"
+  else
+    status_warn "unzip is unavailable; ignoring ${bundled##*/} (extract the fonts next to it instead)"
+  fi
 done
 if [ -f "$FONT_DIR/mono.xml" ]; then
   for xml in "$SYS_XML" "$SYS_FALLBACK"; do
@@ -956,8 +985,8 @@ if [ -f "$FONT_DIR/Beng-Regular.ttf" ] && [ -f "$FONT_DIR/Beng-Medium.ttf" ] && 
   cp -f "$FONT_DIR/Beng-Bold.ttf" "$SYS_FONT/NotoSansBengaliUI-VF.ttf"
   for xml in "$SYS_XML" "$SYS_FALLBACK"; do
     [ -f "$xml" ] || continue
-    sed -i '/<family lang="und-Beng" variant="elegant">/,/<\/family>/c\<family lang="und-Beng" variant="elegant">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
-    sed -i '/<family lang="und-Beng" variant="compact">/,/<\/family>/c\<family lang="und-Beng" variant="compact">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
+    replace_beng_family "$xml" elegant
+    replace_beng_family "$xml" compact
   done
   status_ok "Bengali fonts"
 else

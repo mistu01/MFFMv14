@@ -1547,7 +1547,6 @@ def compile_fonts(
             f"FONT_FAMILY={shell_quote(family)}",
             f"FONT_FILES={shell_quote(' '.join(payload))}",
             f"FONT_PRIMARY={shell_quote(primary)}",
-            f"CLOCK_FONT={shell_quote('GoogleSansClock-Regular' + Path(primary).suffix)}",
         ]
         if mode == "variable":
             upright, italic = _pick_variable_faces(faces)
