@@ -24,6 +24,7 @@ This guide provides a comprehensive technical reference for creating, flashing, 
 6. [Debugging & Troubleshooting](#6-debugging--troubleshooting)
 7. [Development & Tests](#7-development--tests)
 8. [Building on Android with Termux](#8-building-on-android-with-termux)
+   - [One-Command Build (`termux-build.sh`)](#one-command-build-termux-buildsh)
    - [Python & Dependency Setup](#python--dependency-setup)
    - [Where to Keep the Repository](#where-to-keep-the-repository)
    - [Building & Flashing from the Phone](#building--flashing-from-the-phone)
@@ -269,6 +270,35 @@ native `aarch64` build, so no PC is required. Install Termux from
 [F-Droid](https://f-droid.org/packages/com.termux/) or
 [GitHub](https://github.com/termux/termux-app/releases) — the Play Store build is outdated and
 cannot install current packages.
+
+### One-Command Build (`termux-build.sh`)
+
+`termux-build.sh` performs everything in this section — dependency installation, the build, and
+installing the module through your root manager:
+
+```bash
+cd ~/MFFMv14
+sh termux-build.sh
+```
+
+Run it as the **normal Termux user, not as root**: `pkg` corrupts its own file ownership when run as
+root, so the script refuses to start under `su` and instead invokes `su` itself for the single step
+that needs it (flashing). It asks before installing anything into your system.
+
+| Option | Effect |
+|---|---|
+| `--no-deps` | Skip `pkg`/`pip` installation and use the environment as it is. |
+| `--no-flash` | Build only, and print the flashing commands instead of running them. |
+| `--yes` | Do not ask for confirmation before installing the module. |
+| `-- …` | Everything after `--` is passed to `build.py`. |
+
+```bash
+sh termux-build.sh --yes -- --mode variable --fonts-dir ~/storage/shared/Download/MyFont
+```
+
+It degrades instead of failing: if the checkout is on `noexec` shared storage it builds unsigned, and
+if there is no root shell or no `magisk`/`ksud`/`apd` it stops after the build and tells you how to
+flash the ZIP by hand. The rest of this section documents the same steps manually.
 
 ### Python & Dependency Setup
 
