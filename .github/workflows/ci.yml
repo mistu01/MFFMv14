@@ -36,6 +36,13 @@ jobs:
           python build.py --no-interactive --no-sign
           test -f Files/DroidSans.ttf
           test -f Files/mono.xml
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          names = set(zipfile.ZipFile(next(Path("dist").glob("*.zip"))).namelist())
+          missing = {"fontlib.sh", "font-config"} - names
+          assert not missing, f"module ZIP is missing {missing}"
+          PY
 
   shell:
     runs-on: ubuntu-latest
@@ -48,5 +55,5 @@ jobs:
       - name: Shellcheck
         run: |
           shellcheck -S warning -s sh -e SC3043,SC3021,SC1090,SC1091 \
-            customize.sh service.sh post-mount.sh uninstall.sh \
+            customize.sh fontlib.sh font-config service.sh post-mount.sh uninstall.sh \
             META-INF/com/google/android/update-binary

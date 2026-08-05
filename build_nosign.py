@@ -6,7 +6,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from build import build_module, parse_args
+from build import build_module, check_payload, parse_args
 
 ROOT = Path(__file__).resolve().parent
 
@@ -14,8 +14,7 @@ ROOT = Path(__file__).resolve().parent
 def main() -> int:
     sys.argv.append("--no-sign")
     args = parse_args()
-    if not (ROOT / "customize.sh").exists():
-        raise SystemExit("Template payload is incomplete: customize.sh is missing")
+    check_payload(ROOT)
     build_module(args)
     return 0
 
