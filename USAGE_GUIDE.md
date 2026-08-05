@@ -59,7 +59,9 @@ All discovered font faces (Sans-serif static or variable, Monospace static or va
 - **Indices M1..Mn**: Monospace font faces.
 - **Indices R1..Rn**: Serif font faces.
 
-Corresponding XML configuration fragments (`sans.xml`, `condensed.xml`, `mono.xml`, `serif.xml`, `clock.xml`) are generated in `Files/` referencing `DroidSans.ttf` at their respective TTC face indices.
+Corresponding XML configuration fragments (`sans.xml`, `condensed.xml`, `mono.xml`, `serif.xml`) are generated in `Files/` referencing `DroidSans.ttf` at their respective TTC face indices.
+
+If only Monospace or only Serif fonts are supplied, those faces also act as the primary family: they are embedded once, and `sans.xml` points at the same indices as `mono.xml` / `serif.xml`.
 
 ### Per-Family OpenType Feature Freezing
 `build.py` integrates `pyftfeatfreeze` for interactive or headless OpenType feature freezing.
@@ -116,14 +118,17 @@ When flashed in Magisk / KernelSU / APatch, `customize.sh` executes 5 distinct s
    - Copies `DroidSans.ttf` from `Files/` to `/system/fonts/DroidSans.ttf`.
 2. **Section 2/5: Patching Android font families**
    - Patches `/system/etc/fonts.xml` and `font_fallback.xml` for `sans-serif`, `sans-serif-condensed`, `roboto-flex`, `serif`, `noto-serif`.
-   - On ROMs with `/product/etc/fonts_customization.xml` (e.g. Google Pixel), copies `DroidSans.ttf` as `Rubik-Regular.ttf` / `Rubik-Italic.ttf` into `/product/fonts` and patches product XML entries.
+   - On ROMs with `/product/etc/fonts_customization.xml` (e.g. Google Pixel), installs `DroidSans.ttf` as `Rubik-Regular.ttf` into `/product/fonts` and patches product XML entries. A separate `Rubik-Italic.ttf` is written only when the module ships a dedicated italic payload file; otherwise the italic entries reference `Rubik-Regular.ttf` by face index. Every payload path is hard-linked where the filesystem allows it, so the collection is stored once regardless of how many overlay paths need it.
 3. **Section 3/5: Applying optional font resources**
    - Evaluates **Monospace** and **Serif** priority rules (see Section 4).
    - Installs Bengali font overlays if supplied (`Beng-*.ttf`).
 4. **Section 4/5: Finalizing root integration**
    - Sets SELinux `trusted.overlay.opaque` extended attributes (`setfattr`) on KernelSU/APatch for overlay directory mount stability.
-5. **Section 5/5: Variable font axis configuration**
-   - Creates or loads schema v2 axis configuration files (`.conf`) in `/sdcard/MFFM/`.
+5. **Section 5/5: Running custom local scripts**
+   - Sources every `/sdcard/MFFM/*.sh` file **as root**, in alphabetical order, exporting the installer paths (`MODPATH`, `FONT_DIR`, `SYS_FONT`, `SYS_XML`, `PRODUCT_XML`, …) for them to use. A failing script aborts the installation.
+   - Because any app with storage permission can write to `/sdcard`, this step is **opt-in**: create an empty `/sdcard/MFFM/allow-custom-scripts` file to enable it. Without that marker the scripts are listed and skipped.
+
+Variable-font axis configuration (schema v2 `.conf` files in `/sdcard/MFFM/`) is created or loaded before section 1/5.
 
 ---
 
@@ -137,10 +142,10 @@ When installing monospace fonts, `customize.sh` checks in two tiers:
 
 1. **Priority 1 (Module Native Monospace - Highest Priority)**:
    - If the module contains native monospace fonts (bundled into `DroidSans.ttf` via `Files/mono.xml`), the installer uses `mono.xml` to patch `fonts.xml` for `monospace`, `cutive-mono`, and `droidsans-mono`.
-   - **Any external `/sdcard/MFFM/Mono.ttf` file is IGNORED.**
+   - **Any external `/sdcard/MFFM/Mono*.ttf` file is IGNORED.**
 2. **Priority 2 (External Monospace Fallback)**:
    - If the module has NO native monospace font (`Files/mono.xml` absent):
-   - The installer searches `/sdcard/MFFM/Mono.ttf` and copies it directly to `/system/fonts/CutiveMono.ttf` and `/system/fonts/DroidSansMono.ttf`.
+   - The installer takes the first `/sdcard/MFFM/Mono*.ttf` match (e.g. `Mono.ttf`, `Mono-Regular.ttf`) and copies it directly to `/system/fonts/CutiveMono.ttf` and `/system/fonts/DroidSansMono.ttf`.
 
 ### Serif Font Priority Rules
 
@@ -156,7 +161,9 @@ When installing monospace fonts, `customize.sh` checks in two tiers:
 For Variable Font modules, a configuration file is created at:
 `/sdcard/MFFM/MFFMv14_<Family>_<ID>.conf`
 
-Users can edit this `.conf` file to adjust variable font weights and axis values (e.g. `wght`, `opsz`, `wdth`, `grad`) without re-flashing:
+Variable mode requires the source font to expose a `wght` axis (Android selects weights through it); a variable font without `wght` is rejected at build time.
+
+Users can edit this `.conf` file to adjust variable font weights and axis values (e.g. `wght`, `opsz`, `wdth`, `grad`):
 ```ini
 CONFIG_SCHEMA=2
 MODULE_IDENTITY=vf-a1b2c3d4e5f678901234
@@ -168,8 +175,7 @@ SANS_UPRIGHT_BOLD_WGHT=700
 SANS_UPRIGHT_OPSZ=20
 ```
 
-To re-apply updated axis values live without re-flashing:
-Run `/system/bin/font-config` from a root terminal, or simply reboot the device.
+To re-apply updated axis values, re-flash the module: the installer reads the `.conf` file and rewrites the XML fragments from it. The `Files/` payload and `font-config.sh` are deleted once installation finishes, so the axis values cannot be re-applied from the installed module alone.
 
 ---
 

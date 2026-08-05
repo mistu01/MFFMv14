@@ -7,6 +7,8 @@
 
 umask 022
 OUTFD=$2
+# ZIPFILE is read by install_module from the sourced root-manager util_functions.
+# shellcheck disable=SC2034
 ZIPFILE=$3
 
 mount /data 2>/dev/null

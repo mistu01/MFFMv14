@@ -10,7 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Literal
 
@@ -50,7 +50,8 @@ class SourceFace:
     style: str
     condensed: bool
     variable: bool
-    axes: dict[str, tuple[float, float, float]]
+    # Excluded from the generated __hash__: a dict field would make the frozen instance unhashable.
+    axes: dict[str, tuple[float, float, float]] = field(hash=False)
     sfnt_version: str
     category: str = "sans"
 
@@ -229,31 +230,37 @@ def _inspect_font(path: Path, font_number: int | None, category: str = "sans") -
         )
 
 
+def categorize(path: Path, fonts_dir: Path) -> str:
+    """Classify a source font as sans, mono, or serif by its folder, falling back to its filename."""
+    rel_parts = [part.lower() for part in path.relative_to(fonts_dir).parts[:-1]]
+    if any(part in ("monospace", "mono") for part in rel_parts):
+        return "mono"
+    if any(part == "serif" for part in rel_parts):
+        return "serif"
+    if any(part in ("sans", "sans-serif") for part in rel_parts):
+        return "sans"
+    stem_lower = path.stem.lower()
+    if any(tag in stem_lower for tag in ("mono", "code", "consolas", "courier")):
+        return "mono"
+    if "serif" in stem_lower and "sans" not in stem_lower:
+        return "serif"
+    return "sans"
+
+
+def source_entries(fonts_dir: Path) -> list[tuple[Path, str]]:
+    return [
+        (path, categorize(path, fonts_dir))
+        for path in sorted(fonts_dir.rglob("*"))
+        if path.is_file() and path.suffix.lower() in FONT_EXTENSIONS
+    ]
+
+
 def discover_faces(fonts_dir: Path) -> list[SourceFace]:
     TTCollection, _font = require_fonttools()
     if not fonts_dir.is_dir():
         raise SystemExit(f"Font input directory does not exist: {fonts_dir}")
 
-    file_entries: list[tuple[Path, str]] = []
-    for p in sorted(fonts_dir.rglob("*")):
-        if p.is_file() and p.suffix.lower() in FONT_EXTENSIONS:
-            rel_parts = [part.lower() for part in p.relative_to(fonts_dir).parts[:-1]]
-            if any(part in ("monospace", "mono") for part in rel_parts):
-                cat = "mono"
-            elif any(part == "serif" for part in rel_parts):
-                cat = "serif"
-            elif any(part in ("sans", "sans-serif") for part in rel_parts):
-                cat = "sans"
-            else:
-                stem_lower = p.stem.lower()
-                if any(m in stem_lower for m in ("mono", "code", "consolas", "courier")):
-                    cat = "mono"
-                elif "serif" in stem_lower and "sans" not in stem_lower:
-                    cat = "serif"
-                else:
-                    cat = "sans"
-            file_entries.append((p, cat))
-
+    file_entries = source_entries(fonts_dir)
     if not file_entries:
         raise SystemExit(f"No TTF, OTF, TTC, or OTC fonts found in {fonts_dir}")
 
@@ -302,7 +309,7 @@ def _remove_hinting(font) -> None:
                 glyph.removeHinting()
 
 
-log = logging.getLogger("font_metrics_rewriter")
+log = logging.getLogger("mffm.font_module")
 
 FFIX3_REFERENCE_UPM = 2048
 FFIX3_METRICS = (
@@ -317,423 +324,11 @@ FFIX3_METRICS = (
     ("head", "yMax", 2163),
     ("head", "yMin", -555),
 )
-
-REFERENCE_STATIC_UPRIGHT = {
-    ("head", "yMin"): -555, ("head", "yMax"): 2163, ("head", "macStyle"): 0,
-    ("hhea", "ascent"): 1900, ("hhea", "descent"): -500, ("hhea", "lineGap"): 0,
-    ("hhea", "caretSlopeRise"): 1, ("hhea", "caretSlopeRun"): 0, ("hhea", "caretOffset"): 0,
-    ("hhea", "reserved0"): 0, ("hhea", "reserved1"): 0, ("hhea", "reserved2"): 0, ("hhea", "reserved3"): 0,
-    ("hhea", "metricDataFormat"): 0,
-    ("OS/2", "sTypoAscender"): 2146, ("OS/2", "sTypoDescender"): -555, ("OS/2", "sTypoLineGap"): 0,
-    ("OS/2", "usWinAscent"): 2146, ("OS/2", "usWinDescent"): 555, ("OS/2", "sxHeight"): 1082,
-    ("OS/2", "sCapHeight"): 1456, ("OS/2", "usDefaultChar"): 0, ("OS/2", "usBreakChar"): 32,
-    ("OS/2", "usMaxContext"): 3,
-    ("post", "underlinePosition"): -150, ("post", "underlineThickness"): 100,
-    ("vhea", "ascent"): 800, ("vhea", "descent"): -800, ("vhea", "lineGap"): 0,
-    ("post", "italicAngle"): 0.0, ("hhea", "italicAngle"): 0,
-}
-
-REFERENCE_STATIC_ITALIC = dict(REFERENCE_STATIC_UPRIGHT)
-REFERENCE_STATIC_ITALIC.update({
-    ("head", "macStyle"): 2,
-    ("post", "italicAngle"): -12.0,
-})
-
-REFERENCE_VAR = dict(REFERENCE_STATIC_UPRIGHT)
-
-WRITABLE_METRICS = [
-    ("head", "yMin"), ("head", "yMax"),
-    ("hhea", "ascent"), ("hhea", "descent"), ("hhea", "lineGap"),
-    ("hhea", "caretSlopeRise"), ("hhea", "caretSlopeRun"), ("hhea", "caretOffset"),
-    ("OS/2", "sTypoAscender"), ("OS/2", "sTypoDescender"), ("OS/2", "sTypoLineGap"),
-    ("OS/2", "usWinAscent"), ("OS/2", "usWinDescent"), ("OS/2", "sxHeight"), ("OS/2", "sCapHeight"),
-    ("post", "underlinePosition"), ("post", "underlineThickness"),
-    ("vhea", "ascent"), ("vhea", "descent"), ("vhea", "lineGap"),
-]
-
-ITALIC_METRICS = [
-    ("post", "italicAngle"),
-    ("hhea", "italicAngle"),
-]
-
-MVAR_METRIC_TAGS = {"hasc", "hdsc", "hlgp", "tasc", "tdsc", "tlgp", "wasc", "wdsc", "unds", "undt", "dscs"}
-HVAR_METRIC_TAGS = {"LsbMap"}
-
-
-class FontMetricRewriter:
-    REFERENCE_UPM = 2048
-    FAMILY_SUFFIX = "MFFM"
-    FAMILY_NAME_IDS = {1, 16, 21}
-    POSTSCRIPT_NAME_IDS = {6, 20, 25}
-
-    def __init__(self, reference_font_path: str = None):
-        self.reference = dict(REFERENCE_STATIC_UPRIGHT)
-        self._extract_from_reference_file = False
-        if reference_font_path:
-            self._load_from_reference_file(reference_font_path)
-
-    def _load_from_reference_file(self, path: str):
-        try:
-            from fontTools.ttLib import TTFont
-            reference_font = TTFont(path)
-        except Exception as exc:
-            log.warning(f"Could not load reference font '{path}': {exc}. Using built-in reference values.")
-            return
-
-        extracted = {}
-        for (tbl, fld) in WRITABLE_METRICS:
-            table = reference_font.get(tbl)
-            if table and hasattr(table, fld):
-                extracted[(tbl, fld)] = getattr(table, fld)
-
-        for (tbl, fld) in ITALIC_METRICS:
-            table = reference_font.get(tbl)
-            if table and hasattr(table, fld):
-                extracted[(tbl, fld)] = getattr(table, fld)
-
-        if extracted:
-            self.reference = extracted
-            self._extract_from_reference_file = True
-            log.info(f"Extracted {len(extracted)} metrics from reference font: {path}")
-        else:
-            log.warning("No metrics extracted from reference font. Using built-in reference values.")
-        reference_font.close()
-
-    def _select_reference(self, font):
-        if self._extract_from_reference_file:
-            return
-        is_var = self._is_variable(font)
-        is_italic = False
-        post = font.get("post")
-        if post and getattr(post, "italicAngle", 0) != 0:
-            is_italic = True
-        head = font.get("head")
-        if head and (getattr(head, "macStyle", 0) & 2):
-            is_italic = True
-
-        if is_var:
-            self.reference = dict(REFERENCE_VAR)
-        elif is_italic:
-            self.reference = dict(REFERENCE_STATIC_ITALIC)
-        else:
-            self.reference = dict(REFERENCE_STATIC_UPRIGHT)
-
-    @staticmethod
-    def _get_upm(font) -> int:
-        head = font.get("head")
-        if head is None:
-            raise ValueError("Font missing 'head' table; cannot determine UPM.")
-        return head.unitsPerEm
-
-    @staticmethod
-    def _scale(val: int, from_upm: int, to_upm: int) -> int:
-        return int(round(val * to_upm / from_upm))
-
-    def _scale_all_references(self, target_upm: int) -> dict:
-        return {key: self._scale(val, self.REFERENCE_UPM, target_upm) for key, val in self.reference.items()}
-
-    def extract_metrics(self, font, include_italic: bool = False) -> dict:
-        metrics = {}
-        field_list = list(WRITABLE_METRICS)
-        if include_italic:
-            field_list.extend(ITALIC_METRICS)
-        for (tbl, fld) in field_list:
-            table = font.get(tbl)
-            if table is not None and hasattr(table, fld):
-                metrics[(tbl, fld)] = getattr(table, fld)
-        return metrics
-
-    @staticmethod
-    def _decode_name_record(record) -> str | None:
-        try:
-            return record.toUnicode()
-        except Exception:
-            try:
-                return record.string.decode(record.getEncoding(), errors="replace")
-            except Exception:
-                return None
-
-    @staticmethod
-    def _encode_name_record(record, value: str) -> None:
-        try:
-            record.string = value.encode(record.getEncoding(), errors="replace")
-        except Exception:
-            record.string = value.encode("utf-16-be", errors="replace")
-
-    @staticmethod
-    def _name_record_priority(record) -> tuple:
-        if record.platformID == 3 and record.langID in (0x409, 0):
-            return (0, record.nameID)
-        if record.platformID == 3:
-            return (1, record.nameID)
-        if record.platformID == 0:
-            return (2, record.nameID)
-        if record.platformID == 1 and record.langID == 0:
-            return (3, record.nameID)
-        return (4, record.nameID)
-
-    @classmethod
-    def _append_family_suffix(cls, family_name: str) -> str:
-        cleaned = family_name.strip()
-        if not cleaned:
-            return cleaned
-        parts = cleaned.split()
-        if parts and parts[-1].upper() == cls.FAMILY_SUFFIX:
-            return cleaned
-        return f"{cleaned} {cls.FAMILY_SUFFIX}"
-
-    @staticmethod
-    def _postscript_safe_name(value: str) -> str:
-        forbidden = set("[](){}<>/%")
-        chars = [char for char in value if not char.isspace() and char not in forbidden and 33 <= ord(char) <= 126]
-        return "".join(chars)
-
-    def extract_family_name(self, font) -> str | None:
-        name_table = font.get("name")
-        if name_table is None:
-            return None
-        for name_id in (16, 1, 21):
-            records = [rec for rec in name_table.names if rec.nameID == name_id]
-            for record in sorted(records, key=self._name_record_priority):
-                text = self._decode_name_record(record)
-                if text and text.strip():
-                    return text.strip()
-        return None
-
-    def rewrite_family_names(self, font) -> dict:
-        name_table = font.get("name")
-        if name_table is None:
-            log.warning("Font has no name table; skipping family name rewrite.")
-            return {}
-
-        family_name = self.extract_family_name(font)
-        if not family_name:
-            log.warning("Could not extract a family name; skipping name table rewrite.")
-            return {}
-
-        new_family_name = self._append_family_suffix(family_name)
-        old_ps_family = self._postscript_safe_name(family_name)
-        new_ps_family = self._postscript_safe_name(new_family_name)
-        changes = {}
-
-        for record in name_table.names:
-            text = self._decode_name_record(record)
-            if not text:
-                continue
-
-            if record.nameID in self.FAMILY_NAME_IDS:
-                rewritten = text
-                if new_family_name not in rewritten and new_ps_family not in rewritten:
-                    for old, new in ((family_name, new_family_name), (old_ps_family, new_ps_family)):
-                        if old and old in rewritten:
-                            rewritten = rewritten.replace(old, new)
-                            break
-                    else:
-                        rewritten = self._append_family_suffix(text)
-            elif record.nameID in self.POSTSCRIPT_NAME_IDS:
-                rewritten = text
-                if new_ps_family not in rewritten:
-                    for old, new in ((old_ps_family, new_ps_family), (family_name, new_ps_family)):
-                        if old and old in rewritten:
-                            rewritten = rewritten.replace(old, new)
-                            break
-            else:
-                rewritten = text
-                if new_family_name not in rewritten and new_ps_family not in rewritten:
-                    for old, new in ((family_name, new_family_name), (old_ps_family, new_ps_family)):
-                        if old and old in rewritten:
-                            rewritten = rewritten.replace(old, new)
-                            break
-
-            if rewritten == text:
-                continue
-
-            self._encode_name_record(record, rewritten)
-            changes[record.nameID] = changes.get(record.nameID, 0) + 1
-
-        if changes:
-            changed_ids = ", ".join(f"nameID {name_id} ({count})" for name_id, count in sorted(changes.items()))
-            log.info(f"Family name rewrite: '{family_name}' -> '{new_family_name}' | {changed_ids}")
-        else:
-            log.info(f"Family name already uses suffix: '{new_family_name}'")
-        return changes
-
-    def rewrite_static(self, font, include_italic: bool = False) -> dict:
-        self._select_reference(font)
-        target_upm = self._get_upm(font)
-        scaled = self._scale_all_references(target_upm)
-        log.info(f"UPM: {target_upm} | Scale factor: {target_upm}/{self.REFERENCE_UPM} = {target_upm / self.REFERENCE_UPM:.6f}")
-        changes = {}
-        field_list = list(WRITABLE_METRICS)
-        if include_italic:
-            field_list.extend(ITALIC_METRICS)
-
-        for (tbl, fld) in field_list:
-            key = (tbl, fld)
-            if key not in scaled:
-                continue
-            new_val = scaled[key]
-            table = font.get(tbl)
-            if table is None or not hasattr(table, fld):
-                continue
-            old_val = getattr(table, fld)
-            if old_val == new_val:
-                continue
-            setattr(table, fld, new_val)
-            changes[(tbl, fld)] = (old_val, new_val)
-            log.info(f"  {tbl}.{fld}: {old_val} -> {new_val}")
-        return changes
-
-    @staticmethod
-    def _is_variable(font) -> bool:
-        return "fvar" in font or "STAT" in font
-
-    def rewrite_variable(self, font, include_italic: bool = False, set_default_wght: bool = True) -> dict:
-        self._select_reference(font)
-        target_upm = self._get_upm(font)
-        scale_factor = target_upm / self.REFERENCE_UPM
-        log.info(f"Variable font detected | UPM: {target_upm} | scale factor: {scale_factor:.6f}")
-        changes = self.rewrite_static(font, include_italic=include_italic)
-        mvar_changes = self._rescale_mvar_store(font, scale_factor)
-        hvar_changes = self._rescale_hvar_store(font, scale_factor)
-        vvar_changes = self._rescale_vvar_store(font, scale_factor)
-        fvar_changes = self._rescale_fvar_axes(font, scale_factor, set_default_wght=set_default_wght)
-        return {**changes, **mvar_changes, **hvar_changes, **vvar_changes, **fvar_changes}
-
-    def _rescale_mvar_store(self, font, scale_factor: float) -> dict:
-        if "MVAR" not in font:
-            return {}
-        mvar_table = font["MVAR"].table
-        if not hasattr(mvar_table, "VarStore") or mvar_table.VarStore is None:
-            return {}
-        count = self._rescale_var_store_inner(mvar_table.VarStore, scale_factor)
-        log.info(f"MVAR: rescaled {count} delta values")
-        return {"MVAR.VarStore": ("rescaled", count)}
-
-    def _rescale_hvar_store(self, font, scale_factor: float) -> dict:
-        if "HVAR" not in font:
-            return {}
-        hvar_table = font["HVAR"].table
-        if not hvar_table or not hasattr(hvar_table, "VarStore"):
-            return {}
-        count = self._rescale_var_store_inner(hvar_table.VarStore, scale_factor)
-        log.info(f"HVAR: rescaled {count} delta values")
-        return {"HVAR.VarStore": ("rescaled", count)}
-
-    def _rescale_vvar_store(self, font, scale_factor: float) -> dict:
-        if "VVAR" not in font:
-            return {}
-        vvar_table = font["VVAR"].table
-        if not vvar_table or not hasattr(vvar_table, "VarStore"):
-            return {}
-        count = self._rescale_var_store_inner(vvar_table.VarStore, scale_factor)
-        log.info(f"VVAR: rescaled {count} delta values")
-        return {"VVAR.VarStore": ("rescaled", count)}
-
-    def _rescale_var_store_inner(self, var_store, scale_factor: float) -> int:
-        if not hasattr(var_store, "ItemVariationStore"):
-            return 0
-        ivs = var_store.ItemVariationStore
-        if not hasattr(ivs, "VariationData") or not ivs.VariationData:
-            return 0
-        total = 0
-        for var_data in ivs.VariationData:
-            if var_data is None:
-                continue
-            fmt = getattr(var_data, "Format", 1)
-            if fmt == 1:
-                total += self._scale_var_data_fmt1(var_data, scale_factor)
-            elif fmt == 2:
-                total += self._scale_var_data_fmt2(var_data, scale_factor)
-            elif fmt == 3:
-                total += self._scale_var_data_fmt3(var_data, scale_factor)
-        return total
-
-    @staticmethod
-    def _scale_var_data_fmt1(var_data, scale_factor: float) -> int:
-        count = 0
-        if not hasattr(var_data, "RegionIdxCount") or not hasattr(var_data, "RegionIndex"):
-            return count
-        rows = var_data.VarDataRows
-        if not rows:
-            return count
-        for row in rows:
-            if row is None:
-                continue
-            if hasattr(row, "RegionDelta"):
-                for i, delta in enumerate(row.RegionDelta):
-                    if isinstance(delta, (int, float)):
-                        row.RegionDelta[i] = int(round(delta * scale_factor))
-                        count += 1
-            elif hasattr(row, "getDeltas"):
-                deltas = row.getDeltas()
-                scaled = [int(round(d * scale_factor)) for d in deltas]
-                row.setDeltas(scaled)
-                count += len(deltas)
-        return count
-
-    @staticmethod
-    def _scale_var_data_fmt2(var_data, scale_factor: float) -> int:
-        count = 0
-        if hasattr(var_data, "DeltaSet"):
-            for ds in var_data.DeltaSet:
-                if ds is None:
-                    continue
-                if hasattr(ds, "DeltaValue"):
-                    for dv in ds.DeltaValue:
-                        if dv is not None and hasattr(dv, "Value"):
-                            old = dv.Value
-                            if isinstance(old, (int, float)):
-                                dv.Value = int(round(old * scale_factor))
-                                count += 1
-        if hasattr(var_data, "getDeltas"):
-            deltas = var_data.getDeltas()
-            scaled = [int(round(d * scale_factor)) for d in deltas]
-            var_data.setDeltas(scaled)
-            count += len(deltas)
-        return count
-
-    @staticmethod
-    def _scale_var_data_fmt3(var_data, scale_factor: float) -> int:
-        count = 0
-        if hasattr(var_data, "getDeltas"):
-            deltas = var_data.getDeltas()
-            scaled = [int(round(d * scale_factor)) for d in deltas]
-            var_data.setDeltas(scaled)
-            count += len(deltas)
-        return count
-
-    def _rescale_fvar_axes(self, font, scale_factor: float, set_default_wght: bool = True) -> dict:
-        if "fvar" not in font:
-            return {}
-        fvar = font["fvar"]
-        if not hasattr(fvar, "axes"):
-            return {}
-        udm_axes = {"opsz"}
-        changes = {}
-        for axis in fvar.axes:
-            if axis.axisTag == "wght" and set_default_wght:
-                old_default = axis.defaultValue
-                axis.defaultValue = 400
-                log.info(f"fvar axis 'wght': default {old_default}->400")
-                changes["fvar.wght"] = (old_default, 400)
-            if axis.axisTag not in udm_axes:
-                continue
-            old_default = axis.defaultValue
-            old_min = getattr(axis, "minValue", None)
-            old_max = getattr(axis, "maxValue", None)
-            axis.defaultValue = int(round(old_default * scale_factor))
-            if old_min is not None:
-                axis.minValue = int(round(old_min * scale_factor))
-            if old_max is not None:
-                axis.maxValue = int(round(old_max * scale_factor))
-            log.info(f"fvar axis '{axis.axisTag}': default {old_default}->{axis.defaultValue}, min {old_min}->{axis.minValue}, max {old_max}->{axis.maxValue}")
-            changes[f"fvar.{axis.axisTag}"] = (old_default, axis.defaultValue)
-        return changes
+USE_TYPO_METRICS = 1 << 7
 
 
 def _scale_ffix3_value(value: int, units_per_em: int) -> int:
-    return int(value / FFIX3_REFERENCE_UPM * units_per_em)
+    return int(round(value / FFIX3_REFERENCE_UPM * units_per_em))
 
 
 def _set_font_metric(font, table_name: str, field_name: str, value: int) -> None:
@@ -754,7 +349,7 @@ def _fix_metrics(font) -> None:
 
     if os2 is None:
         return
-    os2.fsSelection = int(getattr(os2, "fsSelection", 0)) & 0b01111111
+    os2.fsSelection = int(getattr(os2, "fsSelection", 0)) & ~USE_TYPO_METRICS
     if "fvar" in font:
         os2.usWeightClass = 400
 
@@ -930,7 +525,8 @@ def _format_number(value: float) -> str:
 
 
 def _axis_metadata(face: SourceFace, *, italic: bool) -> str:
-    style_values = _axis_values(face, int(face.axes["wght"][1]), italic) or {}
+    weight_axis = face.axes.get("wght")
+    style_values = (_axis_values(face, int(weight_axis[1]), italic) or {}) if weight_axis else {}
     return " ".join(
         "|".join((tag, _format_number(minimum), _format_number(style_values.get(tag, default)), _format_number(maximum)))
         for tag, (minimum, default, maximum) in face.axes.items()
@@ -959,7 +555,10 @@ def _variable_config_identity(faces: list[SourceFace]) -> str:
 
 
 def _supported_weights(face: SourceFace) -> str:
-    minimum, _default, maximum = face.axes["wght"]
+    weight_axis = face.axes.get("wght")
+    if weight_axis is None:
+        return ""
+    minimum, _default, maximum = weight_axis
     return " ".join(str(weight) for weight in WEIGHT_NAMES if minimum <= weight <= maximum)
 
 
@@ -1084,11 +683,36 @@ def _write_fragments(files_dir: Path, normal: list[tuple[int, str, str]], conden
         (files_dir / "serif.xml").write_text(_serif_fragment(normal) + "\n", encoding="utf-8", newline="\n")
 
 
-def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, mono_faces: list[SourceFace] | None = None, serif_faces: list[SourceFace] | None = None) -> tuple[list[SourceFace], tuple[str, ...], int | None]:
+class _FaceIndices:
+    """Tracks which TTC face index every source face was written to, by object identity.
+
+    A face can belong to two families at once: when no dedicated sans-serif source was supplied,
+    the monospace or serif faces also act as the primary family, and must still be embedded once.
+    """
+
+    def __init__(self) -> None:
+        self._pairs: list[tuple[SourceFace, int]] = []
+
+    def assign(self, face: SourceFace, index: int) -> None:
+        self._pairs.append((face, index))
+
+    def get(self, face: SourceFace) -> int | None:
+        for candidate, index in self._pairs:
+            if candidate is face:
+                return index
+        return None
+
+    def __call__(self, face: SourceFace) -> int:
+        index = self.get(face)
+        if index is None:
+            raise SystemExit(f"Internal error: {face.label} was not embedded in the collection")
+        return index
+
+
+def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, mono_faces: list[SourceFace] | None = None, serif_faces: list[SourceFace] | None = None) -> tuple[list[SourceFace], tuple[str, ...]]:
     TTCollection, _font = require_fonttools()
     ordered = _dedupe_static(faces)
     fonts = []
-    mono_index: int | None = None
 
     if len(ordered) == 1 and not mono_faces and not serif_faces:
         face = ordered[0]
@@ -1103,33 +727,24 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
         xml = _font_xml(output_name, face.weight, face.style)
         entries = [(face.weight, face.style, xml)]
         _write_fragments(files_dir, entries, [])
-        return ordered, (output_name,), None
+        return ordered, (output_name,)
 
+    indices = _FaceIndices()
     try:
         for face in ordered:
             font = _open_font(face)
             _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
+            indices.assign(face, len(fonts))
             fonts.append(font)
 
-        mface_idx_map: dict[int, int] = {}
-        if mono_faces:
-            for mface in mono_faces:
-                mfont = _open_font(mface)
-                _process_font(mfont, keep_hinting=keep_hinting, prefix_family=prefix_family)
-                midx = len(fonts)
-                mface_idx_map[id(mface)] = midx
-                if mono_index is None:
-                    mono_index = midx
-                fonts.append(mfont)
-
-        sface_idx_map: dict[int, int] = {}
-        if serif_faces:
-            for sface in serif_faces:
-                sfont = _open_font(sface)
-                _process_font(sfont, keep_hinting=keep_hinting, prefix_family=prefix_family)
-                sidx = len(fonts)
-                sface_idx_map[id(sface)] = sidx
-                fonts.append(sfont)
+        for optional_faces in (mono_faces, serif_faces):
+            for face in optional_faces or ():
+                if indices.get(face) is not None:
+                    continue
+                font = _open_font(face)
+                _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
+                indices.assign(face, len(fonts))
+                fonts.append(font)
 
         output_name = "DroidSans.ttf"
         collection = TTCollection()
@@ -1140,23 +755,23 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
             font.close()
 
     if mono_faces:
-        mono_lines = _generate_full_family_xml(mono_faces, "DroidSans.ttf", lambda f: mface_idx_map[id(f)])
+        mono_lines = _generate_full_family_xml(mono_faces, output_name, indices)
         (files_dir / "mono.xml").write_text("\n".join(mono_lines) + "\n", encoding="utf-8", newline="\n")
 
     if serif_faces:
-        serif_lines = _generate_full_family_xml(serif_faces, "DroidSans.ttf", lambda f: sface_idx_map[id(f)])
+        serif_lines = _generate_full_family_xml(serif_faces, output_name, indices)
         (files_dir / "serif.xml").write_text("\n".join(serif_lines) + "\n", encoding="utf-8", newline="\n")
 
     normal: list[tuple[int, str, str]] = []
     condensed: list[tuple[int, str, str]] = []
-    for index, face in enumerate(ordered):
-        xml = _font_xml(output_name, face.weight, face.style, index=index)
+    for face in ordered:
+        xml = _font_xml(output_name, face.weight, face.style, index=indices(face))
         (condensed if face.condensed else normal).append((face.weight, face.style, xml))
     if not normal:
         normal = list(condensed)
 
     _write_fragments(files_dir, normal, condensed, has_custom_serif=bool(serif_faces))
-    return ordered, (output_name,), mono_index
+    return ordered, (output_name,)
 
 
 def _pick_variable_faces(faces: list[SourceFace]) -> tuple[SourceFace, SourceFace]:
@@ -1187,47 +802,42 @@ def _save_face(face: SourceFace, output: Path, *, keep_hinting: bool, prefix_fam
         font.close()
 
 
-def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, mono_faces: list[SourceFace] | None = None, serif_faces: list[SourceFace] | None = None) -> tuple[list[SourceFace], tuple[str, ...], int | None]:
+def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, mono_faces: list[SourceFace] | None = None, serif_faces: list[SourceFace] | None = None) -> tuple[list[SourceFace], tuple[str, ...]]:
     TTCollection, _font = require_fonttools()
     upright, italic = _pick_variable_faces(faces)
     output_name = "DroidSans.ttf"
     var_fonts = []
-    mono_index: int | None = None
+    indices = _FaceIndices()
 
     upright_font = _open_font(upright)
     _process_font(upright_font, keep_hinting=keep_hinting, prefix_family=prefix_family)
-    var_fonts.append(upright_font)
     upright_idx = 0
+    indices.assign(upright, upright_idx)
+    var_fonts.append(upright_font)
 
     italic_idx = 0
     if italic != upright:
         italic_font = _open_font(italic)
         _process_font(italic_font, keep_hinting=keep_hinting, prefix_family=prefix_family)
         italic_idx = len(var_fonts)
+        indices.assign(italic, italic_idx)
         var_fonts.append(italic_font)
 
-    mface_idx_map: dict[int, int] = {}
+    for optional_faces in (mono_faces, serif_faces):
+        for face in optional_faces or ():
+            if indices.get(face) is not None:
+                continue
+            font = _open_font(face)
+            _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
+            indices.assign(face, len(var_fonts))
+            var_fonts.append(font)
+
     if mono_faces:
-        for mface in mono_faces:
-            mfont = _open_font(mface)
-            _process_font(mfont, keep_hinting=keep_hinting, prefix_family=prefix_family)
-            midx = len(var_fonts)
-            mface_idx_map[id(mface)] = midx
-            if mono_index is None:
-                mono_index = midx
-            var_fonts.append(mfont)
-        mono_lines = _generate_full_family_xml(mono_faces, output_name, lambda f: mface_idx_map[id(f)])
+        mono_lines = _generate_full_family_xml(mono_faces, output_name, indices)
         (files_dir / "mono.xml").write_text("\n".join(mono_lines) + "\n", encoding="utf-8", newline="\n")
 
-    sface_idx_map: dict[int, int] = {}
     if serif_faces:
-        for sface in serif_faces:
-            sfont = _open_font(sface)
-            _process_font(sfont, keep_hinting=keep_hinting, prefix_family=prefix_family)
-            sidx = len(var_fonts)
-            sface_idx_map[id(sface)] = sidx
-            var_fonts.append(sfont)
-        serif_lines = _generate_full_family_xml(serif_faces, output_name, lambda f: sface_idx_map[id(f)])
+        serif_lines = _generate_full_family_xml(serif_faces, output_name, indices)
         (files_dir / "serif.xml").write_text("\n".join(serif_lines) + "\n", encoding="utf-8", newline="\n")
 
     collection = TTCollection()
@@ -1248,7 +858,7 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
         raise SystemExit("The variable font has no usable wght axis values between 100 and 900")
 
     _write_fragments(files_dir, entries, [], has_custom_serif=bool(serif_faces))
-    return [upright] + ([italic] if italic != upright else []), tuple(payload), mono_index
+    return [upright] + ([italic] if italic != upright else []), tuple(payload)
 
 
 STANDARD_FEATURE_NAMES: dict[str, str] = {
@@ -1589,9 +1199,13 @@ def inject_centered_colon(font_path: Path) -> bool:
     If the font lacks a centered colon glyph, generates colon.case dynamically.
     """
     _collection, TTFont = require_fonttools()
+    from fontTools.ttLib import newTable
     from fontTools.pens.transformPen import TransformPen
     from fontTools.pens.ttGlyphPen import TTGlyphPen
-    from fontTools.ttLib.tables.otTables import ChainContextSubst, Coverage, Lookup, SingleSubst, SubstLookupRecord, FeatureRecord, Feature
+    from fontTools.ttLib.tables.otTables import (
+        GSUB, ChainContextSubst, Coverage, Feature, FeatureList, FeatureRecord, LangSys,
+        Lookup, LookupList, Script, ScriptList, ScriptRecord, SingleSubst, SubstLookupRecord,
+    )
 
     try:
         try:
@@ -1653,15 +1267,27 @@ def inject_centered_colon(font_path: Path) -> bool:
 
         # Ensure GSUB table exists
         if "GSUB" not in font or font["GSUB"].table is None:
-            from fontTools.ttLib.tables.otTables import GSUB, FeatureList, LookupList, ScriptList
+            if "GSUB" not in font:
+                font["GSUB"] = newTable("GSUB")
             gsub = font["GSUB"].table = GSUB()
             gsub.Version = 0x00010000
             gsub.ScriptList = ScriptList()
             gsub.FeatureList = FeatureList()
             gsub.LookupList = LookupList()
-            gsub.ScriptList.ScriptRecord = []
             gsub.FeatureList.FeatureRecord = []
             gsub.LookupList.Lookup = []
+            # Without a script record the injected feature would be unreachable by any shaper.
+            default_lang_sys = LangSys()
+            default_lang_sys.LookupOrder = None
+            default_lang_sys.ReqFeatureIndex = 0xFFFF
+            default_lang_sys.FeatureIndex = []
+            script = Script()
+            script.DefaultLangSys = default_lang_sys
+            script.LangSysRecord = []
+            script_record = ScriptRecord()
+            script_record.ScriptTag = "DFLT"
+            script_record.Script = script
+            gsub.ScriptList.ScriptRecord = [script_record]
 
         gsub = font["GSUB"].table
         if gsub.FeatureList is None:
@@ -1673,7 +1299,6 @@ def inject_centered_colon(font_path: Path) -> bool:
         if gsub.LookupList.Lookup is None:
             gsub.LookupList.Lookup = []
 
-        records = {rec.FeatureTag: rec.Feature for rec in gsub.FeatureList.FeatureRecord if rec.FeatureTag}
         calt_rec_idx = None
         for idx, rec in enumerate(gsub.FeatureList.FeatureRecord):
             if rec.FeatureTag == "calt":
@@ -1691,6 +1316,9 @@ def inject_centered_colon(font_path: Path) -> bool:
             calt_rec_idx = len(gsub.FeatureList.FeatureRecord) - 1
             target_feat = new_rec.Feature
 
+        if target_feat.LookupListIndex is None:
+            target_feat.LookupListIndex = []
+
         # Ensure calt_rec_idx is registered in ScriptList for DFLT and latn scripts
         if gsub.ScriptList and gsub.ScriptList.ScriptRecord:
             for srec in gsub.ScriptList.ScriptRecord:
@@ -1703,6 +1331,8 @@ def inject_centered_colon(font_path: Path) -> bool:
                         lang_sys_list.append(lrec.LangSys)
 
                 for lsys in lang_sys_list:
+                    if lsys.FeatureIndex is None:
+                        lsys.FeatureIndex = []
                     if calt_rec_idx not in lsys.FeatureIndex:
                         lsys.FeatureIndex.append(calt_rec_idx)
 
@@ -1780,7 +1410,7 @@ def inject_centered_colon(font_path: Path) -> bool:
         return False
 
 
-def _separate_primary_and_optional_faces(all_faces: list[SourceFace], files_dir: Path) -> tuple[list[SourceFace], list[SourceFace], list[SourceFace]]:
+def _separate_primary_and_optional_faces(all_faces: list[SourceFace]) -> tuple[list[SourceFace], list[SourceFace], list[SourceFace]]:
     sans_faces: list[SourceFace] = []
     mono_faces: list[SourceFace] = []
     serif_faces: list[SourceFace] = []
@@ -1793,7 +1423,12 @@ def _separate_primary_and_optional_faces(all_faces: list[SourceFace], files_dir:
         else:
             sans_faces.append(face)
 
-    return (sans_faces or all_faces), _dedupe_static(mono_faces), _dedupe_static(serif_faces)
+    mono_faces = _dedupe_static(mono_faces)
+    serif_faces = _dedupe_static(serif_faces)
+    # With no dedicated sans-serif source the mono (else serif) faces double as the primary family.
+    # They are embedded once, and both fragments point at the same collection indices.
+    primary_faces = sans_faces or mono_faces or serif_faces
+    return primary_faces, mono_faces, serif_faces
 
 
 def compile_fonts(
@@ -1821,33 +1456,13 @@ def compile_fonts(
     temp_fonts_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        source_entries: list[tuple[Path, str]] = []
-        for path in sorted(fonts_dir.rglob("*")):
-            if path.is_file() and path.suffix.lower() in FONT_EXTENSIONS:
-                rel_parts = [part.lower() for part in path.relative_to(fonts_dir).parts[:-1]]
-                if any(part in ("monospace", "mono") for part in rel_parts):
-                    cat = "mono"
-                elif any(part == "serif" for part in rel_parts):
-                    cat = "serif"
-                elif any(part in ("sans", "sans-serif") for part in rel_parts):
-                    cat = "sans"
-                else:
-                    stem_lower = path.stem.lower()
-                    if any(m in stem_lower for m in ("mono", "code", "consolas", "courier")):
-                        cat = "mono"
-                    elif "serif" in stem_lower and "sans" not in stem_lower:
-                        cat = "serif"
-                    else:
-                        cat = "sans"
-                source_entries.append((path, cat))
-
-        for path, cat in source_entries:
+        for path, cat in source_entries(fonts_dir):
             sub_dir = temp_fonts_dir / cat
             sub_dir.mkdir(parents=True, exist_ok=True)
             _ensure_ttf(path, sub_dir)
 
         all_faces = discover_faces(temp_fonts_dir)
-        faces, mono_faces, serif_faces = _separate_primary_and_optional_faces(all_faces, files_dir)
+        faces, mono_faces, serif_faces = _separate_primary_and_optional_faces(all_faces)
 
         sans_ttf_paths = sorted({face.path for face in faces})
         mono_ttf_paths = sorted({face.path for face in mono_faces})
@@ -1913,7 +1528,7 @@ def compile_fonts(
                 inject_centered_colon(font_path)
 
         all_faces = discover_faces(temp_fonts_dir)
-        faces, mono_faces, serif_faces = _separate_primary_and_optional_faces(all_faces, files_dir)
+        faces, mono_faces, serif_faces = _separate_primary_and_optional_faces(all_faces)
         mode = detect_mode(faces, requested_mode)
         families = {face.family for face in faces}
         if len(families) > 1:
@@ -1922,9 +1537,9 @@ def compile_fonts(
         if prefix_family:
             family = transform_family_name(family)
         if mode == "static":
-            selected, payload, mono_index = _compile_static(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, mono_faces=mono_faces, serif_faces=serif_faces)
+            selected, payload = _compile_static(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, mono_faces=mono_faces, serif_faces=serif_faces)
         else:
-            selected, payload, mono_index = _compile_variable(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, mono_faces=mono_faces, serif_faces=serif_faces)
+            selected, payload = _compile_variable(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, mono_faces=mono_faces, serif_faces=serif_faces)
 
         primary = payload[0]
         config = [
@@ -1934,8 +1549,6 @@ def compile_fonts(
             f"FONT_PRIMARY={shell_quote(primary)}",
             f"CLOCK_FONT={shell_quote('GoogleSansClock-Regular' + Path(primary).suffix)}",
         ]
-        if mono_index is not None:
-            config.append(f"MONO_INDEX={shell_quote(str(mono_index))}")
         if mode == "variable":
             upright, italic = _pick_variable_faces(faces)
             config.extend(

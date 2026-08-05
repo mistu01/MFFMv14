@@ -1,7 +1,12 @@
 #!/system/bin/sh
 # Disable Google Play Services font downloads post-boot to prevent overrides.
 
-until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do sleep 2; done
+boot_wait=0
+until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do
+  boot_wait=$((boot_wait + 1))
+  [ "$boot_wait" -gt 150 ] && exit 0
+  sleep 2
+done
 sleep 2
 
 GMS=com.google.android.gms
