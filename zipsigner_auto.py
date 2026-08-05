@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import json
+import hashlib
 import os
 import platform
 import shutil
@@ -14,7 +14,17 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-API_URL = "https://api.github.com/repos/MrCarb0n/zipsignerust/releases/latest"
+SIGNER_TAG = "latest"
+DOWNLOAD_URL = "https://github.com/MrCarb0n/zipsignerust/releases/download/{tag}/{name}"
+# Pinned SHA-256 of every ZipSignerust asset used to sign modules. The upstream release tag is
+# rolling, so these digests are the only thing tying a build to a reviewed signer binary; refresh
+# them deliberately with `gh api repos/MrCarb0n/zipsignerust/releases/latest`.
+SIGNER_DIGESTS = {
+    "zipsignerust-android-arm64": "531ffe746bb0d76c2d2957acd6c71a12d42580ea5539a01859d1b6139f64d592",
+    "zipsignerust-android-armv7": "406359208378d94dd71a5f40a8a5f1bb67c9d68ab03dc103c01dc4917dcd495c",
+    "zipsignerust-linux-x64": "dc51bec0646f025a90a182f6f39cdb0a73e23dfa6bd9432bc16e870004c47ac9",
+    "zipsignerust-windows-x64.exe": "d0bda8d29faf69794dba2de445f335a0d53ca72ff3b427b69fb2efe6f82d879f",
+}
 CACHE_NAME = ".mffm-signer"
 
 
@@ -37,32 +47,49 @@ def _asset_name() -> str:
 
 
 def _request(url: str) -> urllib.request.Request:
-    return urllib.request.Request(url, headers={"User-Agent": "MFFMv14-builder", "Accept": "application/vnd.github+json"})
+    return urllib.request.Request(url, headers={"User-Agent": "MFFMv14-builder"})
+
+
+def _digest(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
 def _ensure_binary(root: Path) -> Path:
     path_binary = shutil.which("zipsignerust") or shutil.which("zipsignerust.exe")
-    cache = root / CACHE_NAME / "bin"
     name = _asset_name()
-    binary = cache / name
-    if binary.exists():
+    expected = SIGNER_DIGESTS[name]
+    # The digest is part of the cache path, so re-pinning the signer never reuses the old binary.
+    binary = root / CACHE_NAME / "bin" / expected[:16] / name
+    if binary.exists() and _digest(binary) == expected:
         binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
         return binary
 
     try:
-        with urllib.request.urlopen(_request(API_URL), timeout=30) as response:
-            release = json.loads(response.read().decode("utf-8"))
-        asset = next(item for item in release.get("assets", []) if item.get("name") == name)
-        cache.mkdir(parents=True, exist_ok=True)
+        binary.parent.mkdir(parents=True, exist_ok=True)
         temp = binary.with_suffix(binary.suffix + ".download")
-        with urllib.request.urlopen(_request(asset["browser_download_url"]), timeout=90) as response, temp.open("wb") as handle:
+        url = DOWNLOAD_URL.format(tag=SIGNER_TAG, name=name)
+        with urllib.request.urlopen(_request(url), timeout=90) as response, temp.open("wb") as handle:
             shutil.copyfileobj(response, handle)
+        actual = _digest(temp)
+        if actual != expected:
+            temp.unlink(missing_ok=True)
+            raise ZipSignerError(
+                f"Refusing to run {name} from {url}: expected SHA-256 {expected}, got {actual}.\n"
+                "Upstream publishes new binaries under the same rolling tag. Review the release, then"
+                " update SIGNER_DIGESTS in zipsigner_auto.py."
+            )
         temp.replace(binary)
         binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
         return binary
+    except ZipSignerError:
+        raise
     except Exception as exc:
-        if path_binary:
-            print(f"Warning: download failed; using ZipSignerust from PATH: {exc}")
+        if path_binary and _digest(Path(path_binary)) == expected:
+            print(f"Warning: download failed; using the pinned ZipSignerust from PATH: {exc}")
             return Path(path_binary)
         raise ZipSignerError(f"Could not obtain ZipSignerust: {exc}") from exc
 
