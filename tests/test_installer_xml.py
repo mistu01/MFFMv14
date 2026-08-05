@@ -127,6 +127,29 @@ def test_replace_beng_family_replaces_in_place(tmp_path: Path, xml_file: Path) -
     assert any(f.get("lang") == "und-Arab" for f in root.iter("family"))
 
 
+def test_replace_beng_family_refuses_a_single_line_family(tmp_path: Path) -> None:
+    """Replacing whole lines would drop whatever else the ROM packed onto the Bengali line."""
+    xml = tmp_path / "fonts.xml"
+    xml.write_text(
+        '<familyset version="23">\n'
+        '  <family lang="und-Arab">\n'
+        '    <font weight="400" style="normal">NotoNaskhArabic-Regular.ttf</font>\n'
+        '  </family><family lang="und-Beng" variant="elegant">\n'
+        '    <font weight="400" style="normal">NotoSerifBengali-VF.ttf</font>\n'
+        "  </family>\n"
+        "</familyset>\n",
+        encoding="utf-8",
+    )
+    before = xml.read_text(encoding="utf-8")
+
+    result = run_shell(
+        f'{STUBS}\n{shell_function("replace_beng_family")}\nreplace_beng_family "{xml}" elegant', tmp_path
+    )
+
+    assert "WARN:" in result.stderr
+    assert xml.read_text(encoding="utf-8") == before
+
+
 def test_replace_beng_family_is_a_no_op_without_a_match(tmp_path: Path, xml_file: Path) -> None:
     before = xml_file.read_text(encoding="utf-8")
     run_shell(

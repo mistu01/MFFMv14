@@ -170,17 +170,24 @@ copy_if_exists() {
 # reused. awk keeps this consistent with the other XML edits: toybox sed mishandles `c\` with
 # embedded newlines.
 replace_beng_family() {
-  local xml=$1 variant=$2
+  local xml=$1 variant=$2 open_tag
   [ -f "$xml" ] || return 0
-  grep -q "<family lang=\"und-Beng\" variant=\"$variant\">" "$xml" 2>/dev/null || return 0
-  awk -v variant="$variant" '
-    !inside && index($0, "<family lang=\"und-Beng\" variant=\"" variant "\">") > 0 {
-      print "  <family lang=\"und-Beng\" variant=\"" variant "\">"
+  open_tag="<family lang=\"und-Beng\" variant=\"$variant\">"
+  grep -qF "$open_tag" "$xml" 2>/dev/null || return 0
+  # Like replace_family, the awk program needs one element per line: it replaces whole lines, so
+  # anything sharing a line with the open tag would be dropped. Skip rather than corrupt the XML.
+  if ! grep -qE "^[[:space:]]*<family lang=\"und-Beng\" variant=\"$variant\">[[:space:]]*$" "$xml" 2>/dev/null; then
+    status_warn "Skipping und-Beng ($variant) in ${xml##*/}: this ROM writes the family on one line"
+    return 0
+  fi
+  awk -v open_tag="$open_tag" '
+    !inside && $0 ~ "^[[:space:]]*" open_tag "[[:space:]]*$" {
+      print "  " open_tag
       print "    <font weight=\"400\" style=\"normal\">NotoSansBengali-VF.ttf</font>"
       print "    <font weight=\"500\" style=\"normal\">NotoSerifBengali-VF.ttf</font>"
       print "    <font weight=\"700\" style=\"normal\">NotoSansBengaliUI-VF.ttf</font>"
       print "  </family>"
-      if (index($0, "</family>") == 0) { inside=1 }
+      inside=1
       next
     }
     inside {
