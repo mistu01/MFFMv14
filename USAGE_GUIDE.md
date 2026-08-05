@@ -189,6 +189,8 @@ After editing the values, apply them with either:
 
 Static modules have no axis values to change and therefore do not install `font-config`; changing a static module means rebuilding it.
 
+Because `/sdcard` is readable and writable by any app holding storage permission, `font-config` treats the `.conf` as untrusted input: every value must be a plain decimal number inside the axis range declared by the build, and anything else is reported and reset to the compiled default. Paths are fixed rather than taken from the environment; `--module-path` and `--config-dir` exist for non-standard install roots and for the test suite.
+
 ---
 
 ## 5. Legacy Module Migration (`update.py`)

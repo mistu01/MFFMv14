@@ -67,6 +67,15 @@ SANS_UPRIGHT_OPSZ=24
 """
 
 
+def font_config_argv(module: Path) -> list[str]:
+    """font-config takes explicit paths rather than reading them from the environment."""
+    return [
+        "sh", str(FONT_CONFIG),
+        "--module-path", str(module),
+        "--config-dir", str(module / "sdcard-MFFM"),
+    ]
+
+
 def run_shell(script: str, cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["sh", "-c", script], cwd=cwd, capture_output=True, text=True, check=True)
 
@@ -150,15 +159,11 @@ def test_apply_axis_profiles_resets_an_out_of_range_value(tmp_path: Path) -> Non
 
 def test_font_config_rebuilds_the_installed_xml(module: Path) -> None:
     result = subprocess.run(
-        ["sh", str(FONT_CONFIG)],
+        font_config_argv(module),
         cwd=module,
         capture_output=True,
         text=True,
-        env={
-            "PATH": "/usr/bin:/bin",
-            "MFFM_MODPATH": str(module),
-            "MFFM_DIR": str(module / "sdcard-MFFM"),
-        },
+        env={"PATH": "/usr/bin:/bin"},
     )
     assert result.returncode == 0, result.stderr
 
@@ -179,15 +184,11 @@ def test_font_config_rebuilds_the_installed_xml(module: Path) -> None:
 
 
 def test_font_config_is_idempotent(module: Path) -> None:
-    env = {
-        "PATH": "/usr/bin:/bin",
-        "MFFM_MODPATH": str(module),
-        "MFFM_DIR": str(module / "sdcard-MFFM"),
-    }
+    env = {"PATH": "/usr/bin:/bin"}
     installed = module / "system" / "etc" / "fonts.xml"
-    subprocess.run(["sh", str(FONT_CONFIG)], cwd=module, env=env, check=True, capture_output=True)
+    subprocess.run(font_config_argv(module), cwd=module, env=env, check=True, capture_output=True)
     first = installed.read_text(encoding="utf-8")
-    subprocess.run(["sh", str(FONT_CONFIG)], cwd=module, env=env, check=True, capture_output=True)
+    subprocess.run(font_config_argv(module), cwd=module, env=env, check=True, capture_output=True)
 
     assert installed.read_text(encoding="utf-8") == first
 
@@ -199,11 +200,11 @@ def test_font_config_refuses_a_static_module(module: Path) -> None:
     before = (module / "system" / "etc" / "fonts.xml").read_text(encoding="utf-8")
 
     result = subprocess.run(
-        ["sh", str(FONT_CONFIG)],
+        font_config_argv(module),
         cwd=module,
         capture_output=True,
         text=True,
-        env={"PATH": "/usr/bin:/bin", "MFFM_MODPATH": str(module), "MFFM_DIR": str(module / "sdcard-MFFM")},
+        env={"PATH": "/usr/bin:/bin"},
     )
 
     assert result.returncode == 1
@@ -213,11 +214,11 @@ def test_font_config_refuses_a_static_module(module: Path) -> None:
 
 def test_font_config_needs_the_saved_runtime_payload(tmp_path: Path) -> None:
     result = subprocess.run(
-        ["sh", str(FONT_CONFIG)],
+        font_config_argv(tmp_path),
         cwd=tmp_path,
         capture_output=True,
         text=True,
-        env={"PATH": "/usr/bin:/bin", "MFFM_MODPATH": str(tmp_path), "MFFM_DIR": str(tmp_path)},
+        env={"PATH": "/usr/bin:/bin"},
     )
 
     assert result.returncode == 1

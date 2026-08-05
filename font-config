@@ -7,9 +7,25 @@
 # take effect after a reboot.
 
 MODULE_ID=mffm14
-MODPATH=${MFFM_MODPATH:-/data/adb/modules/$MODULE_ID}
+# Fixed paths: the environment of a root invocation must not decide where this reads shell code
+# from. --module-path/--config-dir exist for the test harness and for non-standard install roots.
+MODPATH=/data/adb/modules/$MODULE_ID
+MFFM_DIR=/sdcard/MFFM
+
+usage() {
+  printf 'usage: font-config [--module-path DIR] [--config-dir DIR]\n' >&2
+  exit 2
+}
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    --module-path) [ -n "$2" ] || usage; MODPATH=$2; shift 2 ;;
+    --config-dir) [ -n "$2" ] || usage; MFFM_DIR=$2; shift 2 ;;
+    -h|--help) usage ;;
+    *) usage ;;
+  esac
+done
 RUNTIME_DIR="$MODPATH/mffm"
-MFFM_DIR=${MFFM_DIR:-/sdcard/MFFM}
 
 ui_print() { printf '%s\n' "$1"; }
 status_ok() { printf '  [OK] %s\n' "$1"; }

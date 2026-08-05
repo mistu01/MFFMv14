@@ -2,4 +2,7 @@
 *.sh text eol=lf
 *.py text eol=lf
 module.prop text eol=lf
+# Extensionless shell scripts: CRLF makes Android's loader reject the shebang.
+font-config text eol=lf
+META-INF/com/google/android/update-binary text eol=lf
 
