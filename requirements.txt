@@ -1,7 +1,7 @@
+# Runtime dependencies for build.py / update.py. Install the test extras with requirements-dev.txt.
 fonttools>=4.55
+# Only used to generate the self-signed key when OpenSSL is unavailable.
 cryptography>=43.0
-brotli
-opentype-feature-freezer
-
-
-
+# woff2 support in fontTools.
+brotli>=1.1
+opentype-feature-freezer>=1.32

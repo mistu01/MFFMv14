@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+      - name: Byte-compile
+        run: python -m compileall -q build.py build_nosign.py update.py font_module.py zipsigner_auto.py
+      - name: Tests
+        run: python -m pytest -q
+      - name: End-to-end unsigned build
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "tests")
+          from conftest import make_font
+          fonts = Path("Fonts")
+          make_font(fonts / "CI-Regular.ttf", family="CI Sans")
+          make_font(fonts / "CI-Bold.ttf", family="CI Sans", style="Bold", weight=700)
+          make_font(fonts / "Monospace/CI-Regular.ttf", family="CI Mono")
+          PY
+          python build.py --no-interactive --no-sign
+          test -f Files/DroidSans.ttf
+          test -f Files/mono.xml
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      # SC3043/SC3021 are POSIX-mode warnings about `local` and `>&$OUTFD`, both of which Android's
+      # mksh supports; SC1090/SC1091 are the sourced files that only exist on device.
+      - name: Shellcheck
+        run: |
+          shellcheck -S warning -s sh -e SC3043,SC3021,SC1090,SC1091 \
+            customize.sh service.sh post-mount.sh uninstall.sh \
+            META-INF/com/google/android/update-binary

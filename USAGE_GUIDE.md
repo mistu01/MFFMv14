@@ -22,6 +22,7 @@ This guide provides a comprehensive technical reference for creating, flashing, 
    - [Variable Font Dynamic Axis Tuning (`.conf` files)](#variable-font-dynamic-axis-tuning-conf-files)
 5. [Legacy Module Migration (`update.py`)](#5-legacy-module-migration-updatepy)
 6. [Debugging & Troubleshooting](#6-debugging--troubleshooting)
+7. [Development & Tests](#7-development--tests)
 
 ---
 
@@ -38,6 +39,8 @@ pip install -r requirements.txt
 - `cryptography>=43.0` — Cryptographic signing of generated module ZIP files.
 - `brotli` — WOFF2 font decompression.
 - `opentype-feature-freezer` — `pyftfeatfreeze` library for freezing OpenType layout features into default glyph mappings.
+
+The test suite needs `pytest` as well: `pip install -r requirements-dev.txt`.
 
 ---
 
@@ -215,3 +218,24 @@ To upgrade old MFFM module ZIP files to the latest MFFMv14 core:
 
 5. **`Refusing to run zipsignerust-…: expected SHA-256 …`**:
    - The signer binary is pinned by digest in `SIGNER_DIGESTS` (`zipsigner_auto.py`), and upstream republishes its assets under the same rolling `latest` tag. Review the new release, then update the digest for your platform (`gh api repos/MrCarb0n/zipsignerust/releases/latest --jq '.assets[] | "\(.name) \(.digest)"'`). Use `--no-sign` to build in the meantime.
+
+---
+
+## 7. Development & Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+`tests/` builds the fonts it needs with fontTools (`tests/conftest.py`), so no font binaries are
+committed. Coverage is split into three parts:
+
+- `test_font_module.py` — categorization, duplicate-face selection, axis/XML emission helpers.
+- `test_compile.py` — end-to-end `compile_fonts` runs asserting the TTC face count and the `index=`
+  values in each generated fragment, plus the `update.py` migration round-trip.
+- `test_installer_xml.py` — extracts `replace_family` / `replace_beng_family` from `customize.sh`,
+  runs them with `sh` against a captured `fonts.xml`, and asserts the result still parses as XML.
+
+The same commands run in CI (`.github/workflows/ci.yml`), together with `shellcheck -s sh` over the
+installer scripts and one `build.py --no-interactive --no-sign` build.
