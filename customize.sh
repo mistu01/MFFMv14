@@ -191,7 +191,12 @@ replace_beng_family() {
       next
     }
     inside {
-      if (index($0, "</family>") > 0) { inside=0 }
+      # The closing line may also carry the start of the next family; keep that remainder.
+      if (index($0, "</family>") > 0) {
+        inside=0
+        rest = substr($0, index($0, "</family>") + length("</family>"))
+        if (rest ~ /[^[:space:]]/) { print rest }
+      }
       next
     }
     { print }
