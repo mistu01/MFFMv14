@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import logging
+import re
 import shutil
 import tempfile
 import zipfile
@@ -12,7 +14,7 @@ from pathlib import Path
 from build import ROOT, write_zip
 from font_module import (
     FONT_EXTENSIONS, clean_family_name, compile_fonts, display_name_for_mode,
-    read_props, slugify, update_module_metadata,
+    read_props, require_fonttools, slugify, update_module_metadata,
 )
 from zipsigner_auto import ZipSignerError, sign_zip
 
@@ -95,6 +97,49 @@ def find_sources(old_root: Path) -> list[Path]:
     return candidates
 
 
+def fragment_indices(fragment: Path) -> set[int]:
+    if not fragment.is_file():
+        return set()
+    text = fragment.read_text(encoding="utf-8", errors="replace")
+    return {int(value) for value in re.findall(r'index="(\d+)"', text)}
+
+
+def split_collection(primary: Path, old_root: Path, source_dir: Path) -> bool:
+    """Unpack an MFFM collection into per-category source folders.
+
+    MFFMv14 bundles the sans, monospace, and serif faces into a single DroidSans.ttf collection and
+    records which face belongs to which family in mono.xml / serif.xml. Copying that collection into
+    a flat folder would classify every face as sans-serif, so the split is restored from the
+    fragments before recompiling.
+    """
+    TTCollection, _font = require_fonttools()
+    mono_indices = fragment_indices(old_root / "Files" / "mono.xml")
+    serif_indices = fragment_indices(old_root / "Files" / "serif.xml")
+    if not mono_indices and not serif_indices:
+        return False
+
+    try:
+        collection = TTCollection(str(primary))
+    except Exception:
+        return False
+
+    try:
+        if len(collection.fonts) < 2:
+            return False
+        for index, font in enumerate(collection.fonts):
+            if index in mono_indices:
+                sub_dir = source_dir / "Monospace"
+            elif index in serif_indices:
+                sub_dir = source_dir / "Serif"
+            else:
+                sub_dir = source_dir / "Sans"
+            sub_dir.mkdir(parents=True, exist_ok=True)
+            font.save(str(sub_dir / f"{primary.stem}-{index}.ttf"))
+    finally:
+        collection.close()
+    return True
+
+
 def copy_template(destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     for name in TEMPLATE_ITEMS:
@@ -150,11 +195,12 @@ def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) ->
             safe_extract(archive, extracted)
         old_root = locate_module_root(extracted)
         sources = find_sources(old_root)
-        for index, source in enumerate(sources):
-            target_name = source.name
-            if (source_dir / target_name).exists():
-                target_name = f"{index}-{target_name}"
-            shutil.copy2(source, source_dir / target_name)
+        if len(sources) != 1 or not split_collection(sources[0], old_root, source_dir):
+            for index, source in enumerate(sources):
+                target_name = source.name
+                if (source_dir / target_name).exists():
+                    target_name = f"{index}-{target_name}"
+                shutil.copy2(source, source_dir / target_name)
 
         copy_template(module_dir)
         copy_optional_assets(old_root, module_dir)
@@ -199,6 +245,7 @@ def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) ->
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     args = parse_args()
     if not args.old_dir.is_dir():
         raise SystemExit(f"Old module directory does not exist: {args.old_dir}")

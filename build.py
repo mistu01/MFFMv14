@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import logging
 import zipfile
 from pathlib import Path
 
@@ -127,6 +128,7 @@ def build_module(args: argparse.Namespace, module_dir: Path = ROOT) -> Path | No
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     args = parse_args()
     if not (ROOT / "customize.sh").exists():
         raise SystemExit("Template payload is incomplete: customize.sh is missing")

@@ -21,7 +21,7 @@ mkdir -p "$LOG_DIR" 2>/dev/null
 
 # Clean old log files from previous installations in LOG_DIR before initializing fresh log
 if [ -d "$LOG_DIR" ]; then
-  for old_log in "$LOG_DIR"/mffmv14_debug_*.log "$LOG_DIR"/*.log; do
+  for old_log in "$LOG_DIR"/mffmv14_debug_*.log; do
     [ -f "$old_log" ] && [ "$old_log" != "$LOG_FILE" ] && rm -f "$old_log" 2>/dev/null
   done
 fi
@@ -104,6 +104,16 @@ run_custom_scripts() {
     return 0
   fi
 
+  # These scripts run as root, and any app holding storage permission can write to $MFFM_DIR,
+  # so require an explicit opt-in marker instead of trusting whatever is on external storage.
+  if [ ! -f "$CUSTOM_SCRIPTS_MARKER" ]; then
+    rm -f "$custom_list"
+    status_skip "Custom local scripts found but not enabled"
+    ui_print "         Scripts in $MFFM_DIR run as root."
+    ui_print "         To allow them, create ${CUSTOM_SCRIPTS_MARKER##*/} in $MFFM_DIR and reflash."
+    return 0
+  fi
+
   export MODPATH FONT_DIR SYS_FONT SYS_ETC SYS_XML SYS_FALLBACK
   export PRODUCT_FONT PRODUCT_ETC PRODUCT_XML MFFM_DIR
   export FONT_MODE FONT_FAMILY FONT_FILES FONT_PRIMARY CLOCK_FONT
@@ -156,6 +166,12 @@ copy_if_exists() {
   cp -f "$1" "$2"
 }
 
+# Fonts are installed several times under $MODPATH (system overlay plus one or two product
+# overlays). Hard-linking keeps a single copy of the collection on disk instead of one per path.
+link_or_copy() {
+  ln -f "$1" "$2" 2>/dev/null || cp -f "$1" "$2"
+}
+
 ROOT_IMPL=Unknown
 if [ "$KSU" = "true" ] || [ -n "$KSU_VER_CODE" ]; then
   ROOT_IMPL=KernelSU
@@ -173,7 +189,7 @@ fi
 [ -n "$MIRROR" ] || MIRROR=$(first_dir /sbin/.magisk/mirror /debug_ramdisk/.magisk/mirror 2>/dev/null)
 
 refresh_mount_view() {
-  local dev mnt fs opt dump fsck file
+  local dev mnt fs opt _rest file
   ui_print "- Refreshing live system mount view for XML discovery."
   for file in \
     /system/etc/fonts.xml \
@@ -189,7 +205,7 @@ refresh_mount_view() {
     fi
   done
 
-  while read -r dev mnt fs opt dump fsck; do
+  while read -r dev mnt fs opt _rest; do
     [ -z "$mnt" ] && continue
     case "$mnt" in
       /system|/system/*|/product|/product/*|/system_ext|/system_ext/*)
@@ -228,6 +244,7 @@ PRODUCT_FONT="$MODPATH/system/product/fonts"
 PRODUCT_ETC="$MODPATH/system/product/etc"
 PRODUCT_XML="$PRODUCT_ETC/fonts_customization.xml"
 MFFM_DIR=/sdcard/MFFM
+CUSTOM_SCRIPTS_MARKER="$MFFM_DIR/allow-custom-scripts"
 
 [ -f "$MODPATH/font-config.sh" ] || fail "font-config.sh is missing"
 . "$MODPATH/font-config.sh"
@@ -239,7 +256,12 @@ mkdir -p "$SYS_FONT" "$SYS_ETC" "$PRODUCT_FONT" "$PRODUCT_ETC" || fail "Could no
 if [ "$MOUNTIFY" != "true" ] && [ ! -d "/data/adb/modules/mountify" ]; then
   mkdir -p "$MODPATH/product/fonts" "$MODPATH/product/etc" || fail "Could not create root product overlay directories"
 fi
-mkdir -p "$MFFM_DIR" || fail "Could not create $MFFM_DIR for variable-font settings"
+# /sdcard is not mounted during a recovery flash: only variable modules truly need it.
+mkdir -p "$MFFM_DIR" 2>/dev/null
+if [ ! -d "$MFFM_DIR" ]; then
+  [ "$FONT_MODE" = "variable" ] && fail "Could not create $MFFM_DIR for variable-font settings"
+  status_warn "$MFFM_DIR is unavailable; skipping local settings and custom scripts"
+fi
 [ -f "$ORIGINAL_FONTS_XML" ] || fail "Could not locate the live system fonts.xml"
 cp -f "$ORIGINAL_FONTS_XML" "$SYS_XML" || fail "Could not copy system fonts.xml"
 [ -f "$ORIGINAL_FALLBACK_XML" ] && cp -f "$ORIGINAL_FALLBACK_XML" "$SYS_FALLBACK"
@@ -314,12 +336,17 @@ install_product_font_payload() {
   resolve_product_rubik_sources "$FONT_DIR/sans.xml"
 
   if [ -f "$FONT_DIR/DroidSans.ttf" ]; then
-    cp -f "$FONT_DIR/DroidSans.ttf" "$dest/$PRODUCT_RUBIK_REGULAR" || fail "Could not install $PRODUCT_RUBIK_REGULAR into $dest"
-    cp -f "$FONT_DIR/DroidSans.ttf" "$dest/$PRODUCT_RUBIK_ITALIC" || fail "Could not install $PRODUCT_RUBIK_ITALIC into $dest"
+    link_or_copy "$FONT_DIR/DroidSans.ttf" "$dest/$PRODUCT_RUBIK_REGULAR" || fail "Could not install $PRODUCT_RUBIK_REGULAR into $dest"
+    # Without a dedicated italic source the italic entries reference Rubik-Regular by index,
+    # so a second copy of the collection would never be read.
+    rm -f "$dest/$PRODUCT_RUBIK_ITALIC"
+    if [ "$PRODUCT_HAS_DEDICATED_ITALIC" = "1" ]; then
+      link_or_copy "$FONT_DIR/$PRODUCT_RUBIK_ITALIC_SRC" "$dest/$PRODUCT_RUBIK_ITALIC" || fail "Could not install $PRODUCT_RUBIK_ITALIC into $dest"
+    fi
   else
     for font_file in $FONT_FILES; do
       [ -f "$FONT_DIR/$font_file" ] || fail "Product font payload missing: $font_file"
-      cp -f "$FONT_DIR/$font_file" "$dest/$font_file" || fail "Could not install $font_file into $dest"
+      link_or_copy "$FONT_DIR/$font_file" "$dest/$font_file" || fail "Could not install $font_file into $dest"
     done
   fi
 }
@@ -568,7 +595,11 @@ patch_product_fonts_customization() {
     }
   ' "$xml" > "$xml.tmp" && mv -f "$xml.tmp" "$xml"
 
-  PRODUCT_GS_PATCHED=$(grep -cE '<(family-list|familyset|family)[^A-Za-z0-9_-][^>]*name="(sans-serif|google-sans|google-sans-[^"]*|variable-[^"]*)"' "$xml" 2>/dev/null || echo 0)
+  # grep -c already prints 0 on no match, so a `|| echo 0` fallback would emit a second line here.
+  PRODUCT_GS_PATCHED=$(grep -cE '<(family-list|familyset|family)[^A-Za-z0-9_-][^>]*name="(sans-serif|google-sans|google-sans-[^"]*|variable-[^"]*)"' "$xml" 2>/dev/null)
+  case $PRODUCT_GS_PATCHED in
+    ''|*[!0-9]*) PRODUCT_GS_PATCHED=0 ;;
+  esac
   if ! grep -q "$PRODUCT_RUBIK_REGULAR" "$xml" 2>/dev/null; then
     PRODUCT_GS_PATCHED=0
   fi
@@ -577,7 +608,7 @@ patch_product_fonts_customization() {
 
 config_value() {
   local key=$1
-  sed -n "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*//p" "$VF_CONFIG_FILE" 2>/dev/null |
+  sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" "$VF_CONFIG_FILE" 2>/dev/null |
     tail -n 1 |
     sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//'
 }
@@ -609,7 +640,8 @@ profile_title() {
 
 ensure_profile_keys() {
   local profile=$1 axis_meta=$2 weights=$3
-  local title=$(profile_title "$profile")
+  local title
+  title=$(profile_title "$profile")
   local axis_record axis_tag remainder axis_min axis_default axis_max
   local config_key axis_key weight label wght_min wght_max
 
@@ -634,7 +666,7 @@ ensure_profile_keys() {
   for weight in $weights; do
     label=$(weight_label "$weight")
     config_key="${profile}_${label}_WGHT"
-    if ! grep -q "^[[:space:]]*$config_key[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+    if ! grep -q "^[[:space:]]*${config_key}[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
       {
         printf '# Android %s (%s): variable wght range %s..%s\n' "$weight" "$label" "$wght_min" "$wght_max"
         printf '%s=%s\n' "$config_key" "$weight"
@@ -652,7 +684,7 @@ ensure_profile_keys() {
     axis_max=${remainder##*|}
     axis_key=$(printf '%s' "$axis_tag" | tr '[:lower:]' '[:upper:]')
     config_key="${profile}_${axis_key}"
-    if ! grep -q "^[[:space:]]*$config_key[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+    if ! grep -q "^[[:space:]]*${config_key}[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
       {
         printf '# %s axis range %s..%s; compiled value %s\n' "$axis_tag" "$axis_min" "$axis_max" "$axis_default"
         printf '%s=%s\n' "$config_key" "$axis_default"
@@ -771,13 +803,12 @@ prepare_variable_config() {
     fail "Variable module identity is invalid: $VF_CONFIG_ID"
   fi
   VF_CONFIG_FILE="$MFFM_DIR/MFFMv14_${safe_family}_${VF_CONFIG_ID}.conf"
-  VF_LEGACY_CONFIG="$MFFM_DIR/MFFMv14_${safe_family}_VF.conf"
   VF_CONFIG_RESET=0
 
   # Clean old or stale config files from previous installations/font modules in MFFM_DIR
   if [ -d "$MFFM_DIR" ]; then
     local old_cfg old_count=0
-    for old_cfg in "$MFFM_DIR"/*.conf "$MFFM_DIR"/MFFMv14_*.conf; do
+    for old_cfg in "$MFFM_DIR"/MFFMv14_*.conf; do
       [ -f "$old_cfg" ] || continue
       if [ "$old_cfg" = "$VF_CONFIG_FILE" ]; then
         saved_identity=$(sed -n 's/^[[:space:]]*MODULE_IDENTITY[[:space:]]*=[[:space:]]*//p' "$old_cfg" 2>/dev/null |
@@ -857,7 +888,7 @@ section "1/5" "Installing primary font payload"
 
 for font_file in $FONT_FILES; do
   [ -f "$FONT_DIR/$font_file" ] || fail "Payload font is missing: $font_file"
-  cp -f "$FONT_DIR/$font_file" "$SYS_FONT/$font_file" || fail "Could not install $font_file"
+  link_or_copy "$FONT_DIR/$font_file" "$SYS_FONT/$font_file" || fail "Could not install $font_file"
   status_ok "$font_file"
 done
 
