@@ -12,7 +12,8 @@ PROJECT_DIR=$(unset CDPATH && cd -- "$(dirname -- "$0")" && pwd)
 SKIP_DEPS=0
 SKIP_FLASH=0
 ASSUME_YES=0
-BUILD_ARGS=""
+CUSTOM_FONTS_DIR=0
+CUSTOM_OUTPUT=0
 
 RED=''
 GREEN=''
@@ -33,6 +34,11 @@ warn() { printf '  %s[!!]%s %s\n' "$YELLOW" "$RESET" "$1" >&2; }
 die() {
   printf '%serror:%s %s\n' "$RED" "$RESET" "$1" >&2
   exit 1
+}
+
+# su -c takes a single command string, so a path interpolated into it must be quoted for that shell.
+shell_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
 usage() {
@@ -60,8 +66,12 @@ while [ $# -gt 0 ]; do
     *) die "unknown option: $1 (build.py options go after --)" ;;
   esac
 done
+# Forwarded options stay in "$@" so paths containing spaces survive; only inspect them here.
 for arg in "$@"; do
-  BUILD_ARGS="$BUILD_ARGS $arg"
+  case $arg in
+    --fonts-dir|--fonts-dir=*) CUSTOM_FONTS_DIR=1 ;;
+    --output-dir|--output-dir=*|--no-zip) CUSTOM_OUTPUT=1 ;;
+  esac
 done
 
 # --- environment -----------------------------------------------------------------------------
@@ -84,7 +94,7 @@ if "$probe" 2>/dev/null; then
 else
   warn "$PROJECT_DIR is mounted noexec, so the ZIP signer cannot run here."
   warn "Building unsigned instead; move the project to \$HOME to get signed ZIPs."
-  BUILD_ARGS="$BUILD_ARGS --no-sign"
+  set -- "$@" --no-sign
 fi
 rm -f "$probe"
 
@@ -116,9 +126,7 @@ fi
 say "Building the module"
 cd "$PROJECT_DIR"
 FONTS_DIR="$PROJECT_DIR/Fonts"
-case " $BUILD_ARGS " in
-  *" --fonts-dir "*) FONTS_DIR="" ;;
-esac
+[ "$CUSTOM_FONTS_DIR" = "0" ] || FONTS_DIR=""
 if [ -n "$FONTS_DIR" ] && [ -z "$(find "$FONTS_DIR" -type f \
   \( -name '*.ttf' -o -name '*.otf' -o -name '*.ttc' -o -name '*.otc' -o -name '*.woff' \
   -o -name '*.woff2' \) 2>/dev/null | head -n 1)" ]; then
@@ -126,11 +134,29 @@ if [ -n "$FONTS_DIR" ] && [ -z "$(find "$FONTS_DIR" -type f \
 Put them there, or pass a directory: sh termux-build.sh -- --fonts-dir ~/storage/shared/Download/MyFont"
 fi
 
-# shellcheck disable=SC2086  # BUILD_ARGS is a deliberately word-split option list.
-python build.py --no-interactive $BUILD_ARGS
+# Only a ZIP newer than this stamp belongs to the build below, so a leftover dist/ ZIP can never be
+# mistaken for the freshly built module.
+STAMP="$PROJECT_DIR/.mffm-build-stamp"
+: >"$STAMP"
 
-ZIP=$(ls -1t "$PROJECT_DIR"/dist/*.zip 2>/dev/null | head -n 1)
-[ -n "$ZIP" ] || die "the build produced no ZIP in dist/"
+python build.py --no-interactive "$@"
+
+ZIP=$(find "$PROJECT_DIR/dist" -maxdepth 1 -type f -name '*.zip' -newer "$STAMP" 2>/dev/null |
+  head -n 1)
+if [ -z "$ZIP" ]; then
+  # On filesystems with coarse timestamps the new ZIP can merely tie the stamp: accept the newest
+  # ZIP as long as the stamp is not strictly newer than it.
+  candidate=$(ls -1t "$PROJECT_DIR"/dist/*.zip 2>/dev/null | head -n 1)
+  if [ -n "$candidate" ] && [ -z "$(find "$STAMP" -newer "$candidate" 2>/dev/null)" ]; then
+    ZIP=$candidate
+  fi
+fi
+rm -f "$STAMP"
+if [ -z "$ZIP" ]; then
+  [ "$CUSTOM_OUTPUT" = "0" ] || die "no new ZIP in dist/: --no-zip or --output-dir was forwarded, so
+there is nothing to flash from here. Install the ZIP from your output directory instead."
+  die "the build produced no ZIP in dist/"
+fi
 ok "$ZIP"
 
 # --- flash -----------------------------------------------------------------------------------
@@ -177,7 +203,8 @@ if [ "$ASSUME_YES" != "1" ]; then
   esac
 fi
 
-su -c "$INSTALL_CMD '$ZIP'" || die "$INSTALL_CMD failed; try flashing $ZIP from your manager app"
+su -c "$INSTALL_CMD $(shell_quote "$ZIP")" ||
+  die "$INSTALL_CMD failed; try flashing $ZIP from your manager app"
 ok "installed with $INSTALL_CMD"
 
 printf '\n%sReboot to apply the font.%s\n' "$BOLD" "$RESET"

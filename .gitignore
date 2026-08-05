@@ -48,6 +48,8 @@ dist/
 Updated Modules/
 .mffm-signer/
 .temp_ttf_fonts/
+.mffm-build-stamp
+.mffm-exec-probe
 
 # Ignore contents of Fonts and Files but keep the folders via .gitkeep
 Fonts/*
