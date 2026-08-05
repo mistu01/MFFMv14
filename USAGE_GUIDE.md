@@ -212,3 +212,6 @@ To upgrade old MFFM module ZIP files to the latest MFFMv14 core:
 
 4. **Variable Font Axis Reset**:
    - If you modify font files, the module identity changes. The installer will clean up old configuration files and generate a new matching `.conf` file automatically.
+
+5. **`Refusing to run zipsignerust-…: expected SHA-256 …`**:
+   - The signer binary is pinned by digest in `SIGNER_DIGESTS` (`zipsigner_auto.py`), and upstream republishes its assets under the same rolling `latest` tag. Review the new release, then update the digest for your platform (`gh api repos/MrCarb0n/zipsignerust/releases/latest --jq '.assets[] | "\(.name) \(.digest)"'`). Use `--no-sign` to build in the meantime.
