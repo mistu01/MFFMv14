@@ -128,8 +128,8 @@ cd "$PROJECT_DIR"
 FONTS_DIR="$PROJECT_DIR/Fonts"
 [ "$CUSTOM_FONTS_DIR" = "0" ] || FONTS_DIR=""
 if [ -n "$FONTS_DIR" ] && [ -z "$(find "$FONTS_DIR" -type f \
-  \( -name '*.ttf' -o -name '*.otf' -o -name '*.ttc' -o -name '*.otc' -o -name '*.woff' \
-  -o -name '*.woff2' \) 2>/dev/null | head -n 1)" ]; then
+  \( -iname '*.ttf' -o -iname '*.otf' -o -iname '*.ttc' -o -iname '*.otc' -o -iname '*.woff' \
+  -o -iname '*.woff2' \) 2>/dev/null | head -n 1)" ]; then
   die "no fonts in $FONTS_DIR
 Put them there, or pass a directory: sh termux-build.sh -- --fonts-dir ~/storage/shared/Download/MyFont"
 fi
