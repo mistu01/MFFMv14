@@ -15,7 +15,7 @@ from zipsigner_auto import ZipSignerError, sign_zip
 ROOT = Path(__file__).resolve().parent
 PAYLOAD_NAMES = (
     "module.prop", "customize.sh", "service.sh", "uninstall.sh", "post-mount.sh",
-    "font-config.sh", "META-INF", "Files",
+    "font-config.sh", "fontlib.sh", "font-config", "META-INF", "Files",
 )
 
 
@@ -60,7 +60,7 @@ def write_zip(module_dir: Path, output: Path) -> None:
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for source, relative in payload_files(module_dir):
             info = zipfile.ZipInfo(relative.as_posix(), timestamp)
-            executable = relative.name.endswith(".sh") or relative.name == "update-binary"
+            executable = relative.name.endswith(".sh") or relative.name in {"update-binary", "font-config"}
             info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
             info.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(info, source.read_bytes())
@@ -127,11 +127,16 @@ def build_module(args: argparse.Namespace, module_dir: Path = ROOT) -> Path | No
     return output
 
 
+def check_payload(root: Path) -> None:
+    for required in ("customize.sh", "fontlib.sh", "font-config"):
+        if not (root / required).exists():
+            raise SystemExit(f"Template payload is incomplete: {required} is missing")
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     args = parse_args()
-    if not (ROOT / "customize.sh").exists():
-        raise SystemExit("Template payload is incomplete: customize.sh is missing")
+    check_payload(ROOT)
     build_module(args)
     return 0
 

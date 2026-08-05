@@ -1,25 +1,27 @@
-"""Tests for the awk XML rewriters in customize.sh.
+"""Tests for the awk XML rewriters in fontlib.sh.
 
-The installer cannot be run off-device, but its XML surgery is pure text processing: the shell
-functions are extracted and executed with `sh` against a captured fonts.xml snippet, and the output
-has to stay well-formed XML.
+The installer cannot be run off-device, but its XML surgery is pure text processing: fontlib.sh is
+sourced and its functions are executed with `sh` against a captured fonts.xml snippet, and the
+output has to stay well-formed XML.
 """
 
 from __future__ import annotations
 
-import re
 import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
 
-CUSTOMIZE = Path(__file__).resolve().parents[1] / "customize.sh"
+FONTLIB = Path(__file__).resolve().parents[1] / "fontlib.sh"
 
-STUBS = """
-status_warn() { echo "WARN: $*" >&2; }
-status_ok() { :; }
-fail() { echo "FAIL: $*" >&2; exit 1; }
+STUBS = f"""
+ui_print() {{ echo "$*"; }}
+status_warn() {{ echo "WARN: $*" >&2; }}
+status_ok() {{ :; }}
+status_skip() {{ :; }}
+fail() {{ echo "FAIL: $*" >&2; exit 1; }}
+. "{FONTLIB}"
 """
 
 FONTS_XML = """<?xml version="1.0" encoding="utf-8"?>
@@ -41,13 +43,6 @@ FONTS_XML = """<?xml version="1.0" encoding="utf-8"?>
 """
 
 
-def shell_function(name: str) -> str:
-    source = CUSTOMIZE.read_text(encoding="utf-8")
-    match = re.search(rf"^{name}\(\) \{{\n.*?^\}}$", source, re.MULTILINE | re.DOTALL)
-    assert match, f"{name}() not found in customize.sh"
-    return match.group(0)
-
-
 def run_shell(script: str, cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["sh", "-c", script], cwd=cwd, capture_output=True, text=True, check=True)
 
@@ -63,7 +58,7 @@ def test_replace_family_rewrites_a_multiline_family(tmp_path: Path, xml_file: Pa
     fragment = tmp_path / "mono.xml"
     fragment.write_text('    <font weight="400" style="normal" index="1">DroidSans.ttf</font>\n', encoding="utf-8")
 
-    run_shell(f'{STUBS}\n{shell_function("replace_family")}\nreplace_family "{xml_file}" monospace "{fragment}"', tmp_path)
+    run_shell(f'{STUBS}\nreplace_family "{xml_file}" monospace "{fragment}"', tmp_path)
 
     root = ET.fromstring(xml_file.read_text(encoding="utf-8"))
     mono = next(f for f in root.iter("family") if f.get("name") == "monospace")
@@ -77,7 +72,7 @@ def test_replace_family_splits_the_sans_family(tmp_path: Path, xml_file: Path) -
     fragment = tmp_path / "sans.xml"
     fragment.write_text('    <font weight="400" style="normal" index="0">DroidSans.ttf</font>\n', encoding="utf-8")
 
-    run_shell(f'{STUBS}\n{shell_function("replace_family")}\nreplace_family "{xml_file}" sans-serif "{fragment}"', tmp_path)
+    run_shell(f'{STUBS}\nreplace_family "{xml_file}" sans-serif "{fragment}"', tmp_path)
 
     root = ET.fromstring(xml_file.read_text(encoding="utf-8"))
     named = next(f for f in root.iter("family") if f.get("name") == "sans-serif")
@@ -104,7 +99,7 @@ def test_replace_family_refuses_a_single_line_family(tmp_path: Path) -> None:
     before = xml.read_text(encoding="utf-8")
 
     result = run_shell(
-        f'{STUBS}\n{shell_function("replace_family")}\nreplace_family "{xml}" monospace "{fragment}"', tmp_path
+        f'{STUBS}\nreplace_family "{xml}" monospace "{fragment}"', tmp_path
     )
 
     assert "WARN:" in result.stderr
@@ -112,7 +107,7 @@ def test_replace_family_refuses_a_single_line_family(tmp_path: Path) -> None:
 
 
 def test_replace_beng_family_replaces_in_place(tmp_path: Path, xml_file: Path) -> None:
-    script = f'{STUBS}\n{shell_function("replace_beng_family")}\nreplace_beng_family "{xml_file}" elegant'
+    script = f'{STUBS}\nreplace_beng_family "{xml_file}" elegant'
     run_shell(script, tmp_path)
 
     root = ET.fromstring(xml_file.read_text(encoding="utf-8"))
@@ -143,7 +138,7 @@ def test_replace_beng_family_refuses_a_single_line_family(tmp_path: Path) -> Non
     before = xml.read_text(encoding="utf-8")
 
     result = run_shell(
-        f'{STUBS}\n{shell_function("replace_beng_family")}\nreplace_beng_family "{xml}" elegant', tmp_path
+        f'{STUBS}\nreplace_beng_family "{xml}" elegant', tmp_path
     )
 
     assert "WARN:" in result.stderr
@@ -163,7 +158,7 @@ def test_replace_beng_family_keeps_a_family_opened_on_the_closing_line(tmp_path:
         encoding="utf-8",
     )
 
-    run_shell(f'{STUBS}\n{shell_function("replace_beng_family")}\nreplace_beng_family "{xml}" elegant', tmp_path)
+    run_shell(f'{STUBS}\nreplace_beng_family "{xml}" elegant', tmp_path)
 
     root = ET.fromstring(xml.read_text(encoding="utf-8"))
     arabic = [f for f in root.iter("family") if f.get("lang") == "und-Arab"]
@@ -173,6 +168,6 @@ def test_replace_beng_family_keeps_a_family_opened_on_the_closing_line(tmp_path:
 def test_replace_beng_family_is_a_no_op_without_a_match(tmp_path: Path, xml_file: Path) -> None:
     before = xml_file.read_text(encoding="utf-8")
     run_shell(
-        f'{STUBS}\n{shell_function("replace_beng_family")}\nreplace_beng_family "{xml_file}" compact', tmp_path
+        f'{STUBS}\nreplace_beng_family "{xml_file}" compact', tmp_path
     )
     assert xml_file.read_text(encoding="utf-8") == before

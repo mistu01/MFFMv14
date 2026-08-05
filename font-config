@@ -1,0 +1,88 @@
+#!/system/bin/sh
+# MFFMv14 axis re-apply tool. Installed as /system/bin/font-config by variable modules.
+#
+# Rebuilds the module's fonts.xml, font_fallback.xml and fonts_customization.xml from the pristine
+# fragments saved at install time plus the current values in /sdcard/MFFM/MFFMv14_*.conf, using the
+# same fontlib.sh implementation the installer used. Fonts are cached per process, so the new values
+# take effect after a reboot.
+
+MODULE_ID=mffm14
+MODPATH=${MFFM_MODPATH:-/data/adb/modules/$MODULE_ID}
+RUNTIME_DIR="$MODPATH/mffm"
+MFFM_DIR=${MFFM_DIR:-/sdcard/MFFM}
+
+ui_print() { printf '%s\n' "$1"; }
+status_ok() { printf '  [OK] %s\n' "$1"; }
+status_skip() { printf '  [--] %s\n' "$1"; }
+status_warn() { printf '  [!!] %s\n' "$1" >&2; }
+fail() {
+  printf 'font-config: %s\n' "$1" >&2
+  exit 1
+}
+
+[ -d "$RUNTIME_DIR" ] || fail "$RUNTIME_DIR is missing; re-flash the module to enable font-config"
+[ -f "$RUNTIME_DIR/fontlib.sh" ] || fail "$RUNTIME_DIR/fontlib.sh is missing"
+[ -f "$RUNTIME_DIR/font-config.sh" ] || fail "$RUNTIME_DIR/font-config.sh is missing"
+# shellcheck source=fontlib.sh
+. "$RUNTIME_DIR/fontlib.sh"
+# shellcheck source=font-config.sh
+. "$RUNTIME_DIR/font-config.sh"
+
+[ "$FONT_MODE" = "variable" ] || fail "This module is static; axis values can only be changed by rebuilding it"
+[ "$VF_CONFIG_SCHEMA" = "2" ] || fail "Unsupported variable config schema: $VF_CONFIG_SCHEMA"
+
+VF_CONFIG_FILE=$(variable_config_path)
+[ -f "$VF_CONFIG_FILE" ] || fail "No axis configuration at $VF_CONFIG_FILE; re-flash the module to recreate it"
+# The installer owns key creation, so font-config only substitutes values that are already there.
+VF_CONFIG_CREATED=0
+
+SYS_ETC="$MODPATH/system/etc"
+PRODUCT_ETC="$MODPATH/system/product/etc"
+FONT_DIR="$RUNTIME_DIR/.work"
+ORIGINAL_PRODUCT_XML="$RUNTIME_DIR/original/fonts_customization.xml"
+
+rm -rf "$FONT_DIR"
+mkdir -p "$FONT_DIR" || fail "Could not create $FONT_DIR"
+trap 'rm -rf "$FONT_DIR"' EXIT INT TERM
+
+for fragment in sans.xml condensed.xml serif.xml mono.xml; do
+  [ -f "$RUNTIME_DIR/fragments/$fragment" ] || continue
+  cp -f "$RUNTIME_DIR/fragments/$fragment" "$FONT_DIR/$fragment" || fail "Could not stage $fragment"
+done
+[ -f "$FONT_DIR/sans.xml" ] || fail "$RUNTIME_DIR/fragments/sans.xml is missing"
+
+ui_print "MFFMv14 font-config"
+ui_print "  Font family  : $FONT_FAMILY"
+ui_print "  Axis config  : $VF_CONFIG_FILE"
+
+apply_axis_profiles "$FONT_DIR"
+
+for pair in "fonts.xml:$SYS_ETC/fonts.xml" "font_fallback.xml:$SYS_ETC/font_fallback.xml"; do
+  original="$RUNTIME_DIR/original/${pair%%:*}"
+  target=${pair#*:}
+  [ -f "$original" ] || continue
+  [ -f "$target" ] || continue
+  cp -f "$original" "$target" || fail "Could not restore ${pair%%:*}"
+  patch_sans_families "$target" "$FONT_DIR"
+  patch_mono_families "$target" "$FONT_DIR"
+  patch_serif_families "$target" "$FONT_DIR"
+  # Restoring the pristine XML also drops the Bengali patch, so re-apply it when the module ships
+  # the Bengali faces.
+  if [ -f "$MODPATH/system/fonts/NotoSansBengali-VF.ttf" ]; then
+    replace_beng_family "$target" elegant
+    replace_beng_family "$target" compact
+  fi
+  status_ok "${pair%%:*}"
+done
+
+if [ -f "$ORIGINAL_PRODUCT_XML" ] && [ -f "$PRODUCT_ETC/fonts_customization.xml" ]; then
+  patch_product_fonts_customization "$PRODUCT_ETC/fonts_customization.xml"
+  status_ok "product fonts_customization.xml"
+fi
+if [ -f "$MODPATH/product/etc/fonts_customization.xml" ]; then
+  patch_product_fonts_customization "$MODPATH/product/etc/fonts_customization.xml"
+  status_ok "root product fonts_customization.xml"
+fi
+
+ui_print ""
+ui_print "  Axis values applied. Reboot for running apps to pick up the new fonts."

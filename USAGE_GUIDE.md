@@ -178,7 +178,16 @@ SANS_UPRIGHT_BOLD_WGHT=700
 SANS_UPRIGHT_OPSZ=20
 ```
 
-To re-apply updated axis values, re-flash the module: the installer reads the `.conf` file and rewrites the XML fragments from it. The `Files/` payload and `font-config.sh` are deleted once installation finishes, so the axis values cannot be re-applied from the installed module alone.
+After editing the values, apply them with either:
+
+* **On device, without re-flashing** — a variable module installs `/system/bin/font-config`:
+  ```bash
+  su -c font-config
+  ```
+  It rebuilds the module's `fonts.xml`, `font_fallback.xml` and `fonts_customization.xml` from the axis metadata and the pristine XML fragments saved under `/data/adb/modules/mffm14/mffm/`, using the same `fontlib.sh` implementation the installer uses. Fonts are cached per process, so **reboot** afterwards for running apps to pick up the new values.
+* **Re-flashing the ZIP** — the installer reads the same `.conf` file, so the values are preserved (the `.conf` is kept as long as the module identity matches).
+
+Static modules have no axis values to change and therefore do not install `font-config`; changing a static module means rebuilding it.
 
 ---
 
@@ -234,8 +243,10 @@ committed. Coverage is split into three parts:
 - `test_font_module.py` — categorization, duplicate-face selection, axis/XML emission helpers.
 - `test_compile.py` — end-to-end `compile_fonts` runs asserting the TTC face count and the `index=`
   values in each generated fragment, plus the `update.py` migration round-trip.
-- `test_installer_xml.py` — extracts `replace_family` / `replace_beng_family` from `customize.sh`,
-  runs them with `sh` against a captured `fonts.xml`, and asserts the result still parses as XML.
+- `test_installer_xml.py` — sources `fontlib.sh` and runs `replace_family` / `replace_beng_family`
+  with `sh` against a captured `fonts.xml`, asserting the result still parses as XML.
+- `test_font_config_runtime.py` — axis substitution plus `font-config` end-to-end against a fake
+  module tree, asserting the rebuilt XML, idempotency and the static-module refusal.
 
 The same commands run in CI (`.github/workflows/ci.yml`), together with `shellcheck -s sh` over the
 installer scripts and one `build.py --no-interactive --no-sign` build.
