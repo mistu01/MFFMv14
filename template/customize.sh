@@ -253,7 +253,6 @@ MFFM_DIR=/sdcard/MFFM
 . "$MODPATH/font-config.sh"
 [ "$FONT_MODE" = "static" ] || [ "$FONT_MODE" = "variable" ] || fail "Unknown FONT_MODE: $FONT_MODE"
 [ -n "$FONT_FILES" ] || fail "FONT_FILES is empty"
-[ -f "$FONT_DIR/sans.xml" ] || fail "Generated sans.xml is missing"
 
 mkdir -p "$SYS_FONT" "$SYS_ETC" "$PRODUCT_FONT" "$PRODUCT_ETC" || fail "Could not create module overlay directories"
 if [ "$MOUNTIFY" != "true" ] && [ ! -d "/data/adb/modules/mountify" ]; then
@@ -910,12 +909,32 @@ done
 
 section "2/5" "Patching Android font families"
 
-for xml in "$SYS_XML" "$SYS_FALLBACK"; do
-  replace_family "$xml" sans-serif "$FONT_DIR/sans.xml"
-  replace_family "$xml" sans-serif-condensed "$FONT_DIR/condensed.xml"
-  replace_family "$xml" roboto-flex "$FONT_DIR/sans.xml"
-done
-status_ok "Sans-serif and Roboto Flex XML"
+if [ -f "$FONT_DIR/sans.xml" ]; then
+  for xml in "$SYS_XML" "$SYS_FALLBACK"; do
+    replace_family "$xml" sans-serif "$FONT_DIR/sans.xml"
+    replace_family "$xml" sans-serif-condensed "$FONT_DIR/condensed.xml"
+    replace_family "$xml" roboto-flex "$FONT_DIR/sans.xml"
+  done
+  status_ok "Native Sans-serif font (bundled in DroidSans.ttf)"
+else
+  ext_sans=$(find_first 'Sans*.ttf' "$MFFM_DIR/Sans" "$MFFM_DIR")
+  [ -z "$ext_sans" ] && ext_sans=$(find_first 'Roboto-Regular.ttf' "$MFFM_DIR/Sans" "$MFFM_DIR")
+  if [ -n "$ext_sans" ]; then
+    if is_variable_font "$ext_sans" && ! has_custom_script_for "$ext_sans"; then
+      status_warn "External Variable Sans font (${ext_sans##*/}) supplied without custom script; skipping installation"
+    else
+      cp -f "$ext_sans" "$SYS_FONT/Roboto-Regular.ttf"
+      cp -f "$ext_sans" "$SYS_FONT/Roboto-Bold.ttf"
+      if is_variable_font "$ext_sans"; then
+        status_ok "External Variable Sans font (${ext_sans##*/}) with custom script"
+      else
+        status_ok "External Sans-serif font (copied from MFFM folder)"
+      fi
+    fi
+  else
+    status_skip "Sans-serif font not supplied"
+  fi
+fi
 
 if [ -f "$ORIGINAL_PRODUCT_XML" ] && [ -f "$FONT_DIR/sans.xml" ]; then
   install_product_font_payload "$PRODUCT_FONT"

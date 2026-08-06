@@ -1989,17 +1989,20 @@ def compile_fonts(
 
         all_faces = discover_faces(temp_fonts_dir)
         faces, mono_faces, serif_faces, bengali_faces = _separate_primary_and_optional_faces(all_faces, files_dir)
-        mode = detect_mode(faces, requested_mode)
-        families = {face.family for face in faces}
+        primary_faces = faces or bengali_faces or serif_faces or mono_faces
+        if not primary_faces:
+            raise SystemExit("No valid font faces were found in input subdirectories.")
+        mode = detect_mode(primary_faces, requested_mode)
+        families = {face.family for face in primary_faces}
         if len(families) > 1:
             raise SystemExit("Input files contain multiple font families: " + ", ".join(sorted(families)))
         family = next(iter(families))
         if prefix_family:
             family = transform_family_name(family)
         if mode == "static":
-            selected, payload, mono_index = _compile_static(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, mono_faces=mono_faces, serif_faces=serif_faces, bengali_faces=bengali_faces)
+            selected, payload, mono_index = _compile_static(primary_faces if not faces else faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, mono_faces=mono_faces if faces else [], serif_faces=serif_faces if faces else [], bengali_faces=bengali_faces if faces else [])
         else:
-            selected, payload, mono_index = _compile_variable(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, mono_faces=mono_faces, serif_faces=serif_faces, bengali_faces=bengali_faces)
+            selected, payload, mono_index = _compile_variable(primary_faces if not faces else faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, mono_faces=mono_faces if faces else [], serif_faces=serif_faces if faces else [], bengali_faces=bengali_faces if faces else [])
 
         primary = payload[0]
         config = [
