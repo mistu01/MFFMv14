@@ -1029,8 +1029,10 @@ if [ -f "$FONT_DIR/sans.xml" ]; then
   done
   status_ok "Native Sans-serif font (bundled in DroidSans.ttf)"
 else
-  ext_sans=$(find_first 'Sans*.ttf' "$MFFM_DIR/Sans" "$MFFM_DIR")
-  [ -z "$ext_sans" ] && ext_sans=$(find_first 'Roboto-Regular.ttf' "$MFFM_DIR/Sans" "$MFFM_DIR")
+  ext_sans=$(find_first '*.ttf' "$MFFM_DIR/Sans")
+  [ -z "$ext_sans" ] && ext_sans=$(find_first '*.otf' "$MFFM_DIR/Sans")
+  [ -z "$ext_sans" ] && ext_sans=$(find_first 'Sans*.ttf' "$MFFM_DIR")
+  [ -z "$ext_sans" ] && ext_sans=$(find_first 'Roboto-Regular.ttf' "$MFFM_DIR")
   if [ -n "$ext_sans" ]; then
     cp -f "$ext_sans" "$SYS_FONT/Roboto-Regular.ttf"
     cp -f "$ext_sans" "$SYS_FONT/Roboto-Bold.ttf"
@@ -1090,7 +1092,10 @@ elif [ -f "$FONT_DIR/CutiveMono.ttf" ] && [ -f "$FONT_DIR/DroidSansMono.ttf" ]; 
   cp -f "$FONT_DIR/DroidSansMono.ttf" "$SYS_FONT/DroidSansMono.ttf"
   status_ok "Native Monospace font (module standalone files)"
 else
-  ext_mono=$(find_first 'Mono*.ttf' "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono" "$MFFM_DIR")
+  ext_mono=$(find_first '*.ttf' "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono")
+  [ -z "$ext_mono" ] && ext_mono=$(find_first '*.otf' "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono")
+  [ -z "$ext_mono" ] && ext_mono=$(find_first 'Mono*.ttf' "$MFFM_DIR")
+  [ -z "$ext_mono" ] && ext_mono=$(find_first 'Mono*.otf' "$MFFM_DIR")
   if [ -n "$ext_mono" ]; then
     cp -f "$ext_mono" "$SYS_FONT/CutiveMono.ttf"
     cp -f "$ext_mono" "$SYS_FONT/DroidSansMono.ttf"
@@ -1133,7 +1138,10 @@ elif [ -f "$FONT_DIR/Beng-Regular.ttf" ] && [ -f "$FONT_DIR/Beng-Medium.ttf" ] &
   done
   status_ok "Bengali fonts (standalone module files)"
 else
-  ext_beng=$(find_first 'Beng*.ttf' "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
+  ext_beng=$(find_first '*.ttf' "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng")
+  [ -z "$ext_beng" ] && ext_beng=$(find_first '*.otf' "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng")
+  [ -z "$ext_beng" ] && ext_beng=$(find_first 'Beng*.ttf' "$MFFM_DIR")
+  [ -z "$ext_beng" ] && ext_beng=$(find_first 'Beng*.otf' "$MFFM_DIR")
   if [ -n "$ext_beng" ]; then
     cp -f "$ext_beng" "$SYS_FONT/NotoSansBengali-VF.ttf"
     cp -f "$ext_beng" "$SYS_FONT/NotoSerifBengali-VF.ttf"
@@ -1178,8 +1186,10 @@ elif [ -f "$FONT_DIR/NotoSerif-Regular.ttf" ] && [ -f "$FONT_DIR/NotoSerif-Bold.
   [ -f "$FONT_DIR/NotoSerif-BoldItalic.ttf" ] && cp -f "$FONT_DIR/NotoSerif-BoldItalic.ttf" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
   status_ok "Native Serif font (module standalone files)"
 else
-  ext_s_reg=$(find_first 'Serif-Regular.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
-  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first 'Serif*.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
+  ext_s_reg=$(find_first '*.ttf' "$MFFM_DIR/Serif")
+  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first '*.otf' "$MFFM_DIR/Serif")
+  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first 'Serif-Regular.ttf' "$MFFM_DIR")
+  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first 'Serif*.ttf' "$MFFM_DIR")
   ext_s_ital=$(find_first 'Serif-Italic.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
   ext_s_bold=$(find_first 'Serif-Bold.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
   ext_s_bital=$(find_first 'Serif-BoldItalic.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
