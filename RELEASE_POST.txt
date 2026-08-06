@@ -1,79 +1,32 @@
 MFFMv14 -- Universal Magisk, KernelSU & APatch Font Module Builder
 
-Automated tool & template to create flashable Android font modules for Magisk, KernelSU, APatch, and Mountify/OverlayFS.
+Automated tool & template to build flashable Android font modules for Magisk, KernelSU, APatch, and Mountify/OverlayFS.
 
-Key Features & Capabilities:
+Highlights & Capabilities:
+- On-Device Termux Automation (termux-build.sh): Build & auto-flash with 1 command.
+- Flexible Family Support: Build Sans-only, Bengali-only, Serif-only, or Monospace-only modules.
+- Single TTC Container (DroidSans.ttf): Packs all faces into one TTC file with dynamic system XML patching.
+- Bengali 100-900 Weight Engine: Full weight class support (Thin to Black) & --bengali-features.
+- OpenType Feature Freezer: Interactive or flag-based feature freezing (ss01-ss20, zero, tnum, etc.).
+- Centered Colon (:): Automatic contextual digit colon injection for lockscreen clocks (12:30).
+- /sdcard/MFFM/ Subdirectories: Auto-creates Sans/, Serif/, Monospace/, Bengali/ fallback folders.
+- Native Variable Font Parsing: Natively extracts fvar variation axes in recovery without custom scripts.
+- Smart Config & Auto-Pruning: Live .conf axis tuning in /sdcard/MFFM/. Auto-prunes obsolete config keys.
+- Pixel & Product Patching: Patches fonts.xml, font_fallback.xml, and product fonts_customization.xml.
+- Cryptographic Signing: Auto-signs output ZIPs using built-in ZipSigner.
 
-- On-Device Termux Automation (termux-build.sh):
-  One-command setup on Android: auto-installs dependencies (python, fonttools, brotli, cryptography), compiles your fonts, and auto-flashes via root (su) for Magisk, KernelSU, or APatch. Supports interactive prompts or headless auto-flashing (--yes).
+Quick Start:
 
-- Universal Format & Any-Family Support:
-  Full support for Static (.ttf, .otf) and Variable (.ttf, .otf) fonts, compressed webfonts (.woff, .woff2), and TTC/OTC collections. Build modules with any supplied family combination (Bengali-only, Serif-only, Monospace-only, or Sans-only). Automatic font mode detection (--mode auto).
+Desktop / PC:
+1. pip install -r requirements.txt
+2. Put fonts in Fonts/ subdirectories (Sans/, Monospace/, Serif/, Bengali/).
+3. Run: python build.py
+4. Flash generated ZIP from dist/ in Magisk, KernelSU, or APatch!
 
-- Bengali Full 100-900 Weight Class Engine:
-  Comprehensive support for Bengali fonts placed in Fonts/Bengali/. Maps full 100-900 weight classes (Thin to Black) or variable axes into DroidSans.ttf, dynamically patching und-Beng and bn language family entries in system XMLs. Supports --bengali-features.
+Termux (On-Device):
+1. unzip MFFMv14-Source-Template.zip -d ~/MFFMv14 && cd ~/MFFMv14
+2. Put fonts in Fonts/ subdirectories.
+3. Run: sh termux-build.sh
 
-- Single TTC Container Architecture (DroidSans.ttf):
-  Compiles all primary Sans, Monospace, Serif, and Bengali font faces into ONE single DroidSans.ttf TTC container. Dynamically generates matching system XML fragments (sans.xml, condensed.xml, mono.xml, serif.xml, bengali.xml, clock.xml).
-
-- Multi-Family Categorization & Per-Family Feature Freezing:
-  Dedicated subdirectories (Fonts/Sans/, Fonts/Monospace/, Fonts/Serif/, Fonts/Bengali/) for 100% classification accuracy. Freeze OpenType features independently for Sans-serif, Monospace, Serif, and Bengali font families.
-
-- OpenType Feature Freezer with Safety Guidance:
-  Discovers & freezes stylistic sets (ss01-ss20), character variants (cv01-cv99), slashed zero (zero), tabular figures (tnum), case-sensitive forms (case), etc. Categorizes features interactively by safety ([SAFE TO FREEZE], [CAUTION], [UNSAFE / NOT RECOMMENDED]).
-
-- Centered Colon Injection for Lockscreen Clocks (12:30):
-  Detects missing centered colon glyphs between digits (12:30) for lockscreen clocks. Automatically generates and injects GSUB contextual substitution rules (--centered-colon).
-
-- Subdirectory Separation & Fallback (/sdcard/MFFM/):
-  Auto-creates dedicated subdirectories (/sdcard/MFFM/Sans/, /sdcard/MFFM/Serif/, /sdcard/MFFM/Monospace/, /sdcard/MFFM/Bengali/) on flash. Enforces a clean 3-tier priority logic: Native payload -> External fallback -> Clean skip.
-
-- Native Binary Variable Font Parsing & Obsolete Config Pruning:
-  Directly parses fvar variation axes (wght, opsz, etc.) from external binaries in recovery and generates 100-900 weight class XML attributes natively without custom scripts! Automatically prunes obsolete config entries from /sdcard/MFFM/*.conf when font files are removed.
-
-- Live Variable Font Axis Tuning (.conf files):
-  Generates identity-bound axis config files in /sdcard/MFFM/. Edit weights or slants in the .conf file and run 'su -c font-config' or re-flash to apply axis values live! Re-installing the same module retains existing user settings.
-
-- Google Pixel & Product Font Patching:
-  Patches /system/etc/fonts.xml, font_fallback.xml, and /product/etc/fonts_customization.xml for Google Pixel / AOSP product fonts (Rubik-Regular, Rubik-Italic).
-
-- Cryptographic Auto-Signing:
-  Automatically verifies and signs output ZIPs using built-in ZipSigner cryptographic engine.
-
-- Batch Legacy Module Migration (update.py):
-  Migrates old MFFM ZIP modules in Old Modules/ onto the modern MFFMv14 core.
-
-
-Quick Usage:
-
-PC / Desktop Setup:
-1. Install Dependencies:
-pip install -r requirements.txt
-
-2. Build Module (Interactive):
-Put your font files inside Fonts/ folder (Sans/, Monospace/, Serif/, Bengali/) and run:
-python build.py
-
-3. Build Non-Interactively:
-python build.py --features zero,tnum,ss01 --bengali-features ss01,zero --centered-colon
-
-4. Update Legacy Modules:
-Put old MFFM ZIPs in Old Modules/ and run:
-python update.py
-
-5. Flash:
-Flash generated ZIP from dist/ in Magisk, KernelSU, or APatch!
-
-
-On-Device Termux Setup:
-1. Extract & Prepare:
-unzip MFFMv14-Source-Template.zip -d ~/MFFMv14
-cd ~/MFFMv14
-Put Your Fonts in the respective folder of Fonts folder.
-
-2. One-Command Build & Flash:
-sh termux-build.sh
-
-
-Test & Preview OpenType Features:
-- Adam Jagosz Lettering (https://www.adamjagosz.com/bulletproof/lettering) | Wakamaifondue (https://wakamaifondue.com/)
+Preview Features:
+Wakamaifondue (https://wakamaifondue.com/) | Adam Jagosz (https://www.adamjagosz.com/bulletproof/lettering)
