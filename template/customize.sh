@@ -86,10 +86,14 @@ first_file() {
 }
 
 find_first() {
-  directory=$1
-  pattern=$2
-  [ -d "$directory" ] || return 1
-  find "$directory" -maxdepth 1 -type f -name "$pattern" 2>/dev/null | head -n 1
+  local pattern=$1 match dir
+  shift
+  for dir in "$@"; do
+    [ -n "$dir" ] && [ -d "$dir" ] || continue
+    match=$(find "$dir" -maxdepth 1 -type f -name "$pattern" 2>/dev/null | head -n 1)
+    [ -n "$match" ] && { printf '%s\n' "$match"; return 0; }
+  done
+  return 1
 }
 
 run_custom_scripts() {
@@ -240,6 +244,9 @@ if [ "$MOUNTIFY" != "true" ] && [ ! -d "/data/adb/modules/mountify" ]; then
   mkdir -p "$MODPATH/product/fonts" "$MODPATH/product/etc" || fail "Could not create root product overlay directories"
 fi
 mkdir -p "$MFFM_DIR" || fail "Could not create $MFFM_DIR for variable-font settings"
+for mffm_sub in Sans Serif Monospace Bengali; do
+  mkdir -p "$MFFM_DIR/$mffm_sub" 2>/dev/null
+done
 [ -f "$ORIGINAL_FONTS_XML" ] || fail "Could not locate the live system fonts.xml"
 cp -f "$ORIGINAL_FONTS_XML" "$SYS_XML" || fail "Could not copy system fonts.xml"
 [ -f "$ORIGINAL_FALLBACK_XML" ] && cp -f "$ORIGINAL_FALLBACK_XML" "$SYS_FALLBACK"
@@ -273,6 +280,32 @@ replace_family() {
         if (index($0, "</family>") > 0) { inside=0 }
       } else {
         if (index($0, "</family>") > 0) { print; inside=0 }
+      }
+      next
+    }
+    { print }
+  ' "$xml" > "$xml.tmp" && mv -f "$xml.tmp" "$xml"
+}
+
+replace_lang_family() {
+  xml=$1
+  lang=$2
+  fragment_file=$3
+  [ -f "$xml" ] || return 0
+  [ -f "$fragment_file" ] || return 0
+  grep -q "lang=\"$lang\"" "$xml" 2>/dev/null || return 0
+  fragment=$(cat "$fragment_file")
+  awk -v target="$lang" -v replacement="$fragment" '
+    !inside && index($0, "<family") > 0 && index($0, "lang=\"" target "\"") > 0 {
+      print $0
+      print replacement
+      inside=1
+      next
+    }
+    inside {
+      if (index($0, "</family>") > 0) {
+        print $0
+        inside=0
       }
       next
     }
@@ -887,8 +920,7 @@ fi
 section "3/5" "Applying optional font resources"
 
 for prefix in Beng Serif; do
-  bundled=$(find_first "$FONT_DIR" "$prefix*.zip")
-  [ -n "$bundled" ] || bundled=$(find_first "$MFFM_DIR" "$prefix*.zip")
+  bundled=$(find_first "$prefix*.zip" "$FONT_DIR" "$MFFM_DIR/Bengali" "$MFFM_DIR/Serif" "$MFFM_DIR")
   [ -n "$bundled" ] && unzip -oq "$bundled" -d "$FONT_DIR"
 done
 if [ -f "$FONT_DIR/mono.xml" ]; then
@@ -907,7 +939,7 @@ elif [ -f "$FONT_DIR/CutiveMono.ttf" ] && [ -f "$FONT_DIR/DroidSansMono.ttf" ]; 
   cp -f "$FONT_DIR/DroidSansMono.ttf" "$SYS_FONT/DroidSansMono.ttf"
   status_ok "Native Monospace font (module standalone files)"
 else
-  ext_mono=$(find_first "$MFFM_DIR" 'Mono*.ttf')
+  ext_mono=$(find_first 'Mono*.ttf' "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono" "$MFFM_DIR")
   if [ -n "$ext_mono" ]; then
     cp -f "$ext_mono" "$SYS_FONT/CutiveMono.ttf"
     cp -f "$ext_mono" "$SYS_FONT/DroidSansMono.ttf"
@@ -917,7 +949,14 @@ else
   fi
 fi
 
-if [ -f "$FONT_DIR/Beng-Regular.ttf" ] && [ -f "$FONT_DIR/Beng-Medium.ttf" ] && [ -f "$FONT_DIR/Beng-Bold.ttf" ]; then
+if [ -f "$FONT_DIR/bengali.xml" ]; then
+  for xml in "$SYS_XML" "$SYS_FALLBACK"; do
+    [ -f "$xml" ] || continue
+    replace_lang_family "$xml" "und-Beng" "$FONT_DIR/bengali.xml"
+    replace_lang_family "$xml" "bn" "$FONT_DIR/bengali.xml"
+  done
+  status_ok "Native Bengali font (bundled in DroidSans.ttf with full 100-900 weight class)"
+elif [ -f "$FONT_DIR/Beng-Regular.ttf" ] && [ -f "$FONT_DIR/Beng-Medium.ttf" ] && [ -f "$FONT_DIR/Beng-Bold.ttf" ]; then
   cp -f "$FONT_DIR/Beng-Regular.ttf" "$SYS_FONT/NotoSansBengali-VF.ttf"
   cp -f "$FONT_DIR/Beng-Medium.ttf" "$SYS_FONT/NotoSerifBengali-VF.ttf"
   cp -f "$FONT_DIR/Beng-Bold.ttf" "$SYS_FONT/NotoSansBengaliUI-VF.ttf"
@@ -926,9 +965,22 @@ if [ -f "$FONT_DIR/Beng-Regular.ttf" ] && [ -f "$FONT_DIR/Beng-Medium.ttf" ] && 
     sed -i '/<family lang="und-Beng" variant="elegant">/,/<\/family>/c\<family lang="und-Beng" variant="elegant">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
     sed -i '/<family lang="und-Beng" variant="compact">/,/<\/family>/c\<family lang="und-Beng" variant="compact">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
   done
-  status_ok "Bengali fonts"
+  status_ok "Bengali fonts (standalone module files)"
 else
-  status_skip "Bengali fonts not supplied"
+  ext_beng=$(find_first 'Beng*.ttf' "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
+  if [ -n "$ext_beng" ]; then
+    cp -f "$ext_beng" "$SYS_FONT/NotoSansBengali-VF.ttf"
+    cp -f "$ext_beng" "$SYS_FONT/NotoSerifBengali-VF.ttf"
+    cp -f "$ext_beng" "$SYS_FONT/NotoSansBengaliUI-VF.ttf"
+    for xml in "$SYS_XML" "$SYS_FALLBACK"; do
+      [ -f "$xml" ] || continue
+      sed -i '/<family lang="und-Beng" variant="elegant">/,/<\/family>/c\<family lang="und-Beng" variant="elegant">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
+      sed -i '/<family lang="und-Beng" variant="compact">/,/<\/family>/c\<family lang="und-Beng" variant="compact">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
+    done
+    status_ok "External Bengali font (copied from MFFM folder)"
+  else
+    status_skip "Bengali fonts not supplied"
+  fi
 fi
 
 if [ -f "$FONT_DIR/serif.xml" ]; then
@@ -946,10 +998,10 @@ elif [ -f "$FONT_DIR/NotoSerif-Regular.ttf" ] && [ -f "$FONT_DIR/NotoSerif-Bold.
   [ -f "$FONT_DIR/NotoSerif-BoldItalic.ttf" ] && cp -f "$FONT_DIR/NotoSerif-BoldItalic.ttf" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
   status_ok "Native Serif font (module standalone files)"
 else
-  ext_s_reg=$(find_first "$MFFM_DIR" 'Serif-Regular.ttf')
-  ext_s_ital=$(find_first "$MFFM_DIR" 'Serif-Italic.ttf')
-  ext_s_bold=$(find_first "$MFFM_DIR" 'Serif-Bold.ttf')
-  ext_s_bital=$(find_first "$MFFM_DIR" 'Serif-BoldItalic.ttf')
+  ext_s_reg=$(find_first 'Serif-Regular.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
+  ext_s_ital=$(find_first 'Serif-Italic.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
+  ext_s_bold=$(find_first 'Serif-Bold.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
+  ext_s_bital=$(find_first 'Serif-BoldItalic.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
 
   if [ -n "$ext_s_reg" ] && [ -n "$ext_s_bold" ]; then
     cp -f "$ext_s_reg" "$SYS_FONT/NotoSerif-Regular.ttf"

@@ -122,7 +122,7 @@ cd "$PROJECT_DIR"
 FONTS_DIR="$PROJECT_DIR/Fonts"
 [ "$CUSTOM_FONTS_DIR" = "0" ] || FONTS_DIR=""
 if [ -n "$FONTS_DIR" ]; then
-  mkdir -p "$FONTS_DIR/Sans" "$FONTS_DIR/Monospace" "$FONTS_DIR/Serif"
+  mkdir -p "$FONTS_DIR/Sans" "$FONTS_DIR/Monospace" "$FONTS_DIR/Serif" "$FONTS_DIR/Bengali"
 fi
 
 BUILD_LOG="$PROJECT_DIR/.mffm-build-log"

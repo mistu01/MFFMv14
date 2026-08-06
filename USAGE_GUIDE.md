@@ -57,16 +57,18 @@ The compiler scans `Fonts/` and its subdirectories for `.ttf`, `.otf`, `.ttc`, `
 - **Primary Sans-Serif Family**: Fonts placed in `Fonts/` or `Fonts/Sans/`.
 - **Monospace Family**: Fonts placed in `Fonts/Monospace/` or `Fonts/Mono/` (or matching filename tags `mono`, `code`, `consolas`).
 - **Serif Family**: Fonts placed in `Fonts/Serif/` (or matching filename tags `serif`).
+- **Bengali Family**: Fonts placed in `Fonts/Bengali/` or `Fonts/Beng/` (or matching filename tags `bengali`, `beng`).
 
-Using dedicated subdirectories (`Fonts/Monospace/` and `Fonts/Serif/`) guarantees 100% accurate classification even if font filenames or internal font metadata do not contain keyword tags!
+Using dedicated subdirectories (`Fonts/Sans/`, `Fonts/Monospace/`, `Fonts/Serif/`, `Fonts/Bengali/`) guarantees 100% accurate classification even if font filenames or internal font metadata do not contain keyword tags!
 
 ### Single TTC Collection Architecture (`DroidSans.ttf`)
-All discovered font faces (Sans-serif static or variable, Monospace static or variable, and Serif static or variable) are compiled into **ONE single `DroidSans.ttf` TTC container**:
+All discovered font faces (Sans-serif static or variable, Monospace static or variable, Serif static or variable, and Bengali static or variable) are compiled into **ONE single `DroidSans.ttf` TTC container**:
 - **Indices 0..S**: Sans-serif font faces.
 - **Indices M1..Mn**: Monospace font faces.
 - **Indices R1..Rn**: Serif font faces.
+- **Indices B1..Bn**: Bengali font faces.
 
-Corresponding XML configuration fragments (`sans.xml`, `condensed.xml`, `mono.xml`, `serif.xml`, `clock.xml`) are generated in `Files/` referencing `DroidSans.ttf` at their respective TTC face indices.
+Corresponding XML configuration fragments (`sans.xml`, `condensed.xml`, `mono.xml`, `serif.xml`, `bengali.xml`, `clock.xml`) are generated in `Files/` referencing `DroidSans.ttf` at their respective TTC face indices with full 100-900 weight class mappings (100 Thin..900 Black).
 
 ### Per-Family OpenType Feature Freezing
 `build.py` integrates `pyftfeatfreeze` for interactive or headless OpenType feature freezing.
@@ -74,6 +76,7 @@ When running interactively:
 1. **Sans-serif Prompt**: Prompts to freeze features for the primary Sans-serif font family.
 2. **Monospace Prompt**: If Monospace fonts are supplied (in `Fonts/Monospace/` or `Fonts/Mono/`), additionally prompts to select and freeze features specifically for the Monospace family.
 3. **Serif Prompt**: If Serif fonts are supplied (in `Fonts/Serif/`), additionally prompts to select and freeze features specifically for the Serif family.
+4. **Bengali Prompt**: If Bengali fonts are supplied (in `Fonts/Bengali/` or `Fonts/Beng/`), additionally prompts to select and freeze features specifically for the Bengali family.
 
 - **[SAFE TO FREEZE]**: Stylistic Sets (`ss01`–`ss20`), Character Variants (`cv01`–`cv99`), Slashed Zero (`zero`), Tabular Figures (`tnum`), Proportional Figures (`pnum`), Stylistic Alternates (`salt`), Case-Sensitive Forms (`case`).
 - **[CAUTION]**: Repositioning features (`frac`, `numr`, `dnom`, `subs`, `sups`) that alter number layout globally.
@@ -88,17 +91,6 @@ Inspects input fonts for contextual centered colon support (displaying `: ` vert
 | :--- | :--- | :--- | :--- |
 | `--fonts-dir` | `<PATH>` | Directory containing source font files. | `Fonts/` |
 | `--mode` | `auto`, `static`, `variable` | Font compilation mode. | `auto` |
-| `--name` | `<STRING>` | Override module display name in `module.prop`. | Extracted from font |
-| `--version` | `<STRING>` | Override version string. | `YYYY.MM.DD` |
-| `--version-code` | `<NUMBER>` | Override numeric `versionCode`. | `YYYYMMDDHHMM` |
-| `--output-dir` | `<PATH>` | Target directory for generated ZIPs. | `dist/` |
-| `--features` | `<TAGS>` | Comma-separated OpenType features to freeze for Sans-serif (or default for all families). | None |
-| `--mono-features` | `<TAGS>` | Comma-separated OpenType features to freeze specifically for Monospace family. | None |
-| `--serif-features` | `<TAGS>` | Comma-separated OpenType features to freeze specifically for Serif family. | None |
-| `--centered-colon` | *Flag* | Force centered colon generation for clock displays. | False |
-| `--no-centered-colon` | *Flag* | Disable centered colon injection. | False |
-| `--interactive` | *Flag* | Force interactive feature selection prompt. | False |
-| `--no-interactive` | *Flag* | Disable interactive prompts. | False |
 | `--keep-hinting` | *Flag* | Preserve original TrueType hinting instructions. | False (hints stripped) |
 | `--no-prefix` | *Flag* | Disable `Mistu` family name transformation. | False |
 | `--no-zip` | *Flag* | Stage files in `Files/` without compressing into ZIP. | False |

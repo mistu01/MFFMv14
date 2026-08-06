@@ -36,6 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--features", help="comma-separated OpenType feature tags to freeze for Sans-serif (or all families)")
     parser.add_argument("--mono-features", help="comma-separated OpenType feature tags to freeze for Monospace font family")
     parser.add_argument("--serif-features", help="comma-separated OpenType feature tags to freeze for Serif font family")
+    parser.add_argument("--bengali-features", help="comma-separated OpenType feature tags to freeze for Bengali font family")
     parser.add_argument("--interactive", action="store_true", default=None, help="force interactive feature prompt")
     parser.add_argument("--no-interactive", action="store_false", dest="interactive", help="disable interactive feature prompt")
     parser.add_argument("--centered-colon", action="store_true", default=None, help="force centered colon generation/injection for digits (12:30)")
@@ -97,6 +98,7 @@ def build_module(args: argparse.Namespace) -> Path | None:
             features=args.features,
             mono_features=args.mono_features,
             serif_features=args.serif_features,
+            bengali_features=args.bengali_features,
             interactive_features=args.interactive,
             centered_colon=args.centered_colon,
         )
