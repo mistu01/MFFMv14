@@ -96,12 +96,28 @@ find_first() {
   return 1
 }
 
+is_variable_font() {
+  local font_file=$1
+  [ -f "$font_file" ] || return 1
+  head -c 8192 "$font_file" 2>/dev/null | grep -q 'fvar'
+}
+
+has_custom_script_for() {
+  local font_file=$1 dir
+  dir=$(dirname "$font_file")
+  if [ -n "$dir" ] && [ -d "$dir" ]; then
+    find "$dir" -maxdepth 1 -type f -name '*.sh' 2>/dev/null | grep -q '.' && return 0
+  fi
+  find "$MFFM_DIR" -maxdepth 2 -type f -name '*.sh' 2>/dev/null | grep -q '.' && return 0
+  return 1
+}
+
 run_custom_scripts() {
   local custom_script custom_list custom_output custom_status custom_trace line
   custom_list="$MFFM_DIR/.mffmv14-custom-scripts.$$"
   custom_output="$MFFM_DIR/.mffmv14-custom-output.$$"
 
-  find "$MFFM_DIR" -maxdepth 1 -type f -name '*.sh' 2>/dev/null | sort > "$custom_list"
+  find "$MFFM_DIR" -maxdepth 2 -type f -name '*.sh' 2>/dev/null | sort > "$custom_list"
   if [ ! -s "$custom_list" ]; then
     rm -f "$custom_list"
     status_skip "No custom local scripts"
@@ -941,9 +957,17 @@ elif [ -f "$FONT_DIR/CutiveMono.ttf" ] && [ -f "$FONT_DIR/DroidSansMono.ttf" ]; 
 else
   ext_mono=$(find_first 'Mono*.ttf' "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono" "$MFFM_DIR")
   if [ -n "$ext_mono" ]; then
-    cp -f "$ext_mono" "$SYS_FONT/CutiveMono.ttf"
-    cp -f "$ext_mono" "$SYS_FONT/DroidSansMono.ttf"
-    status_ok "External Monospace font (copied from MFFM folder)"
+    if is_variable_font "$ext_mono" && ! has_custom_script_for "$ext_mono"; then
+      status_warn "External Variable Monospace font (${ext_mono##*/}) supplied without custom script; skipping installation"
+    else
+      cp -f "$ext_mono" "$SYS_FONT/CutiveMono.ttf"
+      cp -f "$ext_mono" "$SYS_FONT/DroidSansMono.ttf"
+      if is_variable_font "$ext_mono"; then
+        status_ok "External Variable Monospace font (${ext_mono##*/}) with custom script"
+      else
+        status_ok "External Monospace font (copied from MFFM folder)"
+      fi
+    fi
   else
     status_skip "Monospace font not supplied"
   fi
@@ -969,15 +993,23 @@ elif [ -f "$FONT_DIR/Beng-Regular.ttf" ] && [ -f "$FONT_DIR/Beng-Medium.ttf" ] &
 else
   ext_beng=$(find_first 'Beng*.ttf' "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
   if [ -n "$ext_beng" ]; then
-    cp -f "$ext_beng" "$SYS_FONT/NotoSansBengali-VF.ttf"
-    cp -f "$ext_beng" "$SYS_FONT/NotoSerifBengali-VF.ttf"
-    cp -f "$ext_beng" "$SYS_FONT/NotoSansBengaliUI-VF.ttf"
-    for xml in "$SYS_XML" "$SYS_FALLBACK"; do
-      [ -f "$xml" ] || continue
-      sed -i '/<family lang="und-Beng" variant="elegant">/,/<\/family>/c\<family lang="und-Beng" variant="elegant">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
-      sed -i '/<family lang="und-Beng" variant="compact">/,/<\/family>/c\<family lang="und-Beng" variant="compact">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
-    done
-    status_ok "External Bengali font (copied from MFFM folder)"
+    if is_variable_font "$ext_beng" && ! has_custom_script_for "$ext_beng"; then
+      status_warn "External Variable Bengali font (${ext_beng##*/}) supplied without custom script; skipping installation"
+    else
+      cp -f "$ext_beng" "$SYS_FONT/NotoSansBengali-VF.ttf"
+      cp -f "$ext_beng" "$SYS_FONT/NotoSerifBengali-VF.ttf"
+      cp -f "$ext_beng" "$SYS_FONT/NotoSansBengaliUI-VF.ttf"
+      for xml in "$SYS_XML" "$SYS_FALLBACK"; do
+        [ -f "$xml" ] || continue
+        sed -i '/<family lang="und-Beng" variant="elegant">/,/<\/family>/c\<family lang="und-Beng" variant="elegant">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
+        sed -i '/<family lang="und-Beng" variant="compact">/,/<\/family>/c\<family lang="und-Beng" variant="compact">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
+      done
+      if is_variable_font "$ext_beng"; then
+        status_ok "External Variable Bengali font (${ext_beng##*/}) with custom script"
+      else
+        status_ok "External Bengali font (copied from MFFM folder)"
+      fi
+    fi
   else
     status_skip "Bengali fonts not supplied"
   fi
@@ -999,16 +1031,27 @@ elif [ -f "$FONT_DIR/NotoSerif-Regular.ttf" ] && [ -f "$FONT_DIR/NotoSerif-Bold.
   status_ok "Native Serif font (module standalone files)"
 else
   ext_s_reg=$(find_first 'Serif-Regular.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
+  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first 'Serif*.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
   ext_s_ital=$(find_first 'Serif-Italic.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
   ext_s_bold=$(find_first 'Serif-Bold.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
   ext_s_bital=$(find_first 'Serif-BoldItalic.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
 
-  if [ -n "$ext_s_reg" ] && [ -n "$ext_s_bold" ]; then
-    cp -f "$ext_s_reg" "$SYS_FONT/NotoSerif-Regular.ttf"
-    [ -n "$ext_s_ital" ] && cp -f "$ext_s_ital" "$SYS_FONT/NotoSerif-Italic.ttf"
-    cp -f "$ext_s_bold" "$SYS_FONT/NotoSerif-Bold.ttf"
-    [ -n "$ext_s_bital" ] && cp -f "$ext_s_bital" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
-    status_ok "External Serif fonts (copied from MFFM folder)"
+  if [ -n "$ext_s_reg" ]; then
+    if is_variable_font "$ext_s_reg" && ! has_custom_script_for "$ext_s_reg"; then
+      status_warn "External Variable Serif font (${ext_s_reg##*/}) supplied without custom script; skipping installation"
+    elif [ -n "$ext_s_bold" ] || is_variable_font "$ext_s_reg"; then
+      cp -f "$ext_s_reg" "$SYS_FONT/NotoSerif-Regular.ttf"
+      [ -n "$ext_s_ital" ] && cp -f "$ext_s_ital" "$SYS_FONT/NotoSerif-Italic.ttf"
+      [ -n "$ext_s_bold" ] && cp -f "$ext_s_bold" "$SYS_FONT/NotoSerif-Bold.ttf" || cp -f "$ext_s_reg" "$SYS_FONT/NotoSerif-Bold.ttf"
+      [ -n "$ext_s_bital" ] && cp -f "$ext_s_bital" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
+      if is_variable_font "$ext_s_reg"; then
+        status_ok "External Variable Serif font (${ext_s_reg##*/}) with custom script"
+      else
+        status_ok "External Serif fonts (copied from MFFM folder)"
+      fi
+    else
+      status_skip "Dedicated serif fonts incomplete"
+    fi
   else
     status_skip "Dedicated serif fonts not supplied"
   fi
