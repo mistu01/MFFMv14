@@ -96,6 +96,102 @@ find_first() {
   return 1
 }
 
+find_best_face() {
+  local target_weight=$1 target_style=$2
+  shift 2
+  local dir file name name_lower is_ital score best_score=0 best_file=""
+
+  for dir in "$@"; do
+    [ -n "$dir" ] && [ -d "$dir" ] || continue
+    for file in "$dir"/*.ttf "$dir"/*.otf; do
+      [ -f "$file" ] || continue
+      name=${file##*/}
+      name_lower=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
+
+      case "$name_lower" in
+        *ital*|*oblique*|*slanted*) is_ital="italic" ;;
+        *) is_ital="normal" ;;
+      esac
+      [ "$is_ital" = "$target_style" ] || continue
+
+      score=10
+      case "$target_weight" in
+        100)
+          case "$name_lower" in
+            *thin*|*100*) score=100 ;;
+            *hairline*) score=80 ;;
+          esac
+          ;;
+        200)
+          case "$name_lower" in
+            *extralight*|*ultralight*|*200*) score=100 ;;
+            *light*) score=50 ;;
+          esac
+          ;;
+        300)
+          case "$name_lower" in
+            *light*|*300*) score=100 ;;
+            *extralight*) score=40 ;;
+          esac
+          ;;
+        400)
+          case "$name_lower" in
+            *regular*|*400*) score=100 ;;
+            *rg.ttf|*rg.otf|*-rg*) score=95 ;;
+            *book*) score=90 ;;
+            *normal*) score=80 ;;
+            *medium*|*bold*|*black*|*thin*|*light*) score=10 ;;
+            *) score=50 ;;
+          esac
+          ;;
+        500)
+          case "$name_lower" in
+            *medium*|*500*) score=100 ;;
+            *md.ttf|*md.otf|*-md*) score=95 ;;
+            *semibold*|*demibold*) score=60 ;;
+          esac
+          ;;
+        600)
+          case "$name_lower" in
+            *semibold*|*demibold*|*600*) score=100 ;;
+            *medium*) score=50 ;;
+            *bold*) score=50 ;;
+          esac
+          ;;
+        700)
+          case "$name_lower" in
+            *bold*|*700*) score=100 ;;
+            *bd.ttf|*bd.otf|*-bd*) score=95 ;;
+            *heavy*) score=70 ;;
+            *semibold*) score=40 ;;
+          esac
+          ;;
+        800)
+          case "$name_lower" in
+            *extrabold*|*ultrabold*|*800*) score=100 ;;
+            *black*|*heavy*) score=70 ;;
+            *bold*) score=50 ;;
+          esac
+          ;;
+        900)
+          case "$name_lower" in
+            *black*|*heavy*|*900*) score=100 ;;
+            *extrabold*) score=70 ;;
+            *bold*) score=40 ;;
+          esac
+          ;;
+      esac
+
+      if [ $score -gt $best_score ]; then
+        best_score=$score
+        best_file=$file
+      fi
+    done
+  done
+
+  [ -n "$best_file" ] && [ $best_score -ge 40 ] && printf '%s\n' "$best_file"
+}
+
 is_variable_font() {
   local font_file=$1
   [ -f "$font_file" ] || return 1
@@ -1143,10 +1239,10 @@ else
   [ -z "$ext_beng" ] && ext_beng=$(find_first 'Beng*.ttf' "$MFFM_DIR")
   [ -z "$ext_beng" ] && ext_beng=$(find_first 'Beng*.otf' "$MFFM_DIR")
   if [ -n "$ext_beng" ]; then
-    cp -f "$ext_beng" "$SYS_FONT/NotoSansBengali-VF.ttf"
-    cp -f "$ext_beng" "$SYS_FONT/NotoSerifBengali-VF.ttf"
-    cp -f "$ext_beng" "$SYS_FONT/NotoSansBengaliUI-VF.ttf"
     if is_variable_font "$ext_beng"; then
+      cp -f "$ext_beng" "$SYS_FONT/NotoSansBengali-VF.ttf"
+      cp -f "$ext_beng" "$SYS_FONT/NotoSerifBengali-VF.ttf"
+      cp -f "$ext_beng" "$SYS_FONT/NotoSansBengaliUI-VF.ttf"
       axes_info=$(extract_fvar_axes "$ext_beng")
       frag_file="$FONT_DIR/ext_beng.xml"
       generate_vf_xml_fragment "$ext_beng" "NotoSansBengali-VF.ttf" "$axes_info" > "$frag_file"
@@ -1158,12 +1254,19 @@ else
       done
       status_ok "External Variable Bengali font (${ext_beng##*/}) auto-configured natively"
     else
+      beng_reg=$(find_best_face 400 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
+      beng_med=$(find_best_face 500 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
+      beng_bold=$(find_best_face 700 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
+      [ -z "$beng_reg" ] && beng_reg="$ext_beng"
+      cp -f "$beng_reg" "$SYS_FONT/NotoSansBengali-VF.ttf"
+      [ -n "$beng_med" ] && cp -f "$beng_med" "$SYS_FONT/NotoSerifBengali-VF.ttf" || cp -f "$beng_reg" "$SYS_FONT/NotoSerifBengali-VF.ttf"
+      [ -n "$beng_bold" ] && cp -f "$beng_bold" "$SYS_FONT/NotoSansBengaliUI-VF.ttf" || cp -f "$beng_reg" "$SYS_FONT/NotoSansBengaliUI-VF.ttf"
       for xml in "$SYS_XML" "$SYS_FALLBACK"; do
         [ -f "$xml" ] || continue
         sed -i '/<family lang="und-Beng" variant="elegant">/,/<\/family>/c\<family lang="und-Beng" variant="elegant">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
         sed -i '/<family lang="und-Beng" variant="compact">/,/<\/family>/c\<family lang="und-Beng" variant="compact">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
       done
-      status_ok "External Bengali font (copied from MFFM folder)"
+      status_ok "External Static Bengali fonts auto-matched (${beng_reg##*/})"
     fi
   else
     prune_obsolete_profile_keys BENGALI_UPRIGHT
@@ -1186,13 +1289,12 @@ elif [ -f "$FONT_DIR/NotoSerif-Regular.ttf" ] && [ -f "$FONT_DIR/NotoSerif-Bold.
   [ -f "$FONT_DIR/NotoSerif-BoldItalic.ttf" ] && cp -f "$FONT_DIR/NotoSerif-BoldItalic.ttf" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
   status_ok "Native Serif font (module standalone files)"
 else
-  ext_s_reg=$(find_first '*.ttf' "$MFFM_DIR/Serif")
+  ext_s_reg=$(find_best_face 400 normal "$MFFM_DIR/Serif" "$MFFM_DIR")
+  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first '*.ttf' "$MFFM_DIR/Serif")
   [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first '*.otf' "$MFFM_DIR/Serif")
-  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first 'Serif-Regular.ttf' "$MFFM_DIR")
-  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first 'Serif*.ttf' "$MFFM_DIR")
-  ext_s_ital=$(find_first 'Serif-Italic.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
-  ext_s_bold=$(find_first 'Serif-Bold.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
-  ext_s_bital=$(find_first 'Serif-BoldItalic.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
+  ext_s_ital=$(find_best_face 400 italic "$MFFM_DIR/Serif" "$MFFM_DIR")
+  ext_s_bold=$(find_best_face 700 normal "$MFFM_DIR/Serif" "$MFFM_DIR")
+  ext_s_bital=$(find_best_face 700 italic "$MFFM_DIR/Serif" "$MFFM_DIR")
 
   if [ -n "$ext_s_reg" ]; then
     cp -f "$ext_s_reg" "$SYS_FONT/NotoSerif-Regular.ttf"
@@ -1211,7 +1313,7 @@ else
       done
       status_ok "External Variable Serif font (${ext_s_reg##*/}) auto-configured natively"
     else
-      status_ok "External Serif fonts (copied from MFFM folder)"
+      status_ok "External Serif fonts auto-matched (${ext_s_reg##*/})"
     fi
   else
     prune_obsolete_profile_keys SERIF_UPRIGHT
