@@ -733,6 +733,10 @@ profile_title() {
     SANS_ITALIC) printf 'SANS-SERIF / ITALIC' ;;
     CONDENSED_UPRIGHT) printf 'CONDENSED / UPRIGHT' ;;
     CONDENSED_ITALIC) printf 'CONDENSED / ITALIC' ;;
+    BENGALI_UPRIGHT) printf 'BENGALI / UPRIGHT' ;;
+    MONOSPACE_UPRIGHT) printf 'MONOSPACE / UPRIGHT' ;;
+    SERIF_UPRIGHT) printf 'SERIF / UPRIGHT' ;;
+    SERIF_ITALIC) printf 'SERIF / ITALIC' ;;
     *) printf '%s' "$1" ;;
   esac
 }
@@ -890,6 +894,21 @@ apply_profile() {
     validate_axis_value "$config_key" "$axis_value" "$axis_min" "$axis_max" "$axis_default" || continue
     apply_axis_value "$xml_style" "" "$axis_tag" "$axis_value" $fragment_list
   done
+}
+
+configure_variable_family_profile() {
+  local profile=$1 font_file=$2 xml_style=$3 weights=$4
+  shift 4
+  local fragment_list="$*"
+  [ -f "$font_file" ] || return 0
+  [ -n "$VF_CONFIG_FILE" ] && [ -f "$VF_CONFIG_FILE" ] || return 0
+
+  local axes_meta
+  axes_meta=$(extract_fvar_axes "$font_file" | tr ' ' '\n' | awk -F: '{print $1 "|" $2 "|" $3 "|" $4}' | tr '\n' ' ')
+  [ -n "$axes_meta" ] || axes_meta="wght|300|400|700"
+
+  ensure_profile_keys "$profile" "$axes_meta" "$weights"
+  apply_profile "$profile" "$xml_style" "$axes_meta" "$weights" $fragment_list
 }
 
 prepare_variable_config() {
@@ -1068,6 +1087,7 @@ else
       axes_info=$(extract_fvar_axes "$ext_mono")
       frag_file="$FONT_DIR/ext_mono.xml"
       generate_vf_xml_fragment "$ext_mono" "CutiveMono.ttf" "$axes_info" > "$frag_file"
+      configure_variable_family_profile MONOSPACE_UPRIGHT "$ext_mono" normal "400" "$frag_file"
       for xml in "$SYS_XML" "$SYS_FALLBACK"; do
         [ -f "$xml" ] || continue
         replace_family "$xml" monospace "$frag_file"
@@ -1110,6 +1130,7 @@ else
       axes_info=$(extract_fvar_axes "$ext_beng")
       frag_file="$FONT_DIR/ext_beng.xml"
       generate_vf_xml_fragment "$ext_beng" "NotoSansBengali-VF.ttf" "$axes_info" > "$frag_file"
+      configure_variable_family_profile BENGALI_UPRIGHT "$ext_beng" normal "100 200 300 400 500 600 700 800 900" "$frag_file"
       for xml in "$SYS_XML" "$SYS_FALLBACK"; do
         [ -f "$xml" ] || continue
         replace_lang_family "$xml" "und-Beng" "$frag_file"
@@ -1159,6 +1180,7 @@ else
       axes_info=$(extract_fvar_axes "$ext_s_reg")
       frag_file="$FONT_DIR/ext_serif.xml"
       generate_vf_xml_fragment "$ext_s_reg" "NotoSerif-Regular.ttf" "$axes_info" > "$frag_file"
+      configure_variable_family_profile SERIF_UPRIGHT "$ext_s_reg" normal "400 700" "$frag_file"
       for xml in "$SYS_XML" "$SYS_FALLBACK"; do
         [ -f "$xml" ] || continue
         replace_family "$xml" serif "$frag_file" "split"
