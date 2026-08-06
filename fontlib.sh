@@ -8,6 +8,70 @@
 PRODUCT_RUBIK_REGULAR="Rubik-Regular.ttf"
 PRODUCT_RUBIK_ITALIC="Rubik-Italic.ttf"
 
+# Overwritten unconditionally so the installer's environment cannot redirect where mount state and
+# module snapshots are read from; the tests reassign them after sourcing this file.
+MFFM_MOUNTS=/proc/mounts
+MFFM_MODULE_ROOTS="/data/adb/modules_update /data/adb/modules"
+
+# Font XML files another font module may have bind-mounted over the ROM's own copies.
+FONT_XML_TARGETS="/system/etc/fonts.xml /system/etc/font_fallback.xml
+/system/product/etc/fonts_customization.xml /product/etc/fonts_customization.xml
+/system_ext/etc/fonts.xml /system_ext/etc/font_fallback.xml"
+
+# Only the font XML files themselves are unmounted, never whole directories: on a booted device the
+# overlays under /system, /product and /system_ext belong to every other installed module too.
+refresh_mount_view() {
+  local file
+  ui_print "- Refreshing the mount view of the font XML files."
+  for file in $FONT_XML_TARGETS; do
+    if grep -q " $file " "$MFFM_MOUNTS" 2>/dev/null; then
+      ui_print "  Unmounting the overlay at $file"
+      umount "$file" 2>/dev/null || umount -l "$file" 2>/dev/null || :
+    fi
+  done
+}
+
+# True when a module overlay covers $1 or any directory above it, i.e. reading that path would
+# return another module's file instead of the ROM's. The ROM's own /system mount does not match:
+# it is an ext4/erofs mount of a block device, not an overlay.
+covered_by_module_overlay() {
+  local path=$1
+  while [ -n "$path" ]; do
+    if awk -v target="$path" '
+      $2 == target && ($1 " " $3 " " $4) ~ /overlay|magisk|ksu|apatch/ { found = 1 }
+      END { exit !found }
+    ' "$MFFM_MOUNTS" 2>/dev/null; then
+      return 0
+    fi
+    path=${path%/*}
+  done
+  return 1
+}
+
+pristine_file() {
+  local candidate
+  for candidate in "$@"; do
+    [ -n "$candidate" ] && [ -f "$candidate" ] || continue
+    covered_by_module_overlay "$candidate" && continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+
+# A previous MFFM install snapshots the ROM's untouched XML under $MODPATH/mffm/original. Where
+# /system is already covered by an overlay that cannot be taken apart safely, that snapshot is the
+# only pristine copy still reachable.
+snapshot_file() {
+  local root dir
+  for root in $MFFM_MODULE_ROOTS; do
+    for dir in "$root"/*/mffm/original; do
+      [ -f "$dir/$1" ] && { printf '%s\n' "$dir/$1"; return 0; }
+    done
+  done
+  return 1
+}
+
 replace_family() {
   xml=$1
   family=$2

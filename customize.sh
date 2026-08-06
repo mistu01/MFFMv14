@@ -166,6 +166,13 @@ copy_if_exists() {
   cp -f "$1" "$2"
 }
 
+save_original_snapshot() {
+  mkdir -p "$RUNTIME_DIR/original" || fail "Could not create $RUNTIME_DIR/original"
+  copy_if_exists "$ORIGINAL_FONTS_XML" "$RUNTIME_DIR/original/fonts.xml"
+  copy_if_exists "$ORIGINAL_FALLBACK_XML" "$RUNTIME_DIR/original/font_fallback.xml"
+  copy_if_exists "$ORIGINAL_PRODUCT_XML" "$RUNTIME_DIR/original/fonts_customization.xml"
+}
+
 # Fonts are installed several times under $MODPATH (system overlay plus one or two product
 # overlays). Hard-linking keeps a single copy of the collection on disk instead of one per path.
 link_or_copy() {
@@ -181,6 +188,10 @@ elif command -v magisk >/dev/null 2>&1; then
   ROOT_IMPL=Magisk
 fi
 
+[ -f "$MODPATH/fontlib.sh" ] || fail "fontlib.sh is missing"
+# shellcheck source=fontlib.sh
+. "$MODPATH/fontlib.sh"
+
 MIRROR=
 if command -v magisk >/dev/null 2>&1; then
   MAGISK_PATH=$(magisk --path 2>/dev/null)
@@ -188,52 +199,29 @@ if command -v magisk >/dev/null 2>&1; then
 fi
 [ -n "$MIRROR" ] || MIRROR=$(first_dir /sbin/.magisk/mirror /debug_ramdisk/.magisk/mirror 2>/dev/null)
 
-refresh_mount_view() {
-  local dev mnt fs opt _rest file
-  ui_print "- Refreshing live system mount view for XML discovery."
-  for file in \
-    /system/etc/fonts.xml \
-    /system/etc/font_fallback.xml \
-    /system/product/etc/fonts_customization.xml \
-    /product/etc/fonts_customization.xml \
-    /system_ext/etc/fonts.xml \
-    /system_ext/etc/font_fallback.xml
-  do
-    if grep -q " $file " /proc/mounts 2>/dev/null; then
-      ui_print "  Unmounting overlay at $file"
-      umount "$file" 2>/dev/null || umount -l "$file" 2>/dev/null || :
-    fi
-  done
-
-  while read -r dev mnt fs opt _rest; do
-    [ -z "$mnt" ] && continue
-    case "$mnt" in
-      /system|/system/*|/product|/product/*|/system_ext|/system_ext/*)
-        case "$dev $mnt $fs $opt" in
-          *overlay*|*magisk*|*ksu*|*apatch*)
-            ui_print "  Unmounting overlay directory at $mnt"
-            umount "$mnt" 2>/dev/null || umount -l "$mnt" 2>/dev/null || :
-            ;;
-        esac
-        ;;
-    esac
-  done < /proc/mounts
-}
-
+# Order of preference for every XML: the Magisk mirror, then a live copy no module overlay covers,
+# then the snapshot a previous MFFM install left behind.
 find_original_xmls() {
   ORIGINAL_SYSTEM=$(first_dir "$MIRROR/system" /system /system_root/system 2>/dev/null)
   ORIGINAL_PRODUCT=$(first_dir "$MIRROR/product" "$MIRROR/system/product" /product /system/product /system_root/system/product 2>/dev/null)
-  ORIGINAL_FONTS_XML=$(first_file "$ORIGINAL_SYSTEM/etc/fonts.xml" /system/etc/fonts.xml /system_root/system/etc/fonts.xml 2>/dev/null)
-  ORIGINAL_FALLBACK_XML=$(first_file "$ORIGINAL_SYSTEM/etc/font_fallback.xml" /system/etc/font_fallback.xml /system_root/system/etc/font_fallback.xml 2>/dev/null)
-  ORIGINAL_PRODUCT_XML=$(first_file "$ORIGINAL_PRODUCT/etc/fonts_customization.xml" /product/etc/fonts_customization.xml /system/product/etc/fonts_customization.xml 2>/dev/null)
+  ORIGINAL_FONTS_XML=$(first_file "$MIRROR/system/etc/fonts.xml" 2>/dev/null ||
+    pristine_file "$ORIGINAL_SYSTEM/etc/fonts.xml" /system/etc/fonts.xml /system_root/system/etc/fonts.xml 2>/dev/null ||
+    snapshot_file fonts.xml 2>/dev/null)
+  ORIGINAL_FALLBACK_XML=$(first_file "$MIRROR/system/etc/font_fallback.xml" 2>/dev/null ||
+    pristine_file "$ORIGINAL_SYSTEM/etc/font_fallback.xml" /system/etc/font_fallback.xml /system_root/system/etc/font_fallback.xml 2>/dev/null ||
+    snapshot_file font_fallback.xml 2>/dev/null)
+  ORIGINAL_PRODUCT_XML=$(first_file "$MIRROR/product/etc/fonts_customization.xml" "$MIRROR/system/product/etc/fonts_customization.xml" 2>/dev/null ||
+    pristine_file "$ORIGINAL_PRODUCT/etc/fonts_customization.xml" /product/etc/fonts_customization.xml /system/product/etc/fonts_customization.xml 2>/dev/null ||
+    snapshot_file fonts_customization.xml 2>/dev/null)
 }
 
-[ -z "$MIRROR" ] && refresh_mount_view
 find_original_xmls
 if [ -z "$ORIGINAL_FONTS_XML" ]; then
   refresh_mount_view
   find_original_xmls
 fi
+[ -n "$ORIGINAL_FONTS_XML" ] || fail "Could not find an untouched fonts.xml: every copy is covered by
+another module's overlay. Disable other font modules, reboot, then flash this module again."
 
 FONT_DIR="$MODPATH/Files"
 SYS_FONT="$MODPATH/system/fonts"
@@ -249,14 +237,15 @@ CUSTOM_SCRIPTS_MARKER="$MFFM_DIR/allow-custom-scripts"
 # Kept after installation so system/bin/font-config can rebuild the XML from an edited .conf.
 RUNTIME_DIR="$MODPATH/mffm"
 
-[ -f "$MODPATH/fontlib.sh" ] || fail "fontlib.sh is missing"
-# shellcheck source=fontlib.sh
-. "$MODPATH/fontlib.sh"
 [ -f "$MODPATH/font-config.sh" ] || fail "font-config.sh is missing"
 . "$MODPATH/font-config.sh"
 [ "$FONT_MODE" = "static" ] || [ "$FONT_MODE" = "variable" ] || fail "Unknown FONT_MODE: $FONT_MODE"
 [ -n "$FONT_FILES" ] || fail "FONT_FILES is empty"
 [ -f "$FONT_DIR/sans.xml" ] || fail "Generated sans.xml is missing"
+
+# Kept by static modules too: it is what lets a later install still find an untouched XML once this
+# module's overlay covers /system/etc.
+save_original_snapshot
 
 mkdir -p "$SYS_FONT" "$SYS_ETC" "$PRODUCT_FONT" "$PRODUCT_ETC" || fail "Could not create module overlay directories"
 if [ "$MOUNTIFY" != "true" ] && [ ! -d "/data/adb/modules/mountify" ]; then
@@ -358,15 +347,13 @@ EOF
 # metadata, the library, the pristine fragments and the ROM's untouched XML.
 save_runtime_payload() {
   local name
-  mkdir -p "$RUNTIME_DIR/fragments" "$RUNTIME_DIR/original" || fail "Could not create $RUNTIME_DIR"
+  mkdir -p "$RUNTIME_DIR/fragments" || fail "Could not create $RUNTIME_DIR"
   cp -f "$MODPATH/font-config.sh" "$RUNTIME_DIR/font-config.sh" || fail "Could not save the axis metadata"
   cp -f "$MODPATH/fontlib.sh" "$RUNTIME_DIR/fontlib.sh" || fail "Could not save fontlib.sh"
   for name in sans.xml condensed.xml serif.xml mono.xml; do
     copy_if_exists "$FONT_DIR/$name" "$RUNTIME_DIR/fragments/$name"
   done
-  copy_if_exists "$ORIGINAL_FONTS_XML" "$RUNTIME_DIR/original/fonts.xml"
-  copy_if_exists "$ORIGINAL_FALLBACK_XML" "$RUNTIME_DIR/original/font_fallback.xml"
-  copy_if_exists "$ORIGINAL_PRODUCT_XML" "$RUNTIME_DIR/original/fonts_customization.xml"
+  save_original_snapshot
 }
 
 ui_print ""
@@ -528,7 +515,9 @@ if [ "$FONT_MODE" = "variable" ] && [ -f "$MODPATH/font-config" ]; then
   cp -f "$MODPATH/font-config" "$SYS_BIN/font-config" || fail "Could not install font-config"
   status_ok "font-config (re-apply axis values without re-flashing)"
 else
-  rm -rf "$RUNTIME_DIR"
+  # Static modules have no axis values to re-apply, but the snapshot of the ROM's XML stays.
+  rm -rf "$RUNTIME_DIR/fragments"
+  rm -f "$RUNTIME_DIR/font-config.sh" "$RUNTIME_DIR/fontlib.sh"
 fi
 
 set_perm_recursive "$MODPATH" 0 0 0755 0644
