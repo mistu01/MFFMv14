@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import shutil
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -12,6 +14,7 @@ from font_module import compile_fonts, display_name_for_mode, slugify, update_mo
 from zipsigner_auto import ZipSignerError, sign_zip
 
 ROOT = Path(__file__).resolve().parent
+TEMPLATE_DIR = ROOT / "template"
 PAYLOAD_NAMES = (
     "module.prop", "customize.sh", "service.sh", "uninstall.sh", "post-mount.sh",
     "font-config.sh", "META-INF", "Files",
@@ -40,6 +43,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def copy_template(source_dir: Path, destination_dir: Path) -> None:
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("module.prop", "customize.sh", "service.sh", "uninstall.sh", "post-mount.sh", "META-INF"):
+        source = source_dir / name
+        target = destination_dir / name
+        if source.is_dir():
+            shutil.copytree(source, target)
+        elif source.is_file():
+            shutil.copy2(source, target)
+    (destination_dir / "Files").mkdir(exist_ok=True)
+
+
 def payload_files(module_dir: Path):
     for name in PAYLOAD_NAMES:
         path = module_dir / name
@@ -65,71 +80,79 @@ def write_zip(module_dir: Path, output: Path) -> None:
             archive.writestr(info, source.read_bytes())
 
 
-def build_module(args: argparse.Namespace, module_dir: Path = ROOT) -> Path | None:
-    result = compile_fonts(
-        args.fonts_dir.resolve(),
-        module_dir,
-        requested_mode=args.mode,
-        keep_hinting=args.keep_hinting,
-        prefix_family=not args.no_prefix,
-        features=args.features,
-        mono_features=args.mono_features,
-        serif_features=args.serif_features,
-        interactive_features=args.interactive,
-        centered_colon=args.centered_colon,
-    )
-    display_name = display_name_for_mode(args.name or result.family, result.mode)
-    props = update_module_metadata(
-        module_dir,
-        result.family,
-        result.mode,
-        name=display_name,
-        version=args.version,
-        version_code=args.version_code,
-        applied_features=result.applied_features,
-    )
-    print(f"Detected mode : {result.mode}")
-    print(f"Font family   : {result.family}")
-    if result.applied_features:
-        print(f"Freezer sets  : {', '.join(result.applied_features)}")
-    print(f"Source faces  : {len(result.faces)}")
-    for face in result.faces:
-        axes = ", ".join(face.axes) if face.variable else "static"
-        print(f"  {face.label}: {face.weight} {face.style}{' condensed' if face.condensed else ''} [{axes}]")
-    print(f"Payload fonts : {', '.join(result.payload_files)}")
+def build_module(args: argparse.Namespace) -> Path | None:
+    if not (TEMPLATE_DIR / "customize.sh").exists():
+        raise SystemExit(f"Template payload is incomplete: customize.sh is missing in {TEMPLATE_DIR}")
 
-    if args.no_zip:
-        print("Prepared module files; ZIP creation skipped.")
-        return None
+    work_dir = Path(tempfile.mkdtemp(prefix="mffm-build-"))
+    module_dir = work_dir / "module"
+    try:
+        copy_template(TEMPLATE_DIR, module_dir)
+        result = compile_fonts(
+            args.fonts_dir.resolve(),
+            module_dir,
+            requested_mode=args.mode,
+            keep_hinting=args.keep_hinting,
+            prefix_family=not args.no_prefix,
+            features=args.features,
+            mono_features=args.mono_features,
+            serif_features=args.serif_features,
+            interactive_features=args.interactive,
+            centered_colon=args.centered_colon,
+        )
+        display_name = display_name_for_mode(args.name or result.family, result.mode)
+        props = update_module_metadata(
+            module_dir,
+            result.family,
+            result.mode,
+            name=display_name,
+            version=args.version,
+            version_code=args.version_code,
+            applied_features=result.applied_features,
+        )
+        print(f"Detected mode : {result.mode}")
+        print(f"Font family   : {result.family}")
+        if result.applied_features:
+            print(f"Freezer sets  : {', '.join(result.applied_features)}")
+        print(f"Source faces  : {len(result.faces)}")
+        for face in result.faces:
+            axes = ", ".join(face.axes) if face.variable else "static"
+            print(f"  {face.label}: {face.weight} {face.style}{' condensed' if face.condensed else ''} [{axes}]")
+        print(f"Payload fonts : {', '.join(result.payload_files)}")
 
-    if result.applied_features and not any(f in slugify(display_name) for f in result.applied_features):
-        file_slug = slugify(f"{display_name} {' '.join(result.applied_features)}")
-    else:
-        file_slug = slugify(display_name)
+        if args.no_zip:
+            print(f"Prepared module files at: {module_dir}")
+            return None
 
-    output = args.output_dir.resolve() / f"{props['id']}-{file_slug}-{props['version']}.zip"
-    if output.exists():
-        output.unlink()
-    write_zip(module_dir, output)
+        if result.applied_features and not any(f in slugify(display_name) for f in result.applied_features):
+            file_slug = slugify(f"{display_name} {' '.join(result.applied_features)}")
+        else:
+            file_slug = slugify(display_name)
 
-    if not args.no_sign:
-        try:
-            sign_zip(output, ROOT)
-        except ZipSignerError as exc:
-            output.unlink(missing_ok=True)
-            raise SystemExit(str(exc)) from exc
-        print("Signature     : verified")
-    else:
-        print("Signature     : skipped (--no-sign)")
+        output = args.output_dir.resolve() / f"{props['id']}-{file_slug}-{props['version']}.zip"
+        if output.exists():
+            output.unlink()
+        write_zip(module_dir, output)
 
-    print(f"Output        : {output}")
-    return output
+        if not args.no_sign:
+            try:
+                sign_zip(output, ROOT)
+            except ZipSignerError as exc:
+                output.unlink(missing_ok=True)
+                raise SystemExit(str(exc)) from exc
+            print("Signature     : verified")
+        else:
+            print("Signature     : skipped (--no-sign)")
+
+        print(f"Output        : {output}")
+        return output
+    finally:
+        if not args.no_zip:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def main() -> int:
     args = parse_args()
-    if not (ROOT / "customize.sh").exists():
-        raise SystemExit("Template payload is incomplete: customize.sh is missing")
     build_module(args)
     return 0
 

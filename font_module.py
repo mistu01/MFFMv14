@@ -100,7 +100,7 @@ def write_props(path: Path, props: dict[str, str]) -> None:
 
 
 def clean_family_name(value: str) -> str:
-    value = re.sub(r"(?i)\bmffm\b", "", value)
+    value = re.sub(r"(?i)\b(?:MFFM|Mistu)\b", "", value)
     value = re.sub(r"\s+", " ", value).strip(" -_")
     return value or "Unknown Font"
 
@@ -232,12 +232,34 @@ def _inspect_font(path: Path, font_number: int | None, category: str = "sans") -
 def discover_faces(fonts_dir: Path) -> list[SourceFace]:
     TTCollection, _font = require_fonttools()
     if not fonts_dir.is_dir():
-        raise SystemExit(f"Font input directory does not exist: {fonts_dir}")
+        fonts_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Automatically ensure mandatory family subdirectories exist
+    for sub in ("Sans", "Monospace", "Serif"):
+        (fonts_dir / sub).mkdir(parents=True, exist_ok=True)
+
+    # 2. Strict Rule: Reject font files placed directly in root of fonts_dir
+    root_fonts = [
+        p for p in fonts_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in FONT_EXTENSIONS
+    ]
+    if root_fonts:
+        sample_names = ", ".join(p.name for p in root_fonts[:3])
+        raise SystemExit(
+            f"Strict layout rule error: Font file(s) [{sample_names}] found directly in '{fonts_dir}'.\n"
+            f"Fonts MUST be placed inside their respective subdirectories:\n"
+            f"  - Primary Sans-serif font -> '{fonts_dir / 'Sans'}'\n"
+            f"  - Monospace font          -> '{fonts_dir / 'Monospace'}'\n"
+            f"  - Serif font              -> '{fonts_dir / 'Serif'}'\n"
+            f"Please move your fonts into '{fonts_dir / 'Sans'}' (or 'Monospace'/'Serif')."
+        )
 
     file_entries: list[tuple[Path, str]] = []
     for p in sorted(fonts_dir.rglob("*")):
         if p.is_file() and p.suffix.lower() in FONT_EXTENSIONS:
             rel_parts = [part.lower() for part in p.relative_to(fonts_dir).parts[:-1]]
+            if not rel_parts:
+                continue
             if any(part in ("monospace", "mono") for part in rel_parts):
                 cat = "mono"
             elif any(part == "serif" for part in rel_parts):
@@ -255,7 +277,10 @@ def discover_faces(fonts_dir: Path) -> list[SourceFace]:
             file_entries.append((p, cat))
 
     if not file_entries:
-        raise SystemExit(f"No TTF, OTF, TTC, or OTC fonts found in {fonts_dir}")
+        raise SystemExit(
+            f"No font files found in '{fonts_dir / 'Sans'}', '{fonts_dir / 'Monospace'}', or '{fonts_dir / 'Serif'}'.\n"
+            f"Please place your primary body font file(s) into '{fonts_dir / 'Sans'}'."
+        )
 
     faces: list[SourceFace] = []
     for path, cat in file_entries:
@@ -1966,7 +1991,8 @@ def update_module_metadata(
 ) -> dict[str, str]:
     path = module_dir / "module.prop"
     props = read_props(path)
-    display = display_name_for_mode(name or clean_family_name(family), mode)
+    clean_name = clean_family_name(name or family)
+    display = display_name_for_mode(clean_name, mode)
     if applied_features and not any(f"({f}" in display for f in applied_features):
         feat_str = ", ".join(applied_features)
         display = f"{display} ({feat_str})"
