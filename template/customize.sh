@@ -774,28 +774,22 @@ prepare_variable_config() {
   VF_LEGACY_CONFIG="$MFFM_DIR/MFFMv14_${safe_family}_VF.conf"
   VF_CONFIG_RESET=0
 
-  # Clean old or stale config files from previous installations/font modules in MFFM_DIR
+  # Preserve existing configuration when updating the same module family or identity
   if [ -d "$MFFM_DIR" ]; then
-    local old_cfg old_count=0
-    for old_cfg in "$MFFM_DIR"/*.conf "$MFFM_DIR"/MFFMv14_*.conf; do
-      [ -f "$old_cfg" ] || continue
-      if [ "$old_cfg" = "$VF_CONFIG_FILE" ]; then
-        saved_identity=$(sed -n 's/^[[:space:]]*MODULE_IDENTITY[[:space:]]*=[[:space:]]*//p' "$old_cfg" 2>/dev/null |
+    local candidate saved_identity
+    if [ ! -f "$VF_CONFIG_FILE" ]; then
+      # Search for existing config file from previous installation of the same module
+      for candidate in "$MFFM_DIR"/MFFMv14_${safe_family}_*.conf "$VF_LEGACY_CONFIG"; do
+        [ -f "$candidate" ] || continue
+        saved_identity=$(sed -n 's/^[[:space:]]*MODULE_IDENTITY[[:space:]]*=[[:space:]]*//p' "$candidate" 2>/dev/null |
           tail -n 1 | sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//')
-        saved_schema=$(sed -n 's/^[[:space:]]*CONFIG_SCHEMA[[:space:]]*=[[:space:]]*//p' "$old_cfg" 2>/dev/null |
-          tail -n 1 | sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//')
-        if [ "$saved_identity" = "$VF_CONFIG_ID" ] && [ "$saved_schema" = "$VF_CONFIG_SCHEMA" ]; then
-          # Valid matching config for this specific module -> KEEP & USE IT!
-          continue
+        if [ "$saved_identity" = "$VF_CONFIG_ID" ] || [ -z "$saved_identity" ]; then
+          # Found matching config from previous update -> migrate it to VF_CONFIG_FILE
+          cp -f "$candidate" "$VF_CONFIG_FILE" 2>/dev/null && rm -f "$candidate" 2>/dev/null
+          ui_print "  [OK] Retained existing configuration for $FONT_FAMILY"
+          break
         fi
-      fi
-      # Old, stale, or mismatched font config -> clean it up!
-      rm -f "$old_cfg" 2>/dev/null
-      old_count=$((old_count + 1))
-      VF_CONFIG_RESET=1
-    done
-    if [ $old_count -gt 0 ]; then
-      ui_print "  [OK] Cleaned $old_count old/stale config file(s) from $MFFM_DIR"
+      done
     fi
   fi
 
@@ -812,6 +806,10 @@ EOF
     VF_CONFIG_CREATED=1
   else
     VF_CONFIG_CREATED=0
+    if ! grep -q "^[[:space:]]*MODULE_IDENTITY[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+      printf 'MODULE_IDENTITY=%s\n' "$VF_CONFIG_ID" >> "$VF_CONFIG_FILE"
+    fi
+    ui_print "  [OK] Retained existing configuration for $FONT_FAMILY"
   fi
   [ -f "$VF_CONFIG_FILE" ] || fail "Could not create variable-axis configuration: $VF_CONFIG_FILE"
   ensure_profile_keys SANS_UPRIGHT "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS"
