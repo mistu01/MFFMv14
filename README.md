@@ -69,6 +69,8 @@ shellcheck -S warning -s sh -e SC3043,SC3021,SC1090,SC1091 \
 
 CI runs the same checks plus an end-to-end build on every push.
 
----
+## License
+
+GPL-3.0 — see [LICENSE](LICENSE). Fonts you build with it keep their own licenses.
 
 © 2026 MFFM / Mistu
