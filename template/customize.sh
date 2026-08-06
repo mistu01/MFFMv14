@@ -911,6 +911,17 @@ configure_variable_family_profile() {
   apply_profile "$profile" "$xml_style" "$axes_meta" "$weights" $fragment_list
 }
 
+prune_obsolete_profile_keys() {
+  local profile=$1
+  [ -n "$VF_CONFIG_FILE" ] && [ -f "$VF_CONFIG_FILE" ] || return 0
+
+  awk -v prefix="${profile}_" '
+    $0 ~ "^[[:space:]]*#" && index($0, prefix) > 0 { next }
+    $0 ~ "^[[:space:]]*" prefix { next }
+    { print }
+  ' "$VF_CONFIG_FILE" > "$VF_CONFIG_FILE.tmp" && mv -f "$VF_CONFIG_FILE.tmp" "$VF_CONFIG_FILE"
+}
+
 prepare_variable_config() {
   safe_family=$(printf '%s' "$FONT_FAMILY" | tr -cs 'A-Za-z0-9._-' '_' | sed 's/^_*//;s/_*$//')
   [ -n "$safe_family" ] || safe_family=Variable_Font
@@ -1099,6 +1110,7 @@ else
       status_ok "External Monospace font (copied from MFFM folder)"
     fi
   else
+    prune_obsolete_profile_keys MONOSPACE_UPRIGHT
     status_skip "Monospace font not supplied"
   fi
 fi
@@ -1146,6 +1158,7 @@ else
       status_ok "External Bengali font (copied from MFFM folder)"
     fi
   else
+    prune_obsolete_profile_keys BENGALI_UPRIGHT
     status_skip "Bengali fonts not supplied"
   fi
 fi
@@ -1191,6 +1204,8 @@ else
       status_ok "External Serif fonts (copied from MFFM folder)"
     fi
   else
+    prune_obsolete_profile_keys SERIF_UPRIGHT
+    prune_obsolete_profile_keys SERIF_ITALIC
     status_skip "Dedicated serif fonts not supplied"
   fi
 fi
