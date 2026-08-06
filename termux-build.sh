@@ -13,7 +13,6 @@ SKIP_DEPS=0
 SKIP_FLASH=0
 ASSUME_YES=0
 CUSTOM_FONTS_DIR=0
-CUSTOM_OUTPUT=0
 
 RED=''
 GREEN=''
@@ -70,7 +69,6 @@ done
 for arg in "$@"; do
   case $arg in
     --fonts-dir|--fonts-dir=*) CUSTOM_FONTS_DIR=1 ;;
-    --output-dir|--output-dir=*|--no-zip) CUSTOM_OUTPUT=1 ;;
   esac
 done
 
@@ -134,29 +132,23 @@ if [ -n "$FONTS_DIR" ] && [ -z "$(find "$FONTS_DIR" -type f \
 Put them there, or pass a directory: sh termux-build.sh -- --fonts-dir ~/storage/shared/Download/MyFont"
 fi
 
-# Only a ZIP newer than this stamp belongs to the build below, so a leftover dist/ ZIP can never be
-# mistaken for the freshly built module.
-STAMP="$PROJECT_DIR/.mffm-build-stamp"
-: >"$STAMP"
+BUILD_LOG="$PROJECT_DIR/.mffm-build-log"
+BUILD_STATUS="$PROJECT_DIR/.mffm-build-status"
+{ python build.py --no-interactive "$@"; printf '%s\n' "$?" >"$BUILD_STATUS"; } | tee "$BUILD_LOG"
+build_status=$(cat "$BUILD_STATUS" 2>/dev/null || echo 1)
+rm -f "$BUILD_STATUS"
+[ "$build_status" = "0" ] || { rm -f "$BUILD_LOG"; die "build.py failed (exit $build_status)"; }
 
-python build.py --no-interactive "$@"
-
-ZIP=$(find "$PROJECT_DIR/dist" -maxdepth 1 -type f -name '*.zip' -newer "$STAMP" 2>/dev/null |
-  head -n 1)
+# build.py prints the ZIP it wrote as its "Output" line. Taking the path from there instead of
+# guessing the newest file in dist/ keeps --output-dir working and can never pick an earlier run's
+# ZIP, however the filesystem happens to order timestamps.
+ZIP=$(sed -n 's/^Output *: *//p' "$BUILD_LOG" | tail -n 1)
+rm -f "$BUILD_LOG"
 if [ -z "$ZIP" ]; then
-  # On filesystems with coarse timestamps the new ZIP can merely tie the stamp: accept the newest
-  # ZIP as long as the stamp is not strictly newer than it.
-  candidate=$(ls -1t "$PROJECT_DIR"/dist/*.zip 2>/dev/null | head -n 1)
-  if [ -n "$candidate" ] && [ -z "$(find "$STAMP" -newer "$candidate" 2>/dev/null)" ]; then
-    ZIP=$candidate
-  fi
+  say "The build wrote no ZIP (--no-zip), so there is nothing to install"
+  exit 0
 fi
-rm -f "$STAMP"
-if [ -z "$ZIP" ]; then
-  [ "$CUSTOM_OUTPUT" = "0" ] || die "no new ZIP in dist/: --no-zip or --output-dir was forwarded, so
-there is nothing to flash from here. Install the ZIP from your output directory instead."
-  die "the build produced no ZIP in dist/"
-fi
+[ -f "$ZIP" ] || die "build.py reported $ZIP but that file does not exist"
 ok "$ZIP"
 
 # --- flash -----------------------------------------------------------------------------------
@@ -196,7 +188,8 @@ fi
 
 if [ "$ASSUME_YES" != "1" ]; then
   printf 'Install with "%s"? [y/N] ' "$INSTALL_CMD"
-  read -r answer
+  # Without a terminal read hits EOF; treat that as a decline instead of exiting silently.
+  read -r answer || answer=""
   case $answer in
     y|Y|yes|YES) ;;
     *) die "aborted; the ZIP is at $ZIP" ;;
