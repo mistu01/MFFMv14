@@ -1254,19 +1254,54 @@ else
       done
       status_ok "External Variable Bengali font (${ext_beng##*/}) auto-configured natively"
     else
-      beng_reg=$(find_best_face 400 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
-      beng_med=$(find_best_face 500 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
-      beng_bold=$(find_best_face 700 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
-      [ -z "$beng_reg" ] && beng_reg="$ext_beng"
-      cp -f "$beng_reg" "$SYS_FONT/NotoSansBengali-VF.ttf"
-      [ -n "$beng_med" ] && cp -f "$beng_med" "$SYS_FONT/NotoSerifBengali-VF.ttf" || cp -f "$beng_reg" "$SYS_FONT/NotoSerifBengali-VF.ttf"
-      [ -n "$beng_bold" ] && cp -f "$beng_bold" "$SYS_FONT/NotoSansBengaliUI-VF.ttf" || cp -f "$beng_reg" "$SYS_FONT/NotoSansBengaliUI-VF.ttf"
+      b_100=$(find_best_face 100 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
+      b_200=$(find_best_face 200 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
+      b_300=$(find_best_face 300 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
+      b_400=$(find_best_face 400 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
+      b_500=$(find_best_face 500 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
+      b_600=$(find_best_face 600 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
+      b_700=$(find_best_face 700 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
+      b_800=$(find_best_face 800 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
+      b_900=$(find_best_face 900 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
+
+      [ -z "$b_400" ] && b_400="$ext_beng"
+      [ -z "$b_300" ] && b_300="$b_400"
+      [ -z "$b_200" ] && b_200="$b_300"
+      [ -z "$b_100" ] && b_100="$b_200"
+      [ -z "$b_500" ] && b_500="$b_400"
+      [ -z "$b_600" ] && b_600="$b_500"
+      [ -z "$b_700" ] && b_700="$b_600"
+      [ -z "$b_800" ] && b_800="$b_700"
+      [ -z "$b_900" ] && b_900="$b_800"
+
+      cp -f "$b_100" "$SYS_FONT/MFFM_Beng_100.ttf"
+      cp -f "$b_200" "$SYS_FONT/MFFM_Beng_200.ttf"
+      cp -f "$b_300" "$SYS_FONT/MFFM_Beng_300.ttf"
+      cp -f "$b_400" "$SYS_FONT/MFFM_Beng_400.ttf"
+      cp -f "$b_500" "$SYS_FONT/MFFM_Beng_500.ttf"
+      cp -f "$b_600" "$SYS_FONT/MFFM_Beng_600.ttf"
+      cp -f "$b_700" "$SYS_FONT/MFFM_Beng_700.ttf"
+      cp -f "$b_800" "$SYS_FONT/MFFM_Beng_800.ttf"
+      cp -f "$b_900" "$SYS_FONT/MFFM_Beng_900.ttf"
+
+      frag_file="$FONT_DIR/ext_beng.xml"
+      cat <<EOF > "$frag_file"
+    <font weight="100" style="normal">MFFM_Beng_100.ttf</font>
+    <font weight="200" style="normal">MFFM_Beng_200.ttf</font>
+    <font weight="300" style="normal">MFFM_Beng_300.ttf</font>
+    <font weight="400" style="normal">MFFM_Beng_400.ttf</font>
+    <font weight="500" style="normal">MFFM_Beng_500.ttf</font>
+    <font weight="600" style="normal">MFFM_Beng_600.ttf</font>
+    <font weight="700" style="normal">MFFM_Beng_700.ttf</font>
+    <font weight="800" style="normal">MFFM_Beng_800.ttf</font>
+    <font weight="900" style="normal">MFFM_Beng_900.ttf</font>
+EOF
       for xml in "$SYS_XML" "$SYS_FALLBACK"; do
         [ -f "$xml" ] || continue
-        sed -i '/<family lang="und-Beng" variant="elegant">/,/<\/family>/c\<family lang="und-Beng" variant="elegant">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
-        sed -i '/<family lang="und-Beng" variant="compact">/,/<\/family>/c\<family lang="und-Beng" variant="compact">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
+        replace_lang_family "$xml" "und-Beng" "$frag_file"
+        replace_lang_family "$xml" "bn" "$frag_file"
       done
-      status_ok "External Static Bengali fonts auto-matched (${beng_reg##*/})"
+      status_ok "External Static Bengali fonts auto-matched (${b_400##*/})"
     fi
   else
     prune_obsolete_profile_keys BENGALI_UPRIGHT
