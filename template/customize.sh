@@ -102,6 +102,88 @@ is_variable_font() {
   head -c 8192 "$font_file" 2>/dev/null | grep -q 'fvar'
 }
 
+extract_fvar_axes() {
+  local font_file=$1
+  [ -f "$font_file" ] || return 1
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$font_file" <<'EOF' 2>/dev/null
+import sys, struct
+with open(sys.argv[1], 'rb') as f:
+    data = f.read()
+pos = data.find(b'fvar')
+if pos != -1 and len(data) >= pos + 16:
+    _, _, t_offset, _ = struct.unpack('>4sIII', data[pos:pos+16])
+    if len(data) >= t_offset + 12:
+        _, _, a_off, _, count, size = struct.unpack('>HHHHHH', data[t_offset:t_offset+12])
+        curr = t_offset + a_off
+        res = []
+        for _ in range(count):
+            if len(data) >= curr + 16:
+                tag, min_v, def_v, max_v = struct.unpack('>4siii', data[curr:curr+16])
+                t_str = tag.decode('ascii', errors='ignore')
+                res.append(f"{t_str}:{int(min_v/65536)}:{int(def_v/65536)}:{int(max_v/65536)}")
+                curr += size
+        print(" ".join(res))
+EOF
+    return 0
+  elif command -v python >/dev/null 2>&1; then
+    python - "$font_file" <<'EOF' 2>/dev/null
+import sys, struct
+with open(sys.argv[1], 'rb') as f:
+    data = f.read()
+pos = data.find(b'fvar')
+if pos != -1 and len(data) >= pos + 16:
+    _, _, t_offset, _ = struct.unpack('>4sIII', data[pos:pos+16])
+    if len(data) >= t_offset + 12:
+        _, _, a_off, _, count, size = struct.unpack('>HHHHHH', data[t_offset:t_offset+12])
+        curr = t_offset + a_off
+        res = []
+        for _ in range(count):
+            if len(data) >= curr + 16:
+                tag, min_v, def_v, max_v = struct.unpack('>4siii', data[curr:curr+16])
+                t_str = tag.decode('ascii', errors='ignore')
+                res.append(f"{t_str}:{int(min_v/65536)}:{int(def_v/65536)}:{int(max_v/65536)}")
+                curr += size
+        print(" ".join(res))
+EOF
+    return 0
+  fi
+
+  printf '%s\n' "wght:300:400:700"
+}
+
+generate_vf_xml_fragment() {
+  local font_file=$1 font_sys_name=$2 axes_str=$3
+  local wght_min=300 wght_def=400 wght_max=700
+  local has_wght=0 item tag min_v def_v max_v
+
+  for item in $axes_str; do
+    tag=$(printf '%s' "$item" | cut -d: -f1)
+    min_v=$(printf '%s' "$item" | cut -d: -f2)
+    def_v=$(printf '%s' "$item" | cut -d: -f3)
+    max_v=$(printf '%s' "$item" | cut -d: -f4)
+    if [ "$tag" = "wght" ]; then
+      [ -n "$min_v" ] && wght_min=$min_v
+      [ -n "$def_v" ] && wght_def=$def_v
+      [ -n "$max_v" ] && wght_max=$max_v
+      has_wght=1
+    fi
+  done
+
+  local w w_clamp
+  for w in 100 200 300 400 500 600 700 800 900; do
+    w_clamp=$w
+    [ $w_clamp -lt $wght_min ] && w_clamp=$wght_min
+    [ $w_clamp -gt $wght_max ] && w_clamp=$wght_max
+    if [ "$has_wght" = "1" ]; then
+      printf '    <font weight="%d" style="normal" axis="wght=%d">%s</font>\n' "$w" "$w_clamp" "$font_sys_name"
+    else
+      printf '    <font weight="%d" style="normal">%s</font>\n' "$w" "$font_sys_name"
+    fi
+  done
+}
+
 has_custom_script_for() {
   local font_file=$1 dir
   dir=$(dirname "$font_file")
@@ -920,16 +1002,20 @@ else
   ext_sans=$(find_first 'Sans*.ttf' "$MFFM_DIR/Sans" "$MFFM_DIR")
   [ -z "$ext_sans" ] && ext_sans=$(find_first 'Roboto-Regular.ttf' "$MFFM_DIR/Sans" "$MFFM_DIR")
   if [ -n "$ext_sans" ]; then
-    if is_variable_font "$ext_sans" && ! has_custom_script_for "$ext_sans"; then
-      status_warn "External Variable Sans font (${ext_sans##*/}) supplied without custom script; skipping installation"
+    cp -f "$ext_sans" "$SYS_FONT/Roboto-Regular.ttf"
+    cp -f "$ext_sans" "$SYS_FONT/Roboto-Bold.ttf"
+    if is_variable_font "$ext_sans"; then
+      axes_info=$(extract_fvar_axes "$ext_sans")
+      frag_file="$FONT_DIR/ext_sans.xml"
+      generate_vf_xml_fragment "$ext_sans" "Roboto-Regular.ttf" "$axes_info" > "$frag_file"
+      for xml in "$SYS_XML" "$SYS_FALLBACK"; do
+        [ -f "$xml" ] || continue
+        replace_family "$xml" sans-serif "$frag_file"
+        replace_family "$xml" roboto-flex "$frag_file"
+      done
+      status_ok "External Variable Sans-serif font (${ext_sans##*/}) auto-configured natively"
     else
-      cp -f "$ext_sans" "$SYS_FONT/Roboto-Regular.ttf"
-      cp -f "$ext_sans" "$SYS_FONT/Roboto-Bold.ttf"
-      if is_variable_font "$ext_sans"; then
-        status_ok "External Variable Sans font (${ext_sans##*/}) with custom script"
-      else
-        status_ok "External Sans-serif font (copied from MFFM folder)"
-      fi
+      status_ok "External Sans-serif font (copied from MFFM folder)"
     fi
   else
     status_skip "Sans-serif font not supplied"
@@ -976,16 +1062,21 @@ elif [ -f "$FONT_DIR/CutiveMono.ttf" ] && [ -f "$FONT_DIR/DroidSansMono.ttf" ]; 
 else
   ext_mono=$(find_first 'Mono*.ttf' "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono" "$MFFM_DIR")
   if [ -n "$ext_mono" ]; then
-    if is_variable_font "$ext_mono" && ! has_custom_script_for "$ext_mono"; then
-      status_warn "External Variable Monospace font (${ext_mono##*/}) supplied without custom script; skipping installation"
+    cp -f "$ext_mono" "$SYS_FONT/CutiveMono.ttf"
+    cp -f "$ext_mono" "$SYS_FONT/DroidSansMono.ttf"
+    if is_variable_font "$ext_mono"; then
+      axes_info=$(extract_fvar_axes "$ext_mono")
+      frag_file="$FONT_DIR/ext_mono.xml"
+      generate_vf_xml_fragment "$ext_mono" "CutiveMono.ttf" "$axes_info" > "$frag_file"
+      for xml in "$SYS_XML" "$SYS_FALLBACK"; do
+        [ -f "$xml" ] || continue
+        replace_family "$xml" monospace "$frag_file"
+        replace_family "$xml" cutive-mono "$frag_file"
+        replace_family "$xml" droidsans-mono "$frag_file"
+      done
+      status_ok "External Variable Monospace font (${ext_mono##*/}) auto-configured natively"
     else
-      cp -f "$ext_mono" "$SYS_FONT/CutiveMono.ttf"
-      cp -f "$ext_mono" "$SYS_FONT/DroidSansMono.ttf"
-      if is_variable_font "$ext_mono"; then
-        status_ok "External Variable Monospace font (${ext_mono##*/}) with custom script"
-      else
-        status_ok "External Monospace font (copied from MFFM folder)"
-      fi
+      status_ok "External Monospace font (copied from MFFM folder)"
     fi
   else
     status_skip "Monospace font not supplied"
@@ -1012,22 +1103,26 @@ elif [ -f "$FONT_DIR/Beng-Regular.ttf" ] && [ -f "$FONT_DIR/Beng-Medium.ttf" ] &
 else
   ext_beng=$(find_first 'Beng*.ttf' "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
   if [ -n "$ext_beng" ]; then
-    if is_variable_font "$ext_beng" && ! has_custom_script_for "$ext_beng"; then
-      status_warn "External Variable Bengali font (${ext_beng##*/}) supplied without custom script; skipping installation"
+    cp -f "$ext_beng" "$SYS_FONT/NotoSansBengali-VF.ttf"
+    cp -f "$ext_beng" "$SYS_FONT/NotoSerifBengali-VF.ttf"
+    cp -f "$ext_beng" "$SYS_FONT/NotoSansBengaliUI-VF.ttf"
+    if is_variable_font "$ext_beng"; then
+      axes_info=$(extract_fvar_axes "$ext_beng")
+      frag_file="$FONT_DIR/ext_beng.xml"
+      generate_vf_xml_fragment "$ext_beng" "NotoSansBengali-VF.ttf" "$axes_info" > "$frag_file"
+      for xml in "$SYS_XML" "$SYS_FALLBACK"; do
+        [ -f "$xml" ] || continue
+        replace_lang_family "$xml" "und-Beng" "$frag_file"
+        replace_lang_family "$xml" "bn" "$frag_file"
+      done
+      status_ok "External Variable Bengali font (${ext_beng##*/}) auto-configured natively"
     else
-      cp -f "$ext_beng" "$SYS_FONT/NotoSansBengali-VF.ttf"
-      cp -f "$ext_beng" "$SYS_FONT/NotoSerifBengali-VF.ttf"
-      cp -f "$ext_beng" "$SYS_FONT/NotoSansBengaliUI-VF.ttf"
       for xml in "$SYS_XML" "$SYS_FALLBACK"; do
         [ -f "$xml" ] || continue
         sed -i '/<family lang="und-Beng" variant="elegant">/,/<\/family>/c\<family lang="und-Beng" variant="elegant">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
         sed -i '/<family lang="und-Beng" variant="compact">/,/<\/family>/c\<family lang="und-Beng" variant="compact">\n    <font weight="400" style="normal">NotoSansBengali-VF.ttf<\/font>\n    <font weight="500" style="normal">NotoSerifBengali-VF.ttf<\/font>\n    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf<\/font>\n<\/family>' "$xml"
       done
-      if is_variable_font "$ext_beng"; then
-        status_ok "External Variable Bengali font (${ext_beng##*/}) with custom script"
-      else
-        status_ok "External Bengali font (copied from MFFM folder)"
-      fi
+      status_ok "External Bengali font (copied from MFFM folder)"
     fi
   else
     status_skip "Bengali fonts not supplied"
@@ -1056,20 +1151,22 @@ else
   ext_s_bital=$(find_first 'Serif-BoldItalic.ttf' "$MFFM_DIR/Serif" "$MFFM_DIR")
 
   if [ -n "$ext_s_reg" ]; then
-    if is_variable_font "$ext_s_reg" && ! has_custom_script_for "$ext_s_reg"; then
-      status_warn "External Variable Serif font (${ext_s_reg##*/}) supplied without custom script; skipping installation"
-    elif [ -n "$ext_s_bold" ] || is_variable_font "$ext_s_reg"; then
-      cp -f "$ext_s_reg" "$SYS_FONT/NotoSerif-Regular.ttf"
-      [ -n "$ext_s_ital" ] && cp -f "$ext_s_ital" "$SYS_FONT/NotoSerif-Italic.ttf"
-      [ -n "$ext_s_bold" ] && cp -f "$ext_s_bold" "$SYS_FONT/NotoSerif-Bold.ttf" || cp -f "$ext_s_reg" "$SYS_FONT/NotoSerif-Bold.ttf"
-      [ -n "$ext_s_bital" ] && cp -f "$ext_s_bital" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
-      if is_variable_font "$ext_s_reg"; then
-        status_ok "External Variable Serif font (${ext_s_reg##*/}) with custom script"
-      else
-        status_ok "External Serif fonts (copied from MFFM folder)"
-      fi
+    cp -f "$ext_s_reg" "$SYS_FONT/NotoSerif-Regular.ttf"
+    [ -n "$ext_s_ital" ] && cp -f "$ext_s_ital" "$SYS_FONT/NotoSerif-Italic.ttf"
+    [ -n "$ext_s_bold" ] && cp -f "$ext_s_bold" "$SYS_FONT/NotoSerif-Bold.ttf" || cp -f "$ext_s_reg" "$SYS_FONT/NotoSerif-Bold.ttf"
+    [ -n "$ext_s_bital" ] && cp -f "$ext_s_bital" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
+    if is_variable_font "$ext_s_reg"; then
+      axes_info=$(extract_fvar_axes "$ext_s_reg")
+      frag_file="$FONT_DIR/ext_serif.xml"
+      generate_vf_xml_fragment "$ext_s_reg" "NotoSerif-Regular.ttf" "$axes_info" > "$frag_file"
+      for xml in "$SYS_XML" "$SYS_FALLBACK"; do
+        [ -f "$xml" ] || continue
+        replace_family "$xml" serif "$frag_file" "split"
+        replace_family "$xml" noto-serif "$frag_file" "split"
+      done
+      status_ok "External Variable Serif font (${ext_s_reg##*/}) auto-configured natively"
     else
-      status_skip "Dedicated serif fonts incomplete"
+      status_ok "External Serif fonts (copied from MFFM folder)"
     fi
   else
     status_skip "Dedicated serif fonts not supplied"
