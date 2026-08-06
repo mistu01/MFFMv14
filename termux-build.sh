@@ -155,17 +155,18 @@ ok "$ZIP"
 
 if [ "$SKIP_FLASH" = "1" ]; then
   say "Not flashing (--no-flash)"
+  quoted=$(shell_quote "$ZIP")
   printf '\nFlash it from your manager app, or with the CLI of your root manager:\n'
-  printf '  su -c "magisk --install-module %s"   # Magisk\n' "$ZIP"
-  printf '  su -c "ksud module install %s"       # KernelSU\n' "$ZIP"
-  printf '  su -c "apd module install %s"        # APatch\n' "$ZIP"
+  printf '  su -c "magisk --install-module %s"   # Magisk\n' "$quoted"
+  printf '  su -c "ksud module install %s"       # KernelSU\n' "$quoted"
+  printf '  su -c "apd module install %s"        # APatch\n' "$quoted"
   exit 0
 fi
 
 say "Installing the module"
 if ! command -v su >/dev/null 2>&1 || [ "$(su -c 'id -u' 2>/dev/null)" != "0" ]; then
   warn "no root shell available; the ZIP was built but not installed"
-  printf '\nCopy it out and flash it from your manager app:\n  cp %s ~/storage/shared/Download/\n' "$ZIP"
+  printf '\nCopy it out and flash it from your manager app:\n  cp %s ~/storage/shared/Download/\n' "$(shell_quote "$ZIP")"
   exit 0
 fi
 
@@ -182,7 +183,7 @@ for candidate in magisk ksud apd; do
 done
 if [ -z "$INSTALL_CMD" ]; then
   warn "found root but no magisk/ksud/apd; flash from your manager app instead"
-  printf '\n  cp %s ~/storage/shared/Download/\n' "$ZIP"
+  printf '\n  cp %s ~/storage/shared/Download/\n' "$(shell_quote "$ZIP")"
   exit 0
 fi
 
