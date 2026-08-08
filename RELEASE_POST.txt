@@ -1,32 +1,71 @@
-MFFMv14 -- Universal Magisk, KernelSU & APatch Font Module Builder
+MFFMv14 — Universal Android Font Module Builder
+Version: 2026.08.08
 
-Automated tool & template to build flashable Android font modules for Magisk, KernelSU, APatch, and Mountify/OverlayFS.
+Build flashable font modules for Magisk, KernelSU, APatch, and Mountify
+from any static or variable font family — on PC or directly from Termux.
 
-Highlights & Capabilities:
-- On-Device Termux Automation (termux-build.sh): Build & auto-flash with 1 command.
-- Flexible Family Support: Build Sans-only, Bengali-only, Serif-only, or Monospace-only modules.
-- Single TTC Container (DroidSans.ttf): Packs all faces into one TTC file with dynamic system XML patching.
-- Bengali 100-900 Weight Engine: Full weight class support (Thin to Black) & --bengali-features.
-- OpenType Feature Freezer: Interactive or flag-based feature freezing (ss01-ss20, zero, tnum, etc.).
-- Centered Colon (:): Automatic contextual digit colon injection for lockscreen clocks (12:30).
-- /sdcard/MFFM/ Subdirectories: Auto-creates Sans/, Serif/, Monospace/, Bengali/ fallback folders.
-- Native Variable Font Parsing: Natively extracts fvar variation axes in recovery without custom scripts.
-- Smart Config & Auto-Pruning: Live .conf axis tuning in /sdcard/MFFM/. Auto-prunes obsolete config keys.
-- Pixel & Product Patching: Patches fonts.xml, font_fallback.xml, and product fonts_customization.xml.
-- Cryptographic Signing: Auto-signs output ZIPs using built-in ZipSigner.
+━━━━━━━━━━━━━━━━━━━━━━
+What's New
+━━━━━━━━━━━━━━━━━━━━━━
 
-Quick Start:
+OS/2 Binary Weight Detection
+No more filename guessing. Weight and style are now read directly from each
+font's OS/2 table — any filename works, including Android hex cache names
+like 61555016c4027e1b-s.p.ttf.
 
-Desktop / PC:
-1. pip install -r requirements.txt
-2. Put fonts in Fonts/ subdirectories (Sans/, Monospace/, Serif/, Bengali/).
-3. Run: python build.py
-4. Flash generated ZIP from dist/ in Magisk, KernelSU, or APatch!
+Serif & Monospace TTC Bundler
+Multi-weight static Serif and Monospace families in /sdcard/MFFM/ are now
+auto-bundled into a single indexed TTC, just like Bengali. Only weights
+actually present are written to the XML.
 
-Termux (On-Device):
-1. unzip MFFMv14-Source-Template.zip -d ~/MFFMv14 && cd ~/MFFMv14
-2. Put fonts in Fonts/ subdirectories.
-3. Run: sh termux-build.sh
+Bengali TTC Fix
+Critical bug fixed — the TTC bundler was receiving all paths as one string
+instead of separate arguments, causing it to silently fail. All Bengali
+weight faces now bundle correctly.
 
-Preview Features:
-Wakamaifondue (https://wakamaifondue.com/) | Adam Jagosz (https://www.adamjagosz.com/bulletproof/lettering)
+━━━━━━━━━━━━━━━━━━━━━━
+Highlights
+━━━━━━━━━━━━━━━━━━━━━━
+
+- Single TTC packs all weight faces (100–900 + Italic)
+- Supports Sans, Serif, Monospace, Bengali independently
+- Auto-installs fontTools via Termux pip if missing during flash
+- Variable font fvar axis detection and live .conf axis tuning
+- OpenType feature freezing per family (ss01, zero, tnum...)
+- Centered colon injection for lockscreen clock digits
+- Patches fonts.xml, font_fallback.xml and Pixel fonts_customization.xml
+- Full POSIX sh — mksh, busybox ash, all Android shells supported
+- Full set -x debug log saved to /sdcard/MFFM/
+
+━━━━━━━━━━━━━━━━━━━━━━
+Fallback (no Termux / no fontTools)
+━━━━━━━━━━━━━━━━━━━━━━
+
+Bengali   → 3 files  (Regular / Medium / Bold)
+Serif     → 4 files  (Regular / Italic / Bold / BoldItalic)
+Monospace → 1 file   (Regular only)
+Variable  → always works, no fontTools needed
+
+━━━━━━━━━━━━━━━━━━━━━━
+Quick Start
+━━━━━━━━━━━━━━━━━━━━━━
+
+PC:
+  1. pip install -r requirements.txt
+  2. Put fonts in Fonts/Sans/ (mandatory)
+  3. python build.py
+  4. Flash dist/*.zip in Magisk / KernelSU / APatch
+
+Termux (on-device):
+  1. unzip MFFMv14-Source-Template.zip -d ~/MFFMv14
+  2. cd ~/MFFMv14
+  3. sh termux-build.sh
+
+External fonts after flash — drop files and reflash:
+  /sdcard/MFFM/Bengali/
+  /sdcard/MFFM/Serif/
+  /sdcard/MFFM/Monospace/
+  Any filename accepted. Weight auto-detected from font binary.
+
+━━━━━━━━━━━━━━━━━━━━━━
+© 2026 MFFM / Mistu

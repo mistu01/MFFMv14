@@ -1,281 +1,646 @@
-# MFFMv14 Master User & Architecture Guide
-
-This guide provides a comprehensive technical reference for creating, flashing, configuring, and debugging font modules built with the **MFFMv14** engine.
+# MFFMv14 — Complete Usage Guide
 
 ---
 
 ## Table of Contents
 
-1. [Prerequisites & Environment Setup](#1-prerequisites--environment-setup)
-2. [Workspace Architecture & Organization](#2-workspace-architecture--organization)
-3. [Module Creation (`build.py`)](#3-module-creation-buildpy)
-   - [Font Discovery & Folder Categorization](#font-discovery--folder-categorization)
-   - [Any-Family Module Compilation](#any-family-module-compilation)
-   - [Single TTC Collection Architecture (`DroidSans.ttf`)](#single-ttc-collection-architecture-droidsans-ttf)
-   - [Bengali Full 100–900 Weight Class Engine](#bengali-full-100900-weight-class-engine)
-   - [OpenType Feature Freezing](#opentype-feature-freezing)
-   - [Centered Colon Injection](#centered-colon-injection)
-   - [Command-Line Options & Flags](#command-line-options--flags)
-4. [On-Device Building & Flashing with Termux (`termux-build.sh`)](#4-on-device-building--flashing-with-termux-termux-buildsh)
-   - [Storage Setup & Permission](#storage-setup--permission)
-   - [Setup & Unpacking](#setup--unpacking)
-   - [Placing Font Files](#placing-font-files)
-   - [Running `termux-build.sh`](#running-termux-buildsh)
-   - [Advanced Command Features](#advanced-command-features)
-   - [Termux Troubleshooting](#termux-troubleshooting)
-5. [Module Flashing & Root Installation Workflow (`customize.sh`)](#5-module-flashing--root-installation-workflow-customizesh)
-   - [Supported Root Environments](#supported-root-environments)
-   - [Installer Section-by-Section Breakdown](#installer-section-by-section-breakdown)
-6. [The `/sdcard/MFFM` Directory & Runtime Configuration](#6-the-sdcardmffm-directory--runtime-configuration)
-   - [Subdirectory Auto-Creation & Folder Separation](#subdirectory-auto-creation--folder-separation)
-   - [Universal Font Family Priority Rules](#universal-font-family-priority-rules)
-   - [Native Binary Variable Font Parsing & XML Patching](#native-binary-variable-font-parsing--xml-patching)
-   - [Variable Font Dynamic Axis Tuning (`.conf` files)](#variable-font-dynamic-axis-tuning-conf-files)
-7. [Legacy Module Migration (`update.py`)](#7-legacy-module-migration-updatepy)
-8. [Debugging & Troubleshooting](#8-debugging--troubleshooting)
+- [Part 1 — Module Creation on PC](#part-1--module-creation-on-pc)
+- [Part 2 — Module Creation on Device (Termux)](#part-2--module-creation-on-device-termux)
+- [Part 3 — Module Information, Capabilities & Usage](#part-3--module-information-capabilities--usage)
 
 ---
 
-## 1. Prerequisites & Environment Setup
+# Part 1 — Module Creation on PC
 
-Ensure Python 3.9 or newer is installed on your system. Before compiling fonts or running migration scripts, install all required dependencies:
+This section covers everything required to build a flashable font module from a Windows, macOS, or Linux desktop environment.
 
-```bash
+---
+
+## 1.1 Prerequisites
+
+**Python 3.9 or newer** must be installed and available in your system PATH.
+
+Verify with:
+```
+python --version
+```
+
+Install all required Python packages:
+```
 pip install -r requirements.txt
 ```
 
-### Dependencies Included in `requirements.txt`
-- `fonttools>=4.55` — Font table parsing, subsetting, and TTC container generation.
-- `cryptography>=43.0` — Cryptographic signing of generated module ZIP files.
-- `brotli` — WOFF2 font decompression.
-- `opentype-feature-freezer` — `pyftfeatfreeze` library for freezing OpenType layout features into default glyph mappings.
+### What `requirements.txt` installs
+
+| Package | Purpose |
+|---|---|
+| `fonttools >= 4.55` | Font table parsing, subsetting, TTC container generation |
+| `cryptography >= 43.0` | Cryptographic signing of output ZIP files |
+| `brotli` | WOFF2 font decompression |
+| `opentype-feature-freezer` | OpenType layout feature freezing into default glyph mappings |
 
 ---
 
-## 2. Workspace Architecture & Organization
+## 1.2 Workspace Layout
 
-The MFFMv14 workspace is structured into dedicated directories for modular maintainability:
+After extracting `MFFMv14-Source-Template.zip`, your working directory looks like this:
 
-- **`template/`**: Contains clean module payload templates (`customize.sh`, `module.prop`, `service.sh`, `uninstall.sh`, `post-mount.sh`, `font-config.sh`, `META-INF/`, `Files/`).
-- **`Fonts/`**: Source font directory with subdirectories `Sans/`, `Monospace/`, `Serif/`, and `Bengali/`.
-- **`dist/`**: Target directory where compiled, signed module ZIP files and `MFFMv14-Source-Template.zip` are saved.
-- **`Old Modules/`**: Folder for legacy MFFM ZIP packages to be updated by `update.py`.
-- **`Updated Modules/`**: Output folder for upgraded MFFMv14 module packages.
-
-*Compilation in `build.py` runs inside isolated temporary directories (`tempfile.mkdtemp()`), keeping the repository root completely clean of transient files.*
-
----
-
-## 3. Module Creation (`build.py`)
-
-`build.py` parses font files placed inside `Fonts/` subdirectories and compiles them into a signed, flashable Android font module.
-
-### Font Discovery & Folder Categorization
-The compiler scans `Fonts/` subdirectories for `.ttf`, `.otf`, `.ttc`, `.otc`, `.woff`, and `.woff2` files. Strict folder separation guarantees 100% accurate classification:
-- **Sans-Serif**: Fonts placed in `Fonts/Sans/` (or `Fonts/` root).
-- **Monospace**: Fonts placed in `Fonts/Monospace/` or `Fonts/Mono/`.
-- **Serif**: Fonts placed in `Fonts/Serif/`.
-- **Bengali**: Fonts placed in `Fonts/Bengali/` or `Fonts/Beng/`.
-
-*Note: Loose font files placed directly in `Fonts/` root are automatically flagged; users are guided to place them into the appropriate family folder.*
-
-### Any-Family Module Compilation
-MFFMv14 allows building modules with **any combination of supplied font families**:
-- You can create a module containing **only Bengali fonts**, **only Serif fonts**, **only Monospace fonts**, or **only Sans fonts**.
-- Sans-serif is no longer mandatory. `build.py` extracts family metadata from whichever faces are supplied and builds a valid, working module package.
-
-### Single TTC Collection Architecture (`DroidSans.ttf`)
-All discovered font faces across all supplied categories are packed into **ONE single `DroidSans.ttf` TTC container**:
-- **Indices 0..S**: Sans-serif font faces.
-- **Indices M1..Mn**: Monospace font faces.
-- **Indices R1..Rn**: Serif font faces.
-- **Indices B1..Bn**: Bengali font faces.
-
-XML configuration fragments (`sans.xml`, `condensed.xml`, `mono.xml`, `serif.xml`, `bengali.xml`, `clock.xml`) reference `DroidSans.ttf` at their respective TTC face indices.
-
-### Bengali Full 100–900 Weight Class Engine
-Bengali fonts placed in `Fonts/Bengali/` are processed with full weight class support:
-- Static faces are mapped across the full **100–900 weight spectrum** (100 Thin, 200 ExtraLight, 300 Light, 400 Regular, 500 Medium, 600 SemiBold, 700 Bold, 800 ExtraBold, 900 Black).
-- Variable faces extract axis bounds (`wght`, etc.) to generate precise `bengali.xml` fragments.
-- Automatically patches `und-Beng` and `bn` language family entries in system font XMLs.
-
-### Per-Family OpenType Feature Freezing
-`build.py` integrates `pyftfeatfreeze` for interactive or headless OpenType feature freezing:
-- **Sans-serif Prompt**: Prompts to freeze features for Sans-serif fonts.
-- **Monospace Prompt**: Prompts to freeze features for Monospace fonts.
-- **Serif Prompt**: Prompts to freeze features for Serif fonts.
-- **Bengali Prompt**: Prompts to freeze features for Bengali fonts (`--bengali-features`).
-
-- **[SAFE TO FREEZE]**: Stylistic Sets (`ss01`–`ss20`), Character Variants (`cv01`–`cv99`), Slashed Zero (`zero`), Tabular Figures (`tnum`), Proportional Figures (`pnum`), Stylistic Alternates (`salt`), Case-Sensitive Forms (`case`).
-- **[CAUTION]**: Repositioning features (`frac`, `numr`, `dnom`, `subs`, `sups`).
-- **[UNSAFE]**: Master alternates (`aalt`) and default layout features (`calt`, `kern`, `liga`, `ccmp`).
-
-### Centered Colon Injection
-Inspects input fonts for contextual centered colon support (`: ` vertically centered between digits for `12:30` clock displays). If missing, `build.py` can generate and inject contextual layout rules automatically (`--centered-colon`).
-
-### Command-Line Options & Flags
-
-| Flag | Argument | Description | Default |
-| :--- | :--- | :--- | :--- |
-| `--fonts-dir` | `<PATH>` | Directory containing source font files. | `Fonts/` |
-| `--mode` | `auto`, `static`, `variable` | Font compilation mode. | `auto` |
-| `--bengali-features` | `<LIST>` | OpenType feature list for Bengali fonts (e.g. `"ss01,zero"`). | None |
-| `--features` | `<LIST>` | OpenType feature list for Sans fonts. | None |
-| `--mono-features` | `<LIST>` | OpenType feature list for Monospace fonts. | None |
-| `--serif-features` | `<LIST>` | OpenType feature list for Serif fonts. | None |
-| `--keep-hinting` | *Flag* | Preserve original TrueType hinting instructions. | False (hints stripped) |
-| `--no-prefix` | *Flag* | Disable `Mistu` family name transformation. | False |
-| `--no-zip` | *Flag* | Stage files in `Files/` without compressing into ZIP. | False |
-| `--no-sign` | *Flag* | Output unsigned ZIP file. | False (signed) |
+```
+MFFMv14/
+├── Fonts/
+│   ├── Sans/           ← Place Sans-Serif fonts here (MANDATORY)
+│   ├── Monospace/      ← Place Monospace fonts here (optional)
+│   ├── Serif/          ← Place Serif fonts here (optional)
+│   └── Bengali/        ← Place Bengali fonts here (optional)
+├── Old Modules/        ← Old MFFM ZIPs to upgrade (for update.py)
+├── Updated Modules/    ← Output of update.py
+├── dist/               ← Output compiled module ZIPs land here
+├── template/           ← Module template files (do not edit manually)
+├── build.py            ← Main build script
+├── update.py           ← Legacy module migration script
+├── termux-build.sh     ← On-device Termux build script
+├── font_module.py      ← Core compilation engine
+├── requirements.txt
+└── USAGE_GUIDE.md
+```
 
 ---
 
-## 4. On-Device Building & Flashing with Termux (`termux-build.sh`)
+## 1.3 Placing Your Fonts
 
-`termux-build.sh` is an automated one-shot script designed to run natively inside **Termux** on Android devices.
+### Sans-Serif — Mandatory
 
-### Storage Setup & Permission
-1. Grant Termux storage permissions:
-   ```bash
-   termux-setup-storage
+Sans-serif fonts **must** be placed in `Fonts/Sans/`. Without them, the build will fail. Sans cannot be supplied later via `/sdcard/MFFM/` — it must always be compiled into the module.
+
+```
+Fonts/Sans/
+    MyFont-Thin.ttf
+    MyFont-Light.ttf
+    MyFont-Regular.ttf
+    MyFont-Medium.ttf
+    MyFont-Bold.ttf
+    MyFont-Black.ttf
+    MyFont-Italic.ttf
+    MyFont-BoldItalic.ttf
+    ...
+```
+
+### Optional Families
+
+Place fonts in the corresponding subdirectory alongside Sans:
+
+```
+Fonts/Monospace/    ← monospace family (e.g. JetBrains Mono)
+Fonts/Serif/        ← serif family (e.g. Noto Serif)
+Fonts/Bengali/      ← Bengali/Bangla script family
+```
+
+You may combine any of these. Building a Serif-only module (with Sans but no Mono/Bengali) is valid.
+
+### Font Filename Rules
+
+**Filenames do not matter for weight detection.** The compiler reads the **OS/2 `usWeightClass`** field and **`fsSelection` italic bit** directly from the font binary. Any filename is accepted — descriptive names are recommended for your own organization but are not required.
+
+Accepted formats: `.ttf`, `.otf`, `.ttc`, `.otc`, `.woff`, `.woff2`
+
+---
+
+## 1.4 Building the Module
+
+Run the build script from the `MFFMv14` directory:
+
+```
+python build.py
+```
+
+The script will:
+1. Scan all `Fonts/` subdirectories
+2. Detect font mode (static or variable) from font binaries
+3. Compile all faces into a single TTC payload (`DroidSans.ttf`)
+4. Generate system XML patch fragments
+5. Package everything into a signed, flashable ZIP in `dist/`
+
+### Build Output
+
+```
+dist/
+└── mffm14-YourFont-2026.08.08.zip    ← Flash this in your root manager
+```
+
+---
+
+## 1.5 Build Options
+
+```
+python build.py [options]
+```
+
+| Option | Description |
+|---|---|
+| `--fonts-dir <path>` | Use a different source font directory (default: `./Fonts`) |
+| `--mode auto\|static\|variable` | Force font mode detection (default: auto) |
+| `--name "Display Name"` | Override the module display name in module.prop |
+| `--version "2026.08.08"` | Override the version string |
+| `--version-code <N>` | Override the numeric versionCode |
+| `--output-dir <path>` | Output directory for the ZIP (default: `./dist`) |
+| `--no-zip` | Prepare module files without packaging into a ZIP |
+| `--no-sign` | Skip cryptographic signing (useful for debugging) |
+| `--keep-hinting` | Preserve TrueType hinting instructions (not recommended) |
+| `--no-prefix` | Do not prefix the internal font family name with MFFM |
+| `--features ss01,zero` | Freeze OpenType features for the Sans-serif family |
+| `--mono-features zero,onum` | Freeze OpenType features for the Monospace family |
+| `--serif-features ss02` | Freeze OpenType features for the Serif family |
+| `--bengali-features ss01` | Freeze OpenType features for the Bengali family |
+| `--interactive` | Force interactive feature selection prompt |
+| `--no-interactive` | Disable interactive feature selection prompt |
+| `--centered-colon` | Inject a contextual centered colon for digit clock display |
+| `--no-centered-colon` | Disable centered colon injection |
+
+---
+
+## 1.6 OpenType Feature Freezing
+
+Feature freezing bakes OpenType layout features into the font's default glyph mappings. This allows Android to render stylistic alternates without needing app-level OpenType support.
+
+### Interactive mode (default)
+
+Running `python build.py` without `--no-interactive` will present a numbered list of available features found in the font and prompt you to select them.
+
+### Flag mode
+
+```
+python build.py --features ss01,ss02,zero --mono-features zero
+```
+
+Each `--*-features` flag is applied independently to its respective family. You can freeze different features per family.
+
+### Common feature tags
+
+| Tag | Effect |
+|---|---|
+| `ss01`–`ss20` | Stylistic set alternates |
+| `zero` | Slashed zero glyph |
+| `tnum` | Tabular (monospaced) numerals |
+| `onum` | Oldstyle numerals |
+| `liga` | Standard ligatures |
+| `dlig` | Discretionary ligatures |
+
+---
+
+## 1.7 Centered Colon Injection
+
+For fonts where the colon `:` is not vertically centered between two digits (e.g. `12:30` on a lock screen clock appears misaligned), MFFMv14 can inject a contextual digit colon glyph automatically.
+
+The builder detects whether the font already has such a glyph. Use `--centered-colon` to force injection or `--no-centered-colon` to disable it. In interactive mode you will be prompted.
+
+---
+
+## 1.8 Static vs Variable Fonts
+
+The compiler auto-detects whether your fonts are static (separate files per weight) or variable (single file with axis ranges). You can force a mode with `--mode static` or `--mode variable` if needed.
+
+**Static fonts:** Each weight is a separate `.ttf` file. All are packed into one TTC container (`DroidSans.ttf`), indexed and referenced in the system XML by `index=` attribute.
+
+**Variable fonts:** A single font file with `fvar` axis table. The compiler reads axis ranges and generates per-weight `axis="wght=N"` XML entries clamped to the font's actual axis range.
+
+---
+
+## 1.9 Upgrading Old MFFM Modules (`update.py`)
+
+To upgrade a module built with an older MFFM version to the MFFMv14 template:
+
+1. Place the old module ZIP(s) in `Old Modules/`
+2. Run:
    ```
-2. Enable "Allow management of all files" in Android Settings if prompted.
-
-### Setup & Unpacking
-1. Download `MFFMv14-Source-Template.zip` to your device (e.g. `/sdcard/Download/`).
-2. Open Termux and extract:
-   ```bash
-   unzip /sdcard/Download/MFFMv14-Source-Template.zip -d ~/MFFMv14
-   cd ~/MFFMv14
+   python update.py
    ```
+3. Updated ZIPs are saved to `Updated Modules/`
 
-### Placing Font Files
-Organize source font files into dedicated folders:
-- `Fonts/Sans/` — Primary sans-serif body fonts
-- `Fonts/Monospace/` — Monospace / code fonts
-- `Fonts/Serif/` — Serif fonts
-- `Fonts/Bengali/` — Bengali language fonts
+```
+python update.py [options]
 
-### Running `termux-build.sh`
+  --old-dir <path>      Source folder with old ZIPs (default: ./Old Modules)
+  --output-dir <path>   Output folder (default: ./Updated Modules)
+  --mode auto|static|variable
+  --name "Name"         Override display name for all outputs
+  --no-sign             Skip signing
+  --force               Overwrite existing output ZIPs
+  --keep-hinting        Preserve TrueType hinting
+  --features TAGS       Freeze OpenType features during rebuild
+```
 
-- **Interactive Build & Flash (Default)**:
-  ```bash
-  sh termux-build.sh
-  ```
-- **Non-Interactive Auto-Flash (`--yes`)**:
-  ```bash
-  sh termux-build.sh --yes
-  ```
-- **Build-Only Mode (No Root / No Flash)**:
-  ```bash
-  sh termux-build.sh --no-flash
-  ```
+Supported old primary font names that `update.py` recognises: `DroidSans.ttc`, `DroidSans.ttf`, `DroidSans.otf`, `RobotoStatic-Regular.ttf`, `DroidSans-Bold.ttf`.
 
 ---
 
-## 5. Module Flashing & Root Installation Workflow (`customize.sh`)
+# Part 2 — Module Creation on Device (Termux)
 
-### Supported Root Environments
-The module installer (`customize.sh`) is fully compatible with **Magisk** (v20.4+), **KernelSU**, **APatch**, and **Mountify** / OverlayFS environments.
-
-### Installer Section-by-Section Breakdown
-
-1. **Section 1/5: Installing primary font payload**
-   - Copies `DroidSans.ttf` (and standalone payload files) to `/system/fonts/`.
-2. **Section 2/5: Patching Android font families**
-   - Evaluates Sans-serif priority rules. Patches `/system/etc/fonts.xml` and `font_fallback.xml` for `sans-serif`, `sans-serif-condensed`, `roboto-flex`.
-   - On Pixel ROMs with `/product/etc/fonts_customization.xml`, pattern-patches Google Sans families.
-3. **Section 3/5: Applying optional font resources**
-   - Evaluates **Monospace**, **Serif**, and **Bengali** priority rules.
-   - Natively extracts variable font variation axes for external fonts if present.
-4. **Section 4/5: Finalizing root integration**
-   - Sets SELinux `trusted.overlay.opaque` extended attributes (`setfattr`) for OverlayFS mount stability.
-5. **Section 5/5: Variable font axis configuration**
-   - Creates or retains schema v2 axis configuration files (`.conf`) in `/sdcard/MFFM/`.
+This section covers building and flashing a module entirely on-device using Termux, without a PC.
 
 ---
 
-## 6. The `/sdcard/MFFM` Directory & Runtime Configuration
+## 2.1 Prerequisites
 
-The `/sdcard/MFFM` directory on internal storage allows runtime user customizations and external font fallbacks.
+### Install Termux
 
-### Subdirectory Auto-Creation & Folder Separation
-When any MFFMv14 module is flashed, `customize.sh` automatically creates dedicated subdirectories:
-- `/sdcard/MFFM/Sans/`
-- `/sdcard/MFFM/Serif/`
-- `/sdcard/MFFM/Monospace/`
-- `/sdcard/MFFM/Bengali/`
+Install Termux from **F-Droid** (recommended — Play Store version is outdated):
+- https://f-droid.org/packages/com.termux/
 
-### Universal Font Family Priority Rules
+After installing, open Termux and run:
+```sh
+termux-setup-storage
+```
+This grants Termux access to `/sdcard/` so it can read fonts from shared storage.
 
-For **every** font category (Sans, Serif, Monospace, Bengali), the installer enforces a 3-tier priority:
+### Root access
 
-1. **Priority 1 (Module Inbuilt Supplied Font — Highest Priority)**:
-   - If the module payload contains native XML fragments (`sans.xml`, `serif.xml`, `mono.xml`, `bengali.xml`), the installer uses the native bundled fonts.
-   - **External `/sdcard/MFFM/` files for that family are ignored.**
-2. **Priority 2 (External Fallback from `/sdcard/MFFM` Subdirectories)**:
-   - If the module does NOT contain that font family, the installer checks `/sdcard/MFFM/<Family>/` (and root `/sdcard/MFFM/`).
-   - **Static Fonts**: Copied to `/system/fonts/` and patched into system XMLs.
-   - **Variable Fonts**: Natively parsed via `extract_fvar_axes` to extract variation axes and patch system XMLs with 100–900 weight class axis attributes.
-3. **Priority 3 (No Fonts Supplied Anywhere)**:
-   - If no font is supplied for a category, installation skips that category cleanly (`status_skip`) without errors. If no fonts are supplied anywhere, the module installs 100% cleanly without patching system XMLs.
+Your device must be rooted with Magisk, KernelSU, or APatch. The flashing step uses `su` to invoke the root manager's install command.
 
-### Native Binary Variable Font Parsing & XML Patching
+---
 
-`customize.sh` includes native binary parsing capabilities (`extract_fvar_axes` and `generate_vf_xml_fragment`):
-- Reads the SFNT table directory directly from `.ttf`/`.otf` binaries to locate `fvar` (Font Variations) tables.
-- Extracts `wght`, `opsz`, `ital`, `slnt`, and `wdth` axis ranges.
-- Natively generates full 100–900 weight class XML fragments (`axis="wght=..."`) in recovery without requiring external custom scripts or Python dependencies!
+## 2.2 Setting Up the Project
 
-### Variable Font Dynamic Axis Tuning (`.conf` files)
+### Option A — Transfer from PC
 
-For Variable Font modules, a configuration file is maintained at:
-`/sdcard/MFFM/MFFMv14_<Family>_<ID>.conf`
+Copy `MFFMv14-Source-Template.zip` to your device, then in Termux:
 
-Users can edit axis weights (`wght`, `opsz`, `wdth`, `grad`) without re-flashing:
+```sh
+cd ~
+cp /sdcard/Download/MFFMv14-Source-Template.zip .
+unzip MFFMv14-Source-Template.zip -d MFFMv14
+cd MFFMv14
+```
+
+### Option B — Clone from Git (if you have a repo)
+
+```sh
+pkg install git
+git clone <your-repo-url> ~/MFFMv14
+cd ~/MFFMv14
+```
+
+---
+
+## 2.3 Placing Your Fonts
+
+Create the font subdirectories if they don't exist:
+
+```sh
+mkdir -p Fonts/Sans Fonts/Monospace Fonts/Serif Fonts/Bengali
+```
+
+Copy fonts from shared storage into the appropriate subdirectory:
+
+```sh
+# Example: Sans font family
+cp /sdcard/Download/MyFont/*.ttf Fonts/Sans/
+
+# Example: Bengali family
+cp /sdcard/Download/BengaliFont/*.ttf Fonts/Bengali/
+```
+
+Fonts can also be in `/sdcard/MFFM/` subdirectories for post-flash supply (see Part 3). For building into the module itself, use `Fonts/` subdirectories.
+
+---
+
+## 2.4 Building and Flashing — One Command
+
+The `termux-build.sh` script handles everything: installs the toolchain, builds the module, and flashes it.
+
+```sh
+sh termux-build.sh
+```
+
+This single command will:
+1. Check the Termux environment
+2. Run `pkg install python python-pip openssl python-brotli python-cryptography`
+3. Run `pip install -r requirements.txt`
+4. Run `python build.py`
+5. Detect your root manager (`magisk`, `ksud`, or `apd`)
+6. Prompt for confirmation, then flash via `su`
+7. Print "Reboot to apply the font."
+
+---
+
+## 2.5 Termux Build Script Options
+
+```sh
+sh termux-build.sh [options] [-- build.py options...]
+```
+
+| Option | Description |
+|---|---|
+| `--no-deps` | Skip package installation (environment already set up) |
+| `--no-flash` | Build only, do not flash |
+| `--yes` / `-y` | Skip the flash confirmation prompt |
+| `--` | Everything after `--` is passed directly to `build.py` |
+
+### Examples
+
+**Build only, no flash:**
+```sh
+sh termux-build.sh --no-flash
+```
+
+**Build from a custom font directory:**
+```sh
+sh termux-build.sh -- --fonts-dir ~/storage/shared/Download/MyFont
+```
+
+**Build with feature freezing and auto-flash:**
+```sh
+sh termux-build.sh --yes -- --features ss01,zero --no-interactive
+```
+
+**Build and skip dependency installation (already installed):**
+```sh
+sh termux-build.sh --no-deps --yes
+```
+
+---
+
+## 2.6 Manual Build (Without the Shell Script)
+
+If you prefer step-by-step control:
+
+```sh
+# Step 1: Install toolchain
+pkg install python python-pip openssl python-brotli python-cryptography
+
+# Step 2: Install Python packages
+pip install -r requirements.txt
+
+# Step 3: Build
+python build.py --no-interactive
+
+# Step 4: Flash manually (pick your root manager)
+su -c "magisk --install-module dist/*.zip"    # Magisk
+su -c "ksud module install dist/*.zip"        # KernelSU
+su -c "apd module install dist/*.zip"         # APatch
+```
+
+---
+
+## 2.7 Flash Without Rebuild (from GUI)
+
+If you already have the ZIP built (transferred from PC or built previously):
+
+1. Open your root manager app (Magisk / KernelSU Manager / APatch)
+2. Go to Modules
+3. Tap "Install from storage"
+4. Select the `.zip` from `dist/` (or wherever you placed it)
+5. Reboot
+
+---
+
+## 2.8 Notes on Termux Environment
+
+- **`noexec` mount warning**: If your project is on a partition mounted with `noexec`, the script cannot sign the ZIP. Move the project to `$HOME` (internal storage) to enable signing. The script detects this and warns automatically.
+- **Storage permission**: Run `termux-setup-storage` once after installing Termux. Without it, `/sdcard/` is not accessible.
+- **Root in Termux**: Termux does not require root for building. Root is only acquired via `su` for the flashing step.
+
+---
+
+# Part 3 — Module Information, Capabilities & Usage
+
+This section describes what the module does once flashed, what capabilities it provides, and how to configure and use it.
+
+---
+
+## 3.1 What the Module Does
+
+When flashed, the MFFMv14 module:
+
+1. **Replaces the system sans-serif font** — patches `fonts.xml` and `font_fallback.xml` with the bundled font family, covering all weight slots (100 Thin through 900 Black) and italic variants.
+2. **Patches Google/Pixel product fonts** — rewrites `fonts_customization.xml` on Pixel and Pixel-like ROMs to redirect Google Sans and variable font families to the new font.
+3. **Applies optional external fonts** — picks up Bengali, Serif, and Monospace fonts from `/sdcard/MFFM/` subdirectories and patches the relevant system fallback entries.
+4. **Runs custom scripts** — executes any `.sh` scripts found in `/sdcard/MFFM/` for post-install customization.
+
+---
+
+## 3.2 Supported Root Environments
+
+| Root Manager | Detection Method | Overlay Method |
+|---|---|---|
+| **Magisk** | `command -v magisk` | Standard Magisk module overlay |
+| **KernelSU** | `$KSU=true` or `$KSU_VER_CODE` | OverlayFS with `setfattr` opaque attr |
+| **APatch** | `$APATCH=true` or `$APATCH_VER_CODE` | OverlayFS with `setfattr` opaque attr |
+| **Mountify** | `$MOUNTIFY=true` or modules dir | Defers to Mountify overlay system |
+
+The module detects the root environment automatically and applies the appropriate overlay strategy. No manual configuration is needed.
+
+---
+
+## 3.3 The `/sdcard/MFFM/` Directory
+
+After flashing, the installer creates and maintains these directories:
+
+```
+/sdcard/MFFM/
+├── Bengali/      ← Drop Bengali font files here
+├── Serif/        ← Drop Serif font files here
+├── Monospace/    ← Drop Monospace font files here
+└── *.conf        ← Variable font axis configuration files (auto-generated)
+```
+
+To apply fonts placed here, **reflash the module**. The installer reads these directories at install time.
+
+> Sans-serif fonts cannot be supplied via `/sdcard/MFFM/`. Sans must always be compiled into the module via `Fonts/Sans/`.
+
+---
+
+## 3.4 External Font Detection — Priority Order
+
+For each optional family (Bengali, Serif, Monospace), the installer checks sources in this order, using the **first match found**:
+
+| Priority | Source | Mode |
+|---|---|---|
+| 1 (highest) | `Files/bengali.xml` / `Files/serif.xml` / `Files/mono.xml` | Module-bundled (compiled with build.py) |
+| 2 | `Files/Beng-Regular.ttf` + `Beng-Medium.ttf` + `Beng-Bold.ttf` | Module standalone 3-file (Bengali) |
+| 2 | `Files/NotoSerif-Regular.ttf` + `NotoSerif-Bold.ttf` | Module standalone files (Serif) |
+| 2 | `Files/CutiveMono.ttf` + `DroidSansMono.ttf` | Module standalone files (Monospace) |
+| 3 | `/sdcard/MFFM/<Family>/` — Variable font detected | Auto-configured with fvar axes |
+| 4 | `/sdcard/MFFM/<Family>/` — Static font(s) | Weight-mapped and TTC-bundled (or fallback) |
+
+---
+
+## 3.5 Static External Font Handling (Bengali / Serif / Monospace)
+
+When static fonts are placed in the `/sdcard/MFFM/` subdirectories, the installer runs a **two-phase weight discovery**:
+
+### Phase 1 — OS/2 `usWeightClass` scan (Python + fontTools)
+
+If Python and fontTools are available (via Termux), the installer reads the **OS/2 `usWeightClass`** field directly from each font's binary. This correctly identifies all weight slots regardless of filename.
+
+**Any filename works** — including Android font cache filenames like `7a4f1b0cdc12b2c1-s.p.ttf`.
+
+### Phase 2 — Filename heuristic fallback
+
+If Python is not available, the installer falls back to scoring filenames for weight keywords (`Bold`, `Light`, `Medium`, `Semibold`, `Black`, etc.). Files without recognizable keywords score too low and are skipped.
+
+### TTC Bundling (Termux + fontTools required)
+
+When multiple distinct weight faces are found, they are packed into a single **TTC (TrueType Collection)** file using `fontTools.TTCollection`. The system XML is patched with `index=N` per-face entries. Only weights actually present are written into the XML — empty slots are never padded.
+
+**Output TTC filenames:**
+
+| Family | TTC Filename | Also Copied As |
+|---|---|---|
+| Bengali | `NotoSansBengali-VF.ttf` | `NotoSerifBengali-VF.ttf`, `NotoSansBengaliUI-VF.ttf` |
+| Serif | `NotoSerif-Regular.ttf` | `NotoSerif-Italic.ttf`, `NotoSerif-Bold.ttf`, `NotoSerif-BoldItalic.ttf` |
+| Monospace | `DroidSansMono.ttf` | `CutiveMono.ttf` |
+
+---
+
+## 3.6 Termux Dependency Handling
+
+The installer manages Python/fontTools availability at flash time:
+
+```
+Termux installed?
+│
+├─ YES → fontTools importable?
+│         ├─ YES → Full mode: OS/2 weight scan + TTC bundling
+│         └─ NO  → Auto-install fontTools via pip → retry
+│                   ├─ Install OK → Full mode
+│                   └─ Install failed → Warn + fallback mode
+│
+└─ NO → Python available from system?
+          ├─ YES, but no fontTools, no Termux → fallback mode
+          └─ NO → fallback mode
+```
+
+### Fallback mode (no Termux / no fontTools)
+
+| Family | Fallback behavior |
+|---|---|
+| **Bengali** | 3-file install: Regular (`_r400`), Medium (`_r500`), Bold (`_r700`) |
+| **Serif** | 4-file install: Regular, Italic, Bold, BoldItalic |
+| **Monospace** | 1-file install: Regular only (copied to both `DroidSansMono.ttf` and `CutiveMono.ttf`) |
+
+When multiple faces are detected but TTC bundling is impossible, the installer prints a warning and uses the fallback:
+```
+[--] WARNING: Multiple Bengali faces detected but Termux+Python not found.
+[--] Install Termux and run: pip install fonttools  — then reflash.
+[--] Falling back to 3-file install (Regular/Medium/Bold only).
+```
+
+---
+
+## 3.7 Variable External Fonts
+
+Variable fonts (containing an `fvar` table) placed in `/sdcard/MFFM/` subdirectories are handled entirely without fontTools:
+
+1. **Detection** — reads the first 8 KB of the font binary for the `fvar` signature
+2. **Axis extraction** — uses Python's built-in `struct` module (no fontTools) to read axis tags, min/default/max values
+3. **XML generation** — generates per-weight `<font axis="wght=N">` entries clamped to the font's actual axis range
+4. **Auto-config** — creates a `.conf` file in `/sdcard/MFFM/` for live axis tuning (see Section 3.8)
+
+If Python is not available at all, axis extraction falls back to a safe default range of `wght:300:400:700`.
+
+---
+
+## 3.8 Variable Font Axis Tuning (`.conf` Files)
+
+For variable-font modules (built with a variable font in `Fonts/Sans/`), a configuration file is auto-created at:
+
+```
+/sdcard/MFFM/MFFMv14_<FamilyName>_<IdentityHash>.conf
+```
+
+This file contains one entry per weight slot per axis profile. You can edit the values and reflash to apply custom axis positions:
+
 ```ini
-CONFIG_SCHEMA=2
-MODULE_IDENTITY=vf-a1b2c3d4e5f678901234
-
 # SANS-SERIF / UPRIGHT
+# Android 100 (THIN): variable wght range 100..900
+SANS_UPRIGHT_THIN_WGHT=100
+SANS_UPRIGHT_LIGHT_WGHT=300
 SANS_UPRIGHT_REGULAR_WGHT=400
 SANS_UPRIGHT_MEDIUM_WGHT=500
 SANS_UPRIGHT_BOLD_WGHT=700
-SANS_UPRIGHT_OPSZ=20
+...
 ```
 
-*Updating or re-installing the same font module automatically preserves existing `.conf` settings and user customizations.*
+### Config rules
+- Values are validated against the font's actual axis range on every flash
+- Out-of-range or malformed values are auto-reset to the font's default and flagged `[!!]`
+- Config is **preserved across module updates** when the module identity hash matches
+- Obsolete keys (from removed font profiles) are **auto-pruned** on reflash
 
 ---
 
-## 7. Legacy Module Migration (`update.py`)
+## 3.9 Patched XML Files
 
-To upgrade old MFFM module ZIP files to the latest MFFMv14 core:
+The module patches the following system files (copies to module overlay, never modifies system directly):
 
-1. Place legacy MFFM module ZIP files into `Old Modules/`.
-2. Run:
-   ```bash
-   python update.py
-   ```
-3. Updated, signed MFFMv14 modules will be saved to `Updated Modules/`.
+| File | Purpose |
+|---|---|
+| `/system/etc/fonts.xml` | Primary font family definitions |
+| `/system/etc/font_fallback.xml` | Script/language fallback families |
+| `/system/product/etc/fonts_customization.xml` | Google Sans / Pixel product overrides |
 
 ---
 
-## 8. Debugging & Troubleshooting
+## 3.10 Installation Log
 
-### Diagnostic Logs
-- **Build Logs**: Terminal output during `build.py` or `termux-build.sh`.
-- **Flashing Logs**: Viewable inside Magisk / KernelSU / APatch installation screens, or logged to `/data/adb/modules/mffm14-*/`.
+Every flash writes a full debug log to:
+```
+/sdcard/MFFM/mffmv14_debug_<YYYYMMDD_HHMMSS>.log
+```
 
-### Common Issues & Solutions
+Old logs from previous installs are deleted automatically at the start of each new flash. The log includes complete `set -x` trace output — every command executed, every variable value, every decision branch.
 
-1. **System UI Crashes or Missing Fonts**:
-   - Check `/system/etc/fonts.xml` to verify `<family name="sans-serif">` references valid font targets.
-   - Ensure the module ZIP was properly signed.
+### Log markers
 
-2. **External Monospace / Serif / Bengali Fonts Ignored**:
-   - Check Priority 1: If the module payload contains a native font for that category, external `/sdcard/MFFM/` files are ignored. Build a module with only the desired categories if you want to rely on external fallbacks.
+| Marker | Meaning |
+|---|---|
+| `[OK]` | Step completed successfully |
+| `[--]` | Step skipped (font not supplied or not applicable) |
+| `[!!]` | Warning — non-fatal, install continues |
+| `[ERROR]` | Fatal error — installation stopped |
 
-3. **Variable Font Config Retention**:
-   - Re-installing the same module retains `/sdcard/MFFM/*.conf` settings. If you change font families, the installer automatically cleans up mismatched legacy `.conf` files and generates a new configuration.
+---
 
+## 3.11 Custom Post-Install Scripts
+
+Place any `.sh` scripts in `/sdcard/MFFM/` (up to 2 directory levels deep). The installer runs them at the end of Section 5/5. Scripts are run in a subshell with all module variables exported:
+
+| Exported Variable | Value |
+|---|---|
+| `MODPATH` | Module directory in `/data/adb/modules_update/` |
+| `FONT_DIR` | Module `Files/` directory |
+| `SYS_FONT` | Module system/fonts overlay path |
+| `SYS_XML` | Patched fonts.xml path |
+| `SYS_FALLBACK` | Patched font_fallback.xml path |
+| `MFFM_DIR` | `/sdcard/MFFM` |
+| `FONT_FAMILY` | Font family name from module |
+| `FONT_MODE` | `static` or `variable` |
+
+---
+
+## 3.12 Troubleshooting
+
+### Bengali/Serif/Monospace fonts detected but not bundled into TTC
+
+**Cause:** Termux is not installed or fontTools is not installed.
+**Fix:** Install Termux from F-Droid, then run `pip install fonttools brotli` in Termux, then reflash.
+
+### Fonts not applying after reboot
+
+**Cause:** OverlayFS opacity not set correctly on KSU/APatch.
+**Check:** Look in the log for `[!!] setfattr unavailable`. If present, install **Mountify** module alongside the font module.
+
+### Variable font axis changes not taking effect
+
+**Cause:** `.conf` file values may be out-of-range or the wrong config file is being read.
+**Check:** Look for `[!!]` entries in the log near axis validation. The log shows which key was reset and to what value.
+
+### `declare: not found` in log (old template)
+
+**Cause:** An older version of `customize.sh` used bash-only `declare -A` associative arrays which do not exist in Android's `mksh`/`ash`.
+**Fix:** This is resolved in the current MFFMv14. Rebuild using the current `MFFMv14-Source-Template.zip`.
+
+### Module installs but font doesn't change
+
+**Cause:** Another font module is active and takes priority, or system font cache needs clearing.
+**Fix:** Disable/uninstall any other active font modules and reboot. If the issue persists, wipe the Dalvik/ART cache from recovery.
