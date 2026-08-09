@@ -191,7 +191,7 @@ Each `--*-features` flag is applied independently to its respective family. You 
 
 For fonts where the colon `:` is not vertically centered between two digits (e.g. `12:30` on a lock screen clock appears misaligned), MFFMv14 can inject a contextual digit colon glyph automatically.
 
-The builder detects whether the font already has such a glyph. Use `--centered-colon` to force injection or `--no-centered-colon` to disable it. In interactive mode you will be prompted.
+The builder detects whether the font already has such a glyph. Use `--centered-colon` to force injection or `--no-centered-colon` to disable it. In interactive mode (no `--features` flags given) you will be prompted **separately for each font family** (Sans-serif, Monospace, Serif, and Bengali) — exactly like the OpenType feature freezer — so you can enable centered colons for e.g. only the Monospace clock font. The global `--centered-colon`/`--no-centered-colon` flags override the prompts and apply to **all** families that are present.
 
 ---
 

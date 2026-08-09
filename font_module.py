@@ -1444,7 +1444,7 @@ def font_has_centered_colon(font_path: Path) -> bool:
     return False
 
 
-def prompt_add_centered_colon_if_missing(font_paths: Iterable[Path], interactive: bool = False) -> bool:
+def prompt_add_centered_colon_if_missing(font_paths: Iterable[Path], interactive: bool = False, category: str = "font") -> bool:
     """Check if input font(s) lack centered colon support and prompt user interactively to add it."""
     if not interactive:
         return False
@@ -1457,7 +1457,7 @@ def prompt_add_centered_colon_if_missing(font_paths: Iterable[Path], interactive
     print("\n------------------------------------------------------------")
     print("Centered Colon Feature Check")
     print("------------------------------------------------------------")
-    print(f"No centered colon feature (e.g. colon.case for clock 12:30 display) detected in: {', '.join(p.name for p in missing)}")
+    print(f"No centered colon feature (e.g. colon.case for clock 12:30 display) detected in {category} font(s): {', '.join(p.name for p in missing)}")
     choice = input("Do you want to generate & add a vertically centered colon feature for digits/time displays? (y/N): ").strip().lower()
     if choice in ("y", "yes"):
         print("Centered colon generation approved.")
@@ -1705,10 +1705,12 @@ def inject_centered_colon(font_path: Path) -> bool:
             font.close()
             return False
 
-        # Ensure GSUB table exists
+        # Ensure GSUB table exists (fontTools newTable wrapper + inner otTables structure)
         if "GSUB" not in font or font["GSUB"].table is None:
+            from fontTools.ttLib import newTable
             from fontTools.ttLib.tables.otTables import GSUB, FeatureList, LookupList, ScriptList
-            gsub = font["GSUB"].table = GSUB()
+            gsub_wrapper = newTable("GSUB")
+            gsub = GSUB()
             gsub.Version = 0x00010000
             gsub.ScriptList = ScriptList()
             gsub.FeatureList = FeatureList()
@@ -1716,6 +1718,8 @@ def inject_centered_colon(font_path: Path) -> bool:
             gsub.ScriptList.ScriptRecord = []
             gsub.FeatureList.FeatureRecord = []
             gsub.LookupList.Lookup = []
+            gsub_wrapper.table = gsub
+            font["GSUB"] = gsub_wrapper
 
         gsub = font["GSUB"].table
         if gsub.FeatureList is None:
@@ -1759,6 +1763,18 @@ def inject_centered_colon(font_path: Path) -> bool:
                 for lsys in lang_sys_list:
                     if calt_rec_idx not in lsys.FeatureIndex:
                         lsys.FeatureIndex.append(calt_rec_idx)
+        elif gsub.ScriptList is not None:
+            # No scripts defined (font had no GSUB): create DFLT + latn so the calt feature applies
+            from fontTools.ttLib.tables.otTables import DefaultLangSys, Script, ScriptRecord
+            for script_tag in ("DFLT", "latn"):
+                srec = ScriptRecord()
+                srec.ScriptTag = script_tag
+                srec.Script = Script()
+                srec.Script.DefaultLangSys = DefaultLangSys()
+                srec.Script.DefaultLangSys.ReqFeatureIndex = 0xFFFF
+                srec.Script.DefaultLangSys.FeatureIndex = [calt_rec_idx]
+                srec.Script.LangSysRecord = []
+                gsub.ScriptList.ScriptRecord.append(srec)
 
         # 1. SingleSubst lookup: colon -> centered_glyph
         s_lookup = Lookup()
@@ -1917,7 +1933,15 @@ def compile_fonts(
         bengali_ttf_paths = sorted({face.path for face in bengali_faces})
 
         applied_features: list[str] = []
-        do_colon = centered_colon
+        category_paths = (
+            ("sans", sans_ttf_paths, "Sans-serif"),
+            ("mono", mono_ttf_paths, "Monospace"),
+            ("serif", serif_ttf_paths, "Serif"),
+            ("bengali", bengali_ttf_paths, "Bengali"),
+        )
+        # Per-category centered colon decisions. None = unset (prompt in interactive mode);
+        # a global --centered-colon/--no-centered-colon flag applies to every category.
+        colon_choice = {key: centered_colon for key, _paths, _label in category_paths}
         should_prompt = interactive_features if interactive_features is not None else sys.stdin.isatty()
 
         if features is not None or mono_features is not None or serif_features is not None or bengali_features is not None:
@@ -1944,8 +1968,11 @@ def compile_fonts(
 
             applied_features.extend(list(dict.fromkeys(sans_feats + mono_feats + serif_feats + beng_feats)))
         elif should_prompt:
-            if do_colon is None:
-                do_colon = prompt_add_centered_colon_if_missing(sans_ttf_paths, interactive=should_prompt)
+            for colon_key, colon_paths, colon_label in category_paths:
+                if colon_choice[colon_key] is None and colon_paths:
+                    colon_choice[colon_key] = prompt_add_centered_colon_if_missing(
+                        colon_paths, interactive=should_prompt, category=colon_label
+                    )
 
             if sans_ttf_paths:
                 avail_sans = extract_features_from_fonts(sans_ttf_paths)
@@ -1983,9 +2010,10 @@ def compile_fonts(
                             freeze_font_features(p, feat_beng)
                         applied_features.extend(feat_beng)
 
-        if do_colon:
-            for font_path in sans_ttf_paths:
-                inject_centered_colon(font_path)
+        for colon_key, colon_paths, _colon_label in category_paths:
+            if colon_choice[colon_key] and colon_paths:
+                for font_path in colon_paths:
+                    inject_centered_colon(font_path)
 
         all_faces = discover_faces(temp_fonts_dir)
         faces, mono_faces, serif_faces, bengali_faces = _separate_primary_and_optional_faces(all_faces, files_dir)
