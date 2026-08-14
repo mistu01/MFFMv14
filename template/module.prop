@@ -1,9 +1,6 @@
 id=mffm14_template
 name=Font Module
 version=14.0
-versionCode=14000
+versionCode=260812
 author=Mistu
-description=Universal Android Font Module for Magisk, KernelSU, APatch, and Mountify.
-minMagisk=20400
-minKernelSU=10940
-minAPatch=11000
+description=MFFMv14 Android font module for Magisk and compatible roots.

@@ -10,7 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Literal
 
@@ -67,6 +67,10 @@ class CompileResult:
     faces: tuple[SourceFace, ...]
     payload_files: tuple[str, ...]
     applied_features: tuple[str, ...] = ()
+    # Per-category source faces detected during compilation, keyed by category
+    # ("sans", "mono", "serif", "bengali"). Populated by compile_fonts so the
+    # build summary can report every provided family, not just Sans.
+    family_faces: dict[str, tuple[SourceFace, ...]] = field(default_factory=dict)
 
 
 def require_fonttools():
@@ -200,14 +204,21 @@ def _inspect_font(path: Path, font_number: int | None, category: str = "sans") -
         condensed = width_class <= 4 or "condensed" in label or "narrow" in label
         os2_w = int(getattr(os2, "usWeightClass", 0)) if os2 is not None else 0
         stem_w = _weight_from_label(path.stem)
+        named_weight = _weight_from_label(style_name) or _weight_from_label(metadata_label) or stem_w
 
-        if os2_w in WEIGHT_NAMES:
+        if os2_w in WEIGHT_NAMES and os2_w != 400:
+            # Trust OS/2 unless named weight contradicts more strongly
+            if named_weight and named_weight != os2_w and abs(named_weight - 400) > abs(os2_w - 400):
+                weight = named_weight
+            else:
+                weight = os2_w
+        elif named_weight:
+            weight = named_weight
+        elif os2_w in WEIGHT_NAMES:
             weight = os2_w
-        elif stem_w:
-            weight = stem_w
         else:
-            named_weight = _weight_from_label(style_name) or _weight_from_label(metadata_label)
-            weight = named_weight or _nearest_weight(os2_w or 400)
+            weight = _nearest_weight(os2_w or 400)
+
 
         axes: dict[str, tuple[float, float, float]] = {}
         if "fvar" in font:
@@ -307,19 +318,18 @@ def discover_faces(fonts_dir: Path) -> list[SourceFace]:
 
 def detect_mode(faces: Iterable[SourceFace], requested: str = "auto") -> Mode:
     face_list = list(faces)
-    variable_count = sum(face.variable for face in face_list)
+    if not face_list:
+        raise SystemExit("No font faces found to detect mode.")
     if requested in {"static", "variable"}:
-        mode: Mode = requested  # type: ignore[assignment]
-        if mode == "variable" and variable_count != len(face_list):
-            raise SystemExit("--mode variable requires every selected font to contain an fvar table")
-        if mode == "static" and variable_count:
-            raise SystemExit("--mode static cannot compile variable fonts; instantiate them first")
-        return mode
-    if variable_count == len(face_list):
-        return "variable"
-    if variable_count == 0:
-        return "static"
-    raise SystemExit("Mixed static and variable inputs are ambiguous. Keep one font model in Fonts/ or pass --mode.")
+        return requested  # type: ignore[return-value]
+
+    # Primary mode is determined by the primary body font face
+    primary_upright = next(
+        (f for f in face_list if f.style == "normal" and not f.condensed and f.weight == 400),
+        next((f for f in face_list if f.style == "normal" and not f.condensed), face_list[0])
+    )
+    return "variable" if primary_upright.variable else "static"
+
 
 
 def _remove_hinting(font) -> None:
@@ -978,7 +988,8 @@ def _variable_config_identity(faces: list[SourceFace]) -> str:
         digest.update(str(face.font_number).encode("ascii"))
         digest.update(face.family.encode("utf-8", errors="replace"))
         digest.update(face.style.encode("ascii"))
-        digest.update(_axis_metadata(face, italic=face.style == "italic").encode("ascii"))
+        if face.axes and "wght" in face.axes:
+            digest.update(_axis_metadata(face, italic=face.style == "italic").encode("ascii"))
         resolved = face.path.resolve()
         if resolved not in seen_paths:
             seen_paths.add(resolved)
@@ -1857,16 +1868,20 @@ def _separate_primary_and_optional_faces(all_faces: list[SourceFace], files_dir:
     bengali_faces: list[SourceFace] = []
 
     for face in all_faces:
-        if face.category == "mono":
+        fam = face.family.lower()
+        sub = face.style_name.lower()
+        if face.category == "mono" or any(m in fam or m in sub for m in ("mono", "code", "consolas", "courier")):
             mono_faces.append(face)
-        elif face.category == "serif":
+        elif face.category == "serif" or any(m in fam or m in sub for m in ("serif", "bookerly", "times", "georgia")):
             serif_faces.append(face)
-        elif face.category == "bengali":
+        elif face.category == "bengali" or any(m in fam or m in sub for m in ("bengali", "beng")):
             bengali_faces.append(face)
         else:
             sans_faces.append(face)
 
     return (sans_faces or all_faces), _dedupe_static(mono_faces), _dedupe_static(serif_faces), _dedupe_static(bengali_faces)
+
+
 
 
 def compile_fonts(
@@ -2033,12 +2048,27 @@ def compile_fonts(
             selected, payload, mono_index = _compile_variable(primary_faces if not faces else faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, mono_faces=mono_faces if faces else [], serif_faces=serif_faces if faces else [], bengali_faces=bengali_faces if faces else [])
 
         primary = payload[0]
+        has_any_vf = (mode == "variable") or any(f.variable for f in mono_faces) or any(f.variable for f in serif_faces) or any(f.variable for f in bengali_faces)
+        if has_any_vf:
+            comp_vf_faces = [f for f in (faces or primary_faces) if f.variable] + [f for f in (mono_faces + serif_faces + bengali_faces) if f.variable]
+            vf_id = _variable_config_identity(comp_vf_faces if comp_vf_faces else (faces or primary_faces))
+        else:
+            digest = hashlib.sha256()
+            digest.update(family.encode("utf-8", errors="replace"))
+            for f in sorted(payload):
+                p = files_dir / f
+                if p.is_file():
+                    digest.update(f.encode("utf-8"))
+                    digest.update(p.read_bytes())
+            vf_id = "vf-" + digest.hexdigest()[:20]
         config = [
             f"FONT_MODE={shell_quote(mode)}",
             f"FONT_FAMILY={shell_quote(family)}",
             f"FONT_FILES={shell_quote(' '.join(payload))}",
             f"FONT_PRIMARY={shell_quote(primary)}",
             f"CLOCK_FONT={shell_quote('GoogleSansClock-Regular' + Path(primary).suffix)}",
+            "VF_CONFIG_SCHEMA='2'",
+            f"VF_CONFIG_ID={shell_quote(vf_id)}",
         ]
         if mono_index is not None:
             config.append(f"MONO_INDEX={shell_quote(str(mono_index))}")
@@ -2046,16 +2076,65 @@ def compile_fonts(
             upright, italic = _pick_variable_faces(faces)
             config.extend(
                 (
-                    "VF_CONFIG_SCHEMA='2'",
                     f"VF_UPRIGHT_AXIS_META={shell_quote(_axis_metadata(upright, italic=False))}",
                     f"VF_ITALIC_AXIS_META={shell_quote(_axis_metadata(italic, italic=True))}",
                     f"VF_UPRIGHT_WEIGHTS={shell_quote(_supported_weights(upright))}",
                     f"VF_ITALIC_WEIGHTS={shell_quote(_supported_weights(italic))}",
-                    f"VF_CONFIG_ID={shell_quote(_variable_config_identity(faces))}",
                 )
             )
+        if mono_faces and any(f.variable for f in mono_faces):
+            mono_var = [f for f in mono_faces if f.variable]
+            upright_mono = next((f for f in mono_var if f.style == "normal"), mono_var[0])
+            if upright_mono.axes and "wght" in upright_mono.axes:
+                config.extend(
+                    (
+                        f"VF_MONO_AXIS_META={shell_quote(_axis_metadata(upright_mono, italic=False))}",
+                        f"VF_MONO_WEIGHTS={shell_quote(_supported_weights(upright_mono))}",
+                    )
+                )
+        if serif_faces and any(f.variable for f in serif_faces):
+            serif_var = [f for f in serif_faces if f.variable]
+            upright_serif = next((f for f in serif_var if f.style == "normal"), serif_var[0])
+            italic_serif = next((f for f in serif_var if f.style == "italic"), None)
+            if upright_serif.axes and "wght" in upright_serif.axes:
+                config.extend(
+                    (
+                        f"VF_SERIF_UPRIGHT_AXIS_META={shell_quote(_axis_metadata(upright_serif, italic=False))}",
+                        f"VF_SERIF_UPRIGHT_WEIGHTS={shell_quote(_supported_weights(upright_serif))}",
+                    )
+                )
+            if italic_serif and italic_serif.axes and "wght" in italic_serif.axes:
+                config.extend(
+                    (
+                        f"VF_SERIF_ITALIC_AXIS_META={shell_quote(_axis_metadata(italic_serif, italic=True))}",
+                        f"VF_SERIF_ITALIC_WEIGHTS={shell_quote(_supported_weights(italic_serif))}",
+                    )
+                )
+        if bengali_faces and any(f.variable for f in bengali_faces):
+            beng_var = [f for f in bengali_faces if f.variable]
+            upright_beng = next((f for f in beng_var if f.style == "normal"), beng_var[0])
+            if upright_beng.axes and "wght" in upright_beng.axes:
+                config.extend(
+                    (
+                        f"VF_BENGALI_AXIS_META={shell_quote(_axis_metadata(upright_beng, italic=False))}",
+                        f"VF_BENGALI_WEIGHTS={shell_quote(_supported_weights(upright_beng))}",
+                    )
+                )
         (module_dir / "font-config.sh").write_text("\n".join(config) + "\n", encoding="utf-8", newline="\n")
-        return CompileResult(mode, family, tuple(selected), payload, tuple(applied_features))
+        family_faces = {
+            "sans": tuple(faces),
+            "mono": tuple(mono_faces),
+            "serif": tuple(serif_faces),
+            "bengali": tuple(bengali_faces),
+        }
+        return CompileResult(
+            mode,
+            family,
+            tuple(selected),
+            payload,
+            tuple(applied_features),
+            family_faces,
+        )
     finally:
         shutil.rmtree(temp_fonts_dir, ignore_errors=True)
 
@@ -2079,16 +2158,14 @@ def update_module_metadata(
         display = f"{display} ({feat_str})"
     now = dt.datetime.now().astimezone()
     version = version or now.strftime("%Y.%m.%d")
-    version_code = version_code or now.strftime("%Y%m%d%H%M")
-    props["id"] = "mffm14"
+    version_code = version_code or now.strftime("%y%m%d")
+    slug = slugify(display)
+    props["id"] = f"mffm14_{slug.replace('-', '_')}"
     props["name"] = f"[MFFMv14] {display}"
     props["version"] = version
     props["versionCode"] = version_code
     props.setdefault("author", "MFFM")
-    props["description"] = (
-        f'Replaces Android\'s default Roboto family with "{display}" ({mode}). '
-        "Compatible with Magisk, KernelSU, and APatch."
-    )
+    props["description"] = f"MFFMv14 font module: {display} ({mode})"
     props.setdefault("minMagisk", "20400")
     props.setdefault("minKernelSU", "10940")
     props.setdefault("minAPatch", "11000")

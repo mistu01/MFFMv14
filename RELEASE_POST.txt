@@ -5,37 +5,26 @@ Build flashable font modules for Magisk, KernelSU, APatch, and Mountify
 from any static or variable font family — on PC or directly from Termux.
 
 ━━━━━━━━━━━━━━━━━━━━━━
-What's New
-━━━━━━━━━━━━━━━━━━━━━━
-
-OS/2 Binary Weight Detection
-No more filename guessing. Weight and style are now read directly from each
-font's OS/2 table — any filename works, including Android hex cache names
-like 61555016c4027e1b-s.p.ttf.
-
-Serif & Monospace TTC Bundler
-Multi-weight static Serif and Monospace families in /sdcard/MFFM/ are now
-auto-bundled into a single indexed TTC, just like Bengali. Only weights
-actually present are written to the XML.
-
-Bengali TTC Fix
-Critical bug fixed — the TTC bundler was receiving all paths as one string
-instead of separate arguments, causing it to silently fail. All Bengali
-weight faces now bundle correctly.
-
-━━━━━━━━━━━━━━━━━━━━━━
 Highlights
 ━━━━━━━━━━━━━━━━━━━━━━
 
-- Single TTC packs all weight faces (100–900 + Italic)
-- Supports Sans, Serif, Monospace, Bengali independently
-- Auto-installs fontTools via Termux pip if missing during flash
-- Variable font fvar axis detection and live .conf axis tuning
+Weight detection reads the font binary, not the filename
+Weight and style are read directly from the OS/2 table, so any filename
+works — including Android font cache names like 61555016c4027e1b-s.p.ttf.
+
+- One TTC packs every weight face (100–900 + Italic) with correct index XML
+- Sans, Serif, Monospace, and Bengali handled independently
+- External Serif/Monospace/Bengali fonts in /sdcard/MFFM/ are weight-scanned
+  and bundled into a single indexed TTC — only the weights you supply are used
+- Variable fonts: fvar axes auto-detected, weights clamped to the real range,
+  live .conf axis tuning preserved across module updates
 - OpenType feature freezing per family (ss01, zero, tnum...)
-- Centered colon injection for lockscreen clock digits
-- Patches fonts.xml, font_fallback.xml and Pixel fonts_customization.xml
-- Full POSIX sh — mksh, busybox ash, all Android shells supported
-- Full set -x debug log saved to /sdcard/MFFM/
+- Centered colon injection for lockscreen clock digits, per family
+- Patches fonts.xml, font_fallback.xml, and Pixel fonts_customization.xml
+- Auto-detects Magisk, KernelSU, APatch, and Mountify overlay strategies
+- Runs your own .sh scripts from /sdcard/MFFM/ after install
+- Signed flashable ZIP, full set -x debug log saved to /sdcard/MFFM/
+- Termux: fontTools auto-installed at flash time if missing
 
 ━━━━━━━━━━━━━━━━━━━━━━
 Fallback (no Termux / no fontTools)
@@ -60,6 +49,10 @@ Termux (on-device):
   1. unzip MFFMv14-Source-Template.zip -d ~/MFFMv14
   2. cd ~/MFFMv14
   3. sh termux-build.sh
+
+Upgrading an old MFFM module:
+  1. Put the old ZIP in Old Modules/
+  2. python update.py  →  rebuilt on the v14 template in dist/
 
 External fonts after flash — drop files and reflash:
   /sdcard/MFFM/Bengali/

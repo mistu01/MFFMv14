@@ -9,7 +9,15 @@ umask 022
 OUTFD=$2
 ZIPFILE=$3
 
-mount /data 2>/dev/null
+# Detect BOOTMODE if not already set
+[ -z "$BOOTMODE" ] && BOOTMODE=false
+$BOOTMODE || ps | grep zygote | grep -v grep >/dev/null 2>&1 && BOOTMODE=true
+$BOOTMODE || ps -A 2>/dev/null | grep zygote | grep -v grep >/dev/null 2>&1 && BOOTMODE=true
+
+if [ "$BOOTMODE" != "true" ]; then
+  mount /data 2>/dev/null
+  mount -o rw,remount /data 2>/dev/null
+fi
 
 LOG_DIR=/sdcard/MFFM
 LOG_FILE="$LOG_DIR/mffmv14_debug_$(date '+%Y%m%d_%H%M%S' 2>/dev/null || echo current).log"

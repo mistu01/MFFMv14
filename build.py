@@ -10,7 +10,13 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from font_module import compile_fonts, display_name_for_mode, slugify, update_module_metadata
+from font_module import (
+    WEIGHT_NAMES,
+    compile_fonts,
+    display_name_for_mode,
+    slugify,
+    update_module_metadata,
+)
 from zipsigner_auto import ZipSignerError, sign_zip
 
 ROOT = Path(__file__).resolve().parent
@@ -41,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-interactive", action="store_false", dest="interactive", help="disable interactive feature prompt")
     parser.add_argument("--centered-colon", action="store_true", default=None, help="force centered colon generation/injection for digits (12:30)")
     parser.add_argument("--no-centered-colon", action="store_false", dest="centered_colon", help="disable centered colon injection")
+    parser.add_argument("--template", action="store_true", help="package MFFMv14-Source-Template.zip (excluding RELEASE_POST.txt)")
     return parser.parse_args()
 
 
@@ -112,15 +119,51 @@ def build_module(args: argparse.Namespace) -> Path | None:
             version_code=args.version_code,
             applied_features=result.applied_features,
         )
+        print("=" * 60)
+        print("MFFMv14 module compiled")
+        print("=" * 60)
+        print(f"Module name   : {props.get('name', display_name)}")
+        print(f"Module id     : {props.get('id', '')}")
+        print(f"Version       : {props.get('version', '')} (versionCode {props.get('versionCode', '')})")
         print(f"Detected mode : {result.mode}")
         print(f"Font family   : {result.family}")
         if result.applied_features:
             print(f"Freezer sets  : {', '.join(result.applied_features)}")
         print(f"Source faces  : {len(result.faces)}")
-        for face in result.faces:
-            axes = ", ".join(face.axes) if face.variable else "static"
-            print(f"  {face.label}: {face.weight} {face.style}{' condensed' if face.condensed else ''} [{axes}]")
         print(f"Payload fonts : {', '.join(result.payload_files)}")
+
+        # Per-family breakdown covering EVERY provided/detected family, not just
+        # Sans. `result.family_faces` maps each category to its detected faces.
+        family_labels = (
+            ("sans", "Sans-serif"),
+            ("serif", "Serif"),
+            ("mono", "Monospace"),
+            ("bengali", "Bengali"),
+        )
+        family_faces = result.family_faces or {"sans": result.faces}
+        print("Font families :")
+        for cat, label in family_labels:
+            cat_faces = tuple(family_faces.get(cat, ()))
+            if not cat_faces:
+                # Mandatory Sans should always be present; other families are
+                # optional. Never hide a family that was actually provided.
+                print(f"  - {label:<10}: not provided")
+                continue
+            display_names = sorted({face.family for face in cat_faces}) or [result.family]
+            fam_display = ", ".join(display_names)
+            fam_mode = "variable" if any(face.variable for face in cat_faces) else "static"
+            source_files = sorted({face.path.name for face in cat_faces})
+            print(f"  - {label:<10}: {fam_display}")
+            print(f"      mode      : {fam_mode}")
+            print(f"      faces     : {len(cat_faces)}")
+            print(f"      source    : {', '.join(source_files)}")
+            for face in cat_faces:
+                axes = ", ".join(face.axes) if face.variable else "static"
+                weight_name = WEIGHT_NAMES.get(face.weight, str(face.weight))
+                print(
+                    f"        * {face.label}: {weight_name} {face.style}"
+                    f"{' condensed' if face.condensed else ''} [{axes}]"
+                )
 
         if args.no_zip:
             print(f"Prepared module files at: {module_dir}")
@@ -131,7 +174,7 @@ def build_module(args: argparse.Namespace) -> Path | None:
         else:
             file_slug = slugify(display_name)
 
-        output = args.output_dir.resolve() / f"{props['id']}-{file_slug}-{props['version']}.zip"
+        output = args.output_dir.resolve() / f"mffm14-{file_slug}-{props['version']}.zip"
         if output.exists():
             output.unlink()
         write_zip(module_dir, output)
@@ -155,6 +198,10 @@ def build_module(args: argparse.Namespace) -> Path | None:
 
 def main() -> int:
     args = parse_args()
+    if args.template:
+        from package_template import build_template_zip
+        build_template_zip(args.output_dir)
+        return 0
     build_module(args)
     return 0
 

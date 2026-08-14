@@ -28,7 +28,7 @@ OLD_PRIMARY_NAMES = (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Update old MFFM module ZIPs to the MFFMv14 template")
     parser.add_argument("--old-dir", type=Path, default=ROOT / "Old Modules")
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "Updated Modules")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "dist")
     parser.add_argument("--mode", choices=("auto", "static", "variable"), default="auto")
     parser.add_argument("--name", help="override every output display name (best for one input ZIP)")
     parser.add_argument("--version")
@@ -135,13 +135,13 @@ def old_display_name(old_root: Path) -> str | None:
     return clean_family_name(name) if name.strip() else None
 
 
-def reserve_output(output_dir: Path, stem: str, force: bool, reserved: set[Path]) -> Path:
+def reserve_output(output_dir: Path, stem: str, force: bool, reserved: set[Path]) -> Path | None:
     output = output_dir / f"{stem}.zip"
     if output not in reserved and (force or not output.exists()):
         reserved.add(output)
         return output
     if not force and output.exists():
-        raise SystemExit(f"Output exists (use --force): {output}")
+        return None
     index = 2
     while True:
         candidate = output_dir / f"{stem}-{index}.zip"
@@ -151,7 +151,7 @@ def reserve_output(output_dir: Path, stem: str, force: bool, reserved: set[Path]
         index += 1
 
 
-def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) -> Path:
+def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) -> Path | None:
     work = Path(tempfile.mkdtemp(prefix="mffm-update-"))
     extracted = work / "old"
     source_dir = work / "sources"
@@ -195,10 +195,14 @@ def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) ->
         args.output_dir.mkdir(parents=True, exist_ok=True)
         output = reserve_output(
             args.output_dir.resolve(),
-            f"{props['id']}-{slugify(display)}-{props['version']}",
+            f"mffm14-{slugify(display)}-{props['version']}",
             args.force,
             reserved,
         )
+        if output is None:
+            existing = args.output_dir.resolve() / f"mffm14-{slugify(display)}-{props['version']}.zip"
+            print(f"Skipping {zip_path.name}: output already exists (use --force to overwrite): {existing}")
+            return None
         write_zip(module_dir, output)
         if not args.no_sign:
             try:
@@ -226,9 +230,14 @@ def main() -> int:
     if not inputs:
         raise SystemExit(f"No ZIP modules found in {args.old_dir}")
     reserved: set[Path] = set()
+    updated = 0
+    skipped = 0
     for zip_path in inputs:
-        update_one(zip_path, args, reserved)
-    print(f"Updated {len(inputs)} module(s).")
+        if update_one(zip_path, args, reserved) is None:
+            skipped += 1
+        else:
+            updated += 1
+    print(f"Updated {updated} module(s), skipped {skipped}.")
     return 0
 
 

@@ -5,6 +5,9 @@
 if [ -d "/data/data/com.termux/files/usr/bin" ]; then
   export PATH="/data/data/com.termux/files/usr/bin:$PATH"
   export LD_LIBRARY_PATH="/data/data/com.termux/files/usr/lib:$LD_LIBRARY_PATH"
+  export HOME="/data/data/com.termux/files/home"
+  export TMPDIR="/data/data/com.termux/files/usr/tmp"
+  mkdir -p "$TMPDIR" 2>/dev/null
 fi
 
 if ! command -v ui_print >/dev/null 2>&1; then
@@ -96,7 +99,7 @@ find_first() {
   shift
   for dir in "$@"; do
     [ -n "$dir" ] && [ -d "$dir" ] || continue
-    match=$(find "$dir" -maxdepth 1 -type f -name "$pattern" 2>/dev/null | head -n 1)
+    match=$(find "$dir" -maxdepth 1 -type f -iname "$pattern" 2>/dev/null | head -n 1)
     [ -n "$match" ] && { printf '%s\n' "$match"; return 0; }
   done
   return 1
@@ -109,7 +112,7 @@ find_best_face() {
 
   for dir in "$@"; do
     [ -n "$dir" ] && [ -d "$dir" ] || continue
-    for file in "$dir"/*.ttf "$dir"/*.otf; do
+    for file in "$dir"/*.ttf "$dir"/*.otf "$dir"/*.TTF "$dir"/*.OTF "$dir"/*.Ttf "$dir"/*.Otf; do
       [ -f "$file" ] || continue
       name=${file##*/}
       name_lower=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
@@ -256,7 +259,7 @@ EOF
 }
 
 generate_vf_xml_fragment() {
-  local font_file=$1 font_sys_name=$2 axes_str=$3
+  local font_file=$1 font_sys_name=$2 axes_str=$3 style=${4:-normal}
   local wght_min=300 wght_def=400 wght_max=700
   local has_wght=0 item tag min_v def_v max_v
 
@@ -273,15 +276,20 @@ generate_vf_xml_fragment() {
     fi
   done
 
+  # Android fonts.xml requires <axis tag="wght" stylevalue="N" /> as a child
+  # element inside <font> — the axis="wght=N" single-attribute form is invalid.
   local w w_clamp
   for w in 100 200 300 400 500 600 700 800 900; do
     w_clamp=$w
     [ $w_clamp -lt $wght_min ] && w_clamp=$wght_min
     [ $w_clamp -gt $wght_max ] && w_clamp=$wght_max
     if [ "$has_wght" = "1" ]; then
-      printf '    <font weight="%d" style="normal" axis="wght=%d">%s</font>\n' "$w" "$w_clamp" "$font_sys_name"
+      printf '    <font weight="%d" style="%s">\n' "$w" "$style"
+      printf '        <axis tag="wght" stylevalue="%d" />\n' "$w_clamp"
+      printf '        %s\n' "$font_sys_name"
+      printf '    </font>\n'
     else
-      printf '    <font weight="%d" style="normal">%s</font>\n' "$w" "$font_sys_name"
+      printf '    <font weight="%d" style="%s">%s</font>\n' "$w" "$style" "$font_sys_name"
     fi
   done
 }
@@ -356,59 +364,203 @@ elif command -v magisk >/dev/null 2>&1; then
   ROOT_IMPL=Magisk
 fi
 
+get_overlay_lowerdir() {
+  local target_mount=$1
+  local line lowerdirs
+  line=$(awk -v m="$target_mount" '$2 == m && $3 == "overlay" { print $4 }' /proc/mounts 2>/dev/null | tail -n 1)
+  [ -n "$line" ] || line=$(grep -E "[[:space:]]${target_mount}[[:space:]]+overlay[[:space:]]" /proc/mounts 2>/dev/null | tail -n 1)
+  if [ -n "$line" ]; then
+    lowerdirs=$(printf '%s\n' "$line" | sed -n 's/.*lowerdir=\([^, )]*\).*/\1/p')
+    if [ -n "$lowerdirs" ]; then
+      printf '%s\n' "${lowerdirs##*:}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+first_dev() {
+  for item in "$@"; do
+    [ -n "$item" ] && [ -b "$item" ] && { printf '%s\n' "$item"; return 0; }
+  done
+  return 1
+}
+
+find_block_dev() {
+  local target_mount=$1
+  local dev=""
+  dev=$(awk -v m="$target_mount" '$2 == m && $1 ~ /^\/dev\/block\// { print $1; exit }' /proc/mounts 2>/dev/null)
+  if [ -z "$dev" ] || [ ! -b "$dev" ]; then
+    case "$target_mount" in
+      /system|/system_root|/)
+        dev=$(first_dev /dev/block/mapper/system /dev/block/mapper/system_a /dev/block/mapper/system_b /dev/block/bootdevice/by-name/system /dev/block/by-name/system 2>/dev/null)
+        ;;
+      /product|/system/product)
+        dev=$(first_dev /dev/block/mapper/product /dev/block/mapper/product_a /dev/block/mapper/product_b /dev/block/bootdevice/by-name/product /dev/block/by-name/product 2>/dev/null)
+        ;;
+    esac
+  fi
+  [ -n "$dev" ] && [ -b "$dev" ] && printf '%s' "$dev"
+}
+
+extract_from_block_dev() {
+  local dev=$1 target_file=$2 dest=$3
+  [ -n "$dev" ] && [ -b "$dev" ] || return 1
+  local tmp_mnt="/dev/.mffm_stock_probe_$$"
+  mkdir -p "$tmp_mnt" 2>/dev/null || return 1
+  if mount -o ro,nodev,noexec "$dev" "$tmp_mnt" 2>/dev/null || \
+     mount -t erofs -o ro,nodev,noexec "$dev" "$tmp_mnt" 2>/dev/null || \
+     mount -t ext4 -o ro,nodev,noexec "$dev" "$tmp_mnt" 2>/dev/null || \
+     mount -t f2fs -o ro,nodev,noexec "$dev" "$tmp_mnt" 2>/dev/null; then
+    local src_file=""
+    if [ -f "$tmp_mnt/system$target_file" ] && [ ! -L "$tmp_mnt/system$target_file" ]; then
+      src_file="$tmp_mnt/system$target_file"
+    elif [ -f "$tmp_mnt/system_root/system$target_file" ] && [ ! -L "$tmp_mnt/system_root/system$target_file" ]; then
+      src_file="$tmp_mnt/system_root/system$target_file"
+    elif [ -f "$tmp_mnt/product$target_file" ] && [ ! -L "$tmp_mnt/product$target_file" ]; then
+      src_file="$tmp_mnt/product$target_file"
+    elif [ -f "$tmp_mnt$target_file" ] && [ ! -L "$tmp_mnt$target_file" ]; then
+      src_file="$tmp_mnt$target_file"
+    fi
+    if [ -n "$src_file" ] && [ -f "$src_file" ]; then
+      cp -f "$src_file" "$dest" 2>/dev/null
+    fi
+    umount "$tmp_mnt" 2>/dev/null
+    rmdir "$tmp_mnt" 2>/dev/null
+    [ -f "$dest" ] && return 0
+  fi
+  rmdir "$tmp_mnt" 2>/dev/null
+  return 1
+}
+
 MIRROR=
 if command -v magisk >/dev/null 2>&1; then
   MAGISK_PATH=$(magisk --path 2>/dev/null)
   [ -n "$MAGISK_PATH" ] && [ -d "$MAGISK_PATH/.magisk/mirror" ] && MIRROR="$MAGISK_PATH/.magisk/mirror"
 fi
-[ -n "$MIRROR" ] || MIRROR=$(first_dir /sbin/.magisk/mirror /debug_ramdisk/.magisk/mirror 2>/dev/null)
+[ -n "$MIRROR" ] || MIRROR=$(first_dir /debug_ramdisk/.magisk/mirror /data/adb/magisk/mirror /dev/.magisk/mirror /sbin/.magisk/mirror 2>/dev/null)
 
-refresh_mount_view() {
-  local dev mnt fs opt dump fsck file
-  ui_print "- Refreshing live system mount view for XML discovery."
-  for file in \
-    /system/etc/fonts.xml \
-    /system/etc/font_fallback.xml \
-    /system/product/etc/fonts_customization.xml \
-    /product/etc/fonts_customization.xml \
-    /system_ext/etc/fonts.xml \
-    /system_ext/etc/font_fallback.xml
-  do
-    if grep -q " $file " /proc/mounts 2>/dev/null; then
-      ui_print "  Unmounting overlay at $file"
-      umount "$file" 2>/dev/null || umount -l "$file" 2>/dev/null || :
+LOWER_SYSTEM=$(get_overlay_lowerdir /system 2>/dev/null)
+[ -n "$LOWER_SYSTEM" ] || LOWER_SYSTEM=$(get_overlay_lowerdir /system_root 2>/dev/null)
+[ -n "$LOWER_SYSTEM" ] || LOWER_SYSTEM=$(get_overlay_lowerdir / 2>/dev/null)
+LOWER_PRODUCT=$(get_overlay_lowerdir /product 2>/dev/null)
+[ -n "$LOWER_PRODUCT" ] || LOWER_PRODUCT=$(get_overlay_lowerdir /system/product 2>/dev/null)
+
+STOCK_XML_BACKUP="/data/adb/mffm_stock_xml"
+
+find_pristine_xml() {
+  local target_rel_path=$1
+  local part_type=$2
+  local cached_file="$STOCK_XML_BACKUP/${target_rel_path##*/}"
+  local result=""
+
+  # 1. Tier 1: Hardware Block Device Direct Read-Only Probe (Direct Physical Storage - 100% Genuine Factory ROM)
+  local block_dev=""
+  if [ "$part_type" = "system" ]; then
+    block_dev=$(first_dev \
+      "$(find_block_dev /system_root)" \
+      "$(find_block_dev /system)" \
+      "$(find_block_dev /)" \
+      2>/dev/null)
+  else
+    block_dev=$(first_dev \
+      "$(find_block_dev /product)" \
+      "$(find_block_dev /system/product)" \
+      "$(find_block_dev /system_root)" \
+      "$(find_block_dev /system)" \
+      "$(find_block_dev /)" \
+      2>/dev/null)
+  fi
+  if [ -n "$block_dev" ]; then
+    local temp_dest="/dev/.mffm_extracted_${target_rel_path##*/}"
+    rm -f "$temp_dest" 2>/dev/null
+    if extract_from_block_dev "$block_dev" "$target_rel_path" "$temp_dest"; then
+      mkdir -p "$STOCK_XML_BACKUP" 2>/dev/null
+      cp -f "$temp_dest" "$cached_file" 2>/dev/null
+      rm -f "$temp_dest" 2>/dev/null
+      printf '%s\n' "$cached_file"
+      return 0
+    fi
+    rm -f "$temp_dest" 2>/dev/null
+  fi
+
+  # 2. Tier 2: Magisk Root Mirrors across all possible search roots and SAR paths
+  local m_root=""
+  for m_root in "$MIRROR" /debug_ramdisk/.magisk/mirror /data/adb/magisk/mirror /dev/.magisk/mirror /sbin/.magisk/mirror /dev/magisk/mirror; do
+    [ -n "$m_root" ] && [ -d "$m_root" ] || continue
+    if [ "$part_type" = "system" ]; then
+      result=$(first_file \
+        "$m_root/system_root/system$target_rel_path" \
+        "$m_root/system$target_rel_path" \
+        "$m_root/system/system$target_rel_path" \
+        "$m_root$target_rel_path" \
+        2>/dev/null)
+    else
+      result=$(first_file \
+        "$m_root/product$target_rel_path" \
+        "$m_root/system/product$target_rel_path" \
+        "$m_root/system_root/product$target_rel_path" \
+        "$m_root/system_root/system/product$target_rel_path" \
+        "$m_root$target_rel_path" \
+        2>/dev/null)
+    fi
+    if [ -n "$result" ] && [ -f "$result" ]; then
+      mkdir -p "$STOCK_XML_BACKUP" 2>/dev/null
+      cp -f "$result" "$cached_file" 2>/dev/null
+      printf '%s\n' "$cached_file"
+      return 0
     fi
   done
 
-  while read -r dev mnt fs opt dump fsck; do
-    [ -z "$mnt" ] && continue
-    case "$mnt" in
-      /system|/system/*|/product|/product/*|/system_ext|/system_ext/*)
-        case "$dev $mnt $fs $opt" in
-          *overlay*|*magisk*|*ksu*|*apatch*)
-            ui_print "  Unmounting overlay directory at $mnt"
-            umount "$mnt" 2>/dev/null || umount -l "$mnt" 2>/dev/null || :
-            ;;
-        esac
-        ;;
-    esac
-  done < /proc/mounts
+  # 3. Tier 3: OverlayFS lowerdir (Mountify, KernelSU, APatch)
+  if [ "$part_type" = "system" ] && [ -n "$LOWER_SYSTEM" ]; then
+    result=$(first_file \
+      "$LOWER_SYSTEM/system$target_rel_path" \
+      "$LOWER_SYSTEM$target_rel_path" \
+      2>/dev/null)
+  elif [ "$part_type" = "product" ]; then
+    result=$(first_file \
+      "$LOWER_PRODUCT/product$target_rel_path" \
+      "$LOWER_PRODUCT$target_rel_path" \
+      "$LOWER_SYSTEM/product$target_rel_path" \
+      "$LOWER_SYSTEM/system/product$target_rel_path" \
+      2>/dev/null)
+  fi
+  if [ -n "$result" ] && [ -f "$result" ]; then
+    mkdir -p "$STOCK_XML_BACKUP" 2>/dev/null
+    cp -f "$result" "$cached_file" 2>/dev/null
+    printf '%s\n' "$cached_file"
+    return 0
+  fi
+
+  # 4. Tier 4: Saved Persistent Stock Cache
+  if [ -f "$cached_file" ]; then
+    printf '%s\n' "$cached_file"
+    return 0
+  fi
+
+  # 5. Tier 5: Direct System Path
+  local direct_path=""
+  if [ "$part_type" = "system" ]; then
+    direct_path=$(first_file /system_root/system$target_rel_path /system$target_rel_path 2>/dev/null)
+  else
+    direct_path=$(first_file /product$target_rel_path /system/product$target_rel_path /system_root/system/product$target_rel_path 2>/dev/null)
+  fi
+  if [ -n "$direct_path" ] && [ -f "$direct_path" ]; then
+    printf '%s\n' "$direct_path"
+    return 0
+  fi
+
+  return 1
 }
 
 find_original_xmls() {
-  ORIGINAL_SYSTEM=$(first_dir "$MIRROR/system" /system /system_root/system 2>/dev/null)
-  ORIGINAL_PRODUCT=$(first_dir "$MIRROR/product" "$MIRROR/system/product" /product /system/product /system_root/system/product 2>/dev/null)
-  ORIGINAL_FONTS_XML=$(first_file "$ORIGINAL_SYSTEM/etc/fonts.xml" /system/etc/fonts.xml /system_root/system/etc/fonts.xml 2>/dev/null)
-  ORIGINAL_FALLBACK_XML=$(first_file "$ORIGINAL_SYSTEM/etc/font_fallback.xml" /system/etc/font_fallback.xml /system_root/system/etc/font_fallback.xml 2>/dev/null)
-  ORIGINAL_PRODUCT_XML=$(first_file "$ORIGINAL_PRODUCT/etc/fonts_customization.xml" /product/etc/fonts_customization.xml /system/product/etc/fonts_customization.xml 2>/dev/null)
+  ORIGINAL_FONTS_XML=$(find_pristine_xml "/etc/fonts.xml" "system")
+  ORIGINAL_FALLBACK_XML=$(find_pristine_xml "/etc/font_fallback.xml" "system")
+  ORIGINAL_PRODUCT_XML=$(find_pristine_xml "/etc/fonts_customization.xml" "product")
 }
 
-[ -z "$MIRROR" ] && refresh_mount_view
 find_original_xmls
-if [ -z "$ORIGINAL_FONTS_XML" ]; then
-  refresh_mount_view
-  find_original_xmls
-fi
 
 FONT_DIR="$MODPATH/Files"
 SYS_FONT="$MODPATH/system/fonts"
@@ -418,7 +570,49 @@ SYS_FALLBACK="$SYS_ETC/font_fallback.xml"
 PRODUCT_FONT="$MODPATH/system/product/fonts"
 PRODUCT_ETC="$MODPATH/system/product/etc"
 PRODUCT_XML="$PRODUCT_ETC/fonts_customization.xml"
-MFFM_DIR=/sdcard/MFFM
+MFFM_STORAGE=""
+for _sbase in /sdcard /storage/emulated/0 /data/media/0 /mnt/pass_through/0/emulated/0; do
+  if [ -d "$_sbase/MFFM" ]; then
+    MFFM_STORAGE="$_sbase"
+    break
+  fi
+done
+[ -z "$MFFM_STORAGE" ] && MFFM_STORAGE=/sdcard
+MFFM_DIR="$MFFM_STORAGE/MFFM"
+
+get_category_dirs() {
+  local cat=$1 dirs="" dir sbase sub
+  for sbase in "$MFFM_STORAGE" /sdcard /storage/emulated/0 /data/media/0 /mnt/pass_through/0/emulated/0; do
+    [ -d "$sbase/MFFM" ] || continue
+    case "$cat" in
+      Bengali|bengali|beng)
+        for sub in Bengali bengali Beng beng; do
+          dir="$sbase/MFFM/$sub"
+          [ -d "$dir" ] && case " $dirs " in *" $dir "*) ;; *) dirs="${dirs:+$dirs }$dir" ;; esac
+        done
+        dir="$sbase/MFFM"
+        [ -d "$dir" ] && case " $dirs " in *" $dir "*) ;; *) dirs="${dirs:+$dirs }$dir" ;; esac
+        ;;
+      Monospace|monospace|mono)
+        for sub in Monospace monospace Mono mono Code code; do
+          dir="$sbase/MFFM/$sub"
+          [ -d "$dir" ] && case " $dirs " in *" $dir "*) ;; *) dirs="${dirs:+$dirs }$dir" ;; esac
+        done
+        dir="$sbase/MFFM"
+        [ -d "$dir" ] && case " $dirs " in *" $dir "*) ;; *) dirs="${dirs:+$dirs }$dir" ;; esac
+        ;;
+      Serif|serif)
+        for sub in Serif serif; do
+          dir="$sbase/MFFM/$sub"
+          [ -d "$dir" ] && case " $dirs " in *" $dir "*) ;; *) dirs="${dirs:+$dirs }$dir" ;; esac
+        done
+        dir="$sbase/MFFM"
+        [ -d "$dir" ] && case " $dirs " in *" $dir "*) ;; *) dirs="${dirs:+$dirs }$dir" ;; esac
+        ;;
+    esac
+  done
+  printf '%s' "$dirs"
+}
 
 [ -f "$MODPATH/font-config.sh" ] || fail "font-config.sh is missing"
 . "$MODPATH/font-config.sh"
@@ -433,9 +627,10 @@ mkdir -p "$MFFM_DIR" || fail "Could not create $MFFM_DIR for variable-font setti
 for mffm_sub in Sans Serif Monospace Bengali; do
   mkdir -p "$MFFM_DIR/$mffm_sub" 2>/dev/null
 done
-[ -f "$ORIGINAL_FONTS_XML" ] || fail "Could not locate the live system fonts.xml"
+
+[ -n "$ORIGINAL_FONTS_XML" ] && [ -f "$ORIGINAL_FONTS_XML" ] || fail "Could not locate live system fonts.xml"
 cp -f "$ORIGINAL_FONTS_XML" "$SYS_XML" || fail "Could not copy system fonts.xml"
-[ -f "$ORIGINAL_FALLBACK_XML" ] && cp -f "$ORIGINAL_FALLBACK_XML" "$SYS_FALLBACK"
+[ -n "$ORIGINAL_FALLBACK_XML" ] && [ -f "$ORIGINAL_FALLBACK_XML" ] && cp -f "$ORIGINAL_FALLBACK_XML" "$SYS_FALLBACK"
 
 replace_family() {
   xml=$1
@@ -858,9 +1053,12 @@ ensure_profile_keys() {
     label=$(weight_label "$weight")
     config_key="${profile}_${label}_WGHT"
     if ! grep -q "^[[:space:]]*$config_key[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+      val=$weight
+      [ -n "$wght_min" ] && [ "$val" -lt "$wght_min" ] && val=$wght_min
+      [ -n "$wght_max" ] && [ "$val" -gt "$wght_max" ] && val=$wght_max
       {
         printf '# Android %s (%s): variable wght range %s..%s\n' "$weight" "$label" "$wght_min" "$wght_max"
-        printf '%s=%s\n' "$config_key" "$weight"
+        printf '%s=%s\n' "$config_key" "$val"
       } >> "$VF_CONFIG_FILE"
     fi
   done
@@ -985,11 +1183,75 @@ apply_profile() {
   done
 }
 
+ensure_variable_config_file() {
+  [ -n "$VF_CONFIG_FILE" ] && [ -f "$VF_CONFIG_FILE" ] && return 0
+
+  safe_family=$(printf '%s' "$FONT_FAMILY" | tr -cs 'A-Za-z0-9._-' '_' | sed 's/^_*//;s/_*$//')
+  [ -n "$safe_family" ] || safe_family=Variable_Font
+
+  if [ -z "$VF_CONFIG_ID" ]; then
+    VF_CONFIG_ID="vf-$(printf '%s' "${safe_family}_MFFMv14" | md5sum 2>/dev/null | cut -c1-20)"
+    [ -z "$VF_CONFIG_ID" ] && VF_CONFIG_ID="vf-12345678901234567890"
+  fi
+  [ -z "$VF_CONFIG_SCHEMA" ] && VF_CONFIG_SCHEMA="2"
+
+  VF_CONFIG_FILE="$MFFM_DIR/MFFMv14_${safe_family}_${VF_CONFIG_ID}.conf"
+  VF_LEGACY_CONFIG="$MFFM_DIR/MFFMv14_${safe_family}_VF.conf"
+  VF_CONFIG_RESET=0
+
+  # Preserve existing configuration when updating the same module family or identity
+  if [ -d "$MFFM_DIR" ]; then
+    local candidate saved_identity
+    if [ ! -f "$VF_CONFIG_FILE" ]; then
+      for candidate in "$MFFM_DIR"/MFFMv14_${safe_family}_*.conf "$VF_LEGACY_CONFIG"; do
+        [ -f "$candidate" ] || continue
+        saved_identity=$(sed -n 's/^[[:space:]]*MODULE_IDENTITY[[:space:]]*=[[:space:]]*//p' "$candidate" 2>/dev/null |
+          tail -n 1 | sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//')
+        if [ "$saved_identity" = "$VF_CONFIG_ID" ] || [ -z "$saved_identity" ]; then
+          cp -f "$candidate" "$VF_CONFIG_FILE" 2>/dev/null && rm -f "$candidate" 2>/dev/null
+          ui_print "  [OK] Retained existing configuration for $FONT_FAMILY"
+          break
+        fi
+      done
+    fi
+  fi
+
+  if [ ! -f "$VF_CONFIG_FILE" ]; then
+    cat > "$VF_CONFIG_FILE" <<EOF
+# ==============================================================================
+# MFFMv14 VARIABLE FONT CONFIGURATION
+# ==============================================================================
+# Font: $FONT_FAMILY
+# Module identity: $VF_CONFIG_ID
+CONFIG_SCHEMA=$VF_CONFIG_SCHEMA
+MODULE_IDENTITY=$VF_CONFIG_ID
+EOF
+    VF_CONFIG_CREATED=1
+    ui_print "  [OK] Created variable-axis configuration: ${VF_CONFIG_FILE##*/}"
+  else
+    VF_CONFIG_CREATED=0
+    if ! grep -q "^[[:space:]]*MODULE_IDENTITY[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+      printf 'MODULE_IDENTITY=%s\n' "$VF_CONFIG_ID" >> "$VF_CONFIG_FILE"
+    fi
+  fi
+  [ -f "$VF_CONFIG_FILE" ] || fail "Could not create variable-axis configuration: $VF_CONFIG_FILE"
+
+  # Clean any other stale/leftover configuration files from previous modules
+  if [ -d "$MFFM_DIR" ]; then
+    for old_conf in "$MFFM_DIR"/*.conf "$MFFM_DIR"/MFFMv14_*.conf; do
+      [ -f "$old_conf" ] || continue
+      [ "$old_conf" != "$VF_CONFIG_FILE" ] && rm -f "$old_conf" 2>/dev/null
+    done
+  fi
+}
+
 configure_variable_family_profile() {
   local profile=$1 font_file=$2 xml_style=$3 weights=$4
   shift 4
   local fragment_list="$*"
   [ -f "$font_file" ] || return 0
+
+  ensure_variable_config_file
   [ -n "$VF_CONFIG_FILE" ] && [ -f "$VF_CONFIG_FILE" ] || return 0
 
   local axes_meta
@@ -1012,68 +1274,45 @@ prune_obsolete_profile_keys() {
 }
 
 prepare_variable_config() {
-  safe_family=$(printf '%s' "$FONT_FAMILY" | tr -cs 'A-Za-z0-9._-' '_' | sed 's/^_*//;s/_*$//')
-  [ -n "$safe_family" ] || safe_family=Variable_Font
-  [ -n "$VF_CONFIG_ID" ] || fail "Variable module identity is missing"
-  [ "$VF_CONFIG_SCHEMA" = "2" ] || fail "Unsupported variable config schema: $VF_CONFIG_SCHEMA"
-  if ! printf '%s\n' "$VF_CONFIG_ID" | grep -Eq '^vf-[a-f0-9]{20}$'; then
-    fail "Variable module identity is invalid: $VF_CONFIG_ID"
-  fi
-  VF_CONFIG_FILE="$MFFM_DIR/MFFMv14_${safe_family}_${VF_CONFIG_ID}.conf"
-  VF_LEGACY_CONFIG="$MFFM_DIR/MFFMv14_${safe_family}_VF.conf"
-  VF_CONFIG_RESET=0
+  ensure_variable_config_file
 
-  # Preserve existing configuration when updating the same module family or identity
-  if [ -d "$MFFM_DIR" ]; then
-    local candidate saved_identity
-    if [ ! -f "$VF_CONFIG_FILE" ]; then
-      # Search for existing config file from previous installation of the same module
-      for candidate in "$MFFM_DIR"/MFFMv14_${safe_family}_*.conf "$VF_LEGACY_CONFIG"; do
-        [ -f "$candidate" ] || continue
-        saved_identity=$(sed -n 's/^[[:space:]]*MODULE_IDENTITY[[:space:]]*=[[:space:]]*//p' "$candidate" 2>/dev/null |
-          tail -n 1 | sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//')
-        if [ "$saved_identity" = "$VF_CONFIG_ID" ] || [ -z "$saved_identity" ]; then
-          # Found matching config from previous update -> migrate it to VF_CONFIG_FILE
-          cp -f "$candidate" "$VF_CONFIG_FILE" 2>/dev/null && rm -f "$candidate" 2>/dev/null
-          ui_print "  [OK] Retained existing configuration for $FONT_FAMILY"
-          break
-        fi
-      done
+  if [ -n "$VF_UPRIGHT_AXIS_META" ]; then
+    ensure_profile_keys SANS_UPRIGHT "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS"
+    apply_profile SANS_UPRIGHT normal "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS" "$FONT_DIR/sans.xml"
+    if [ -f "$FONT_DIR/condensed.xml" ]; then
+      ensure_profile_keys CONDENSED_UPRIGHT "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS"
+      apply_profile CONDENSED_UPRIGHT normal "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS" "$FONT_DIR/condensed.xml"
     fi
   fi
 
-  if [ ! -f "$VF_CONFIG_FILE" ]; then
-    cat > "$VF_CONFIG_FILE" <<EOF
-# ==============================================================================
-# MFFMv14 VARIABLE FONT CONFIGURATION
-# ==============================================================================
-# Font: $FONT_FAMILY
-# Module identity: $VF_CONFIG_ID
-CONFIG_SCHEMA=$VF_CONFIG_SCHEMA
-MODULE_IDENTITY=$VF_CONFIG_ID
-EOF
-    VF_CONFIG_CREATED=1
-  else
-    VF_CONFIG_CREATED=0
-    if ! grep -q "^[[:space:]]*MODULE_IDENTITY[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
-      printf 'MODULE_IDENTITY=%s\n' "$VF_CONFIG_ID" >> "$VF_CONFIG_FILE"
+  if [ -n "$VF_ITALIC_AXIS_META" ]; then
+    ensure_profile_keys SANS_ITALIC "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS"
+    apply_profile SANS_ITALIC italic "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS" "$FONT_DIR/sans.xml"
+    if [ -f "$FONT_DIR/condensed.xml" ]; then
+      ensure_profile_keys CONDENSED_ITALIC "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS"
+      apply_profile CONDENSED_ITALIC italic "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS" "$FONT_DIR/condensed.xml"
     fi
-    ui_print "  [OK] Retained existing configuration for $FONT_FAMILY"
   fi
-  [ -f "$VF_CONFIG_FILE" ] || fail "Could not create variable-axis configuration: $VF_CONFIG_FILE"
-  ensure_profile_keys SANS_UPRIGHT "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS"
-  ensure_profile_keys SANS_ITALIC "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS"
-  ensure_profile_keys CONDENSED_UPRIGHT "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS"
-  ensure_profile_keys CONDENSED_ITALIC "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS"
 
-  apply_profile SANS_UPRIGHT normal "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS" \
-    "$FONT_DIR/sans.xml" "$FONT_DIR/serif.xml"
-  apply_profile SANS_ITALIC italic "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS" \
-    "$FONT_DIR/sans.xml" "$FONT_DIR/serif.xml"
-  apply_profile CONDENSED_UPRIGHT normal "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS" \
-    "$FONT_DIR/condensed.xml"
-  apply_profile CONDENSED_ITALIC italic "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS" \
-    "$FONT_DIR/condensed.xml"
+  if [ -n "$VF_MONO_AXIS_META" ] && [ -f "$FONT_DIR/mono.xml" ]; then
+    ensure_profile_keys MONOSPACE_UPRIGHT "$VF_MONO_AXIS_META" "$VF_MONO_WEIGHTS"
+    apply_profile MONOSPACE_UPRIGHT normal "$VF_MONO_AXIS_META" "$VF_MONO_WEIGHTS" "$FONT_DIR/mono.xml"
+  fi
+
+  if [ -n "$VF_SERIF_UPRIGHT_AXIS_META" ] && [ -f "$FONT_DIR/serif.xml" ]; then
+    ensure_profile_keys SERIF_UPRIGHT "$VF_SERIF_UPRIGHT_AXIS_META" "$VF_SERIF_UPRIGHT_WEIGHTS"
+    apply_profile SERIF_UPRIGHT normal "$VF_SERIF_UPRIGHT_AXIS_META" "$VF_SERIF_UPRIGHT_WEIGHTS" "$FONT_DIR/serif.xml"
+  fi
+
+  if [ -n "$VF_SERIF_ITALIC_AXIS_META" ] && [ -f "$FONT_DIR/serif.xml" ]; then
+    ensure_profile_keys SERIF_ITALIC "$VF_SERIF_ITALIC_AXIS_META" "$VF_SERIF_ITALIC_WEIGHTS"
+    apply_profile SERIF_ITALIC italic "$VF_SERIF_ITALIC_AXIS_META" "$VF_SERIF_ITALIC_WEIGHTS" "$FONT_DIR/serif.xml"
+  fi
+
+  if [ -n "$VF_BENGALI_AXIS_META" ] && [ -f "$FONT_DIR/bengali.xml" ]; then
+    ensure_profile_keys BENGALI_UPRIGHT "$VF_BENGALI_AXIS_META" "$VF_BENGALI_WEIGHTS"
+    apply_profile BENGALI_UPRIGHT normal "$VF_BENGALI_AXIS_META" "$VF_BENGALI_WEIGHTS" "$FONT_DIR/bengali.xml"
+  fi
 }
 
 ui_print ""
@@ -1087,17 +1326,16 @@ ui_print "    Root manager : $ROOT_IMPL"
 ui_print "    Font model   : $FONT_MODE"
 ui_print "    Font family  : $FONT_FAMILY"
 
-if [ "$FONT_MODE" = "variable" ]; then
+if [ "$FONT_MODE" = "variable" ] || [ -n "$VF_MONO_AXIS_META" ] || [ -n "$VF_SERIF_UPRIGHT_AXIS_META" ] || [ -n "$VF_BENGALI_AXIS_META" ]; then
   prepare_variable_config
   ui_print "    Axis config  : $VF_CONFIG_FILE"
-  if [ "$VF_CONFIG_CREATED" = "1" ]; then
-    if [ "$VF_CONFIG_RESET" = "1" ]; then
-      status_warn "Replaced a legacy or mismatched axis configuration"
-    fi
-    status_ok "Created identity-bound variable-axis configuration"
-  else
-    status_ok "Loaded matching identity-bound axis configuration"
-  fi
+fi
+
+if [ "$FONT_MODE" != "variable" ]; then
+  prune_obsolete_profile_keys SANS_UPRIGHT
+  prune_obsolete_profile_keys SANS_ITALIC
+  prune_obsolete_profile_keys CONDENSED_UPRIGHT
+  prune_obsolete_profile_keys CONDENSED_ITALIC
 fi
 
 section "1/5" "Installing primary font payload"
@@ -1138,6 +1376,56 @@ if [ -f "$ORIGINAL_PRODUCT_XML" ] && [ -f "$FONT_DIR/sans.xml" ]; then
 else
   status_skip "Product fonts_customization.xml (not present on this ROM)"
 fi
+# ── Shared Python weight scanner (used by Monospace, Bengali, Serif) ──────────
+# Outputs "weight:style:path" lines for each .ttf/.otf in the given directories.
+# Combines OS/2 usWeightClass with name-table / filename label resolution for
+# correct weight assignment even when fonts have misconfigured OS/2 headers.
+_py_scan_font_weights() {
+  [ -n "$py_bin" ] || return 1
+  $py_bin -c '
+import sys, os
+try:
+    from fontTools.ttLib import TTFont
+except ImportError:
+    sys.exit(1)
+for d in sys.argv[1:]:
+    if not d or not os.path.isdir(d):
+        continue
+    for f in sorted(os.listdir(d)):
+        if not (f.endswith(".ttf") or f.endswith(".otf")):
+            continue
+        path = os.path.join(d, f)
+        try:
+            font = TTFont(path, lazy=True)
+            os2 = font.get("OS/2")
+            wt = os2.usWeightClass if os2 else 400
+            name = font.get("name")
+            sub = (name.getDebugName(2) or "") if name else ""
+            full = (name.getDebugName(4) or "") if name else ""
+            label = (f + " " + sub + " " + full).lower()
+            name_wt = None
+            if "thin" in label or "hairline" in label: name_wt = 100
+            elif "extralight" in label or "ultralight" in label: name_wt = 200
+            elif "light" in label: name_wt = 300
+            elif "medium" in label: name_wt = 500
+            elif "semibold" in label or "demibold" in label: name_wt = 600
+            elif "extrabold" in label or "ultrabold" in label: name_wt = 800
+            elif "black" in label or "heavy" in label: name_wt = 900
+            elif "bold" in label: name_wt = 700
+            elif "regular" in label or "book" in label: name_wt = 400
+            if wt == 400 and name_wt:
+                wt = name_wt
+            elif name_wt and abs(name_wt - 400) > abs(wt - 400):
+                wt = name_wt
+            fs = os2.fsSelection if os2 else 0
+            is_italic = bool(fs & 0x01) or "italic" in sub.lower() or "oblique" in sub.lower() or "italic" in f.lower()
+            style = "italic" if is_italic else "normal"
+            font.close()
+            print(f"{wt}:{style}:{path}")
+        except Exception:
+            pass
+' "$@" 2>/dev/null
+}
 
 section "3/5" "Applying optional font resources"
 
@@ -1155,17 +1443,17 @@ if [ -f "$FONT_DIR/mono.xml" ]; then
       replace_family "$xml" serif-monospace "$FONT_DIR/mono.xml" "prepend"
     fi
   done
+  [ -z "$VF_MONO_AXIS_META" ] && prune_obsolete_profile_keys MONOSPACE_UPRIGHT
   status_ok "Native Monospace font (bundled in DroidSans.ttf)"
-elif [ -f "$FONT_DIR/CutiveMono.ttf" ] && [ -f "$FONT_DIR/DroidSansMono.ttf" ]; then
-  cp -f "$FONT_DIR/CutiveMono.ttf" "$SYS_FONT/CutiveMono.ttf"
-  cp -f "$FONT_DIR/DroidSansMono.ttf" "$SYS_FONT/DroidSansMono.ttf"
-  status_ok "Native Monospace font (module standalone files)"
 else
   # ── Find first font file in Monospace dirs to check variable vs static ──
-  ext_mono=$(find_first '*.ttf' "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono")
-  [ -z "$ext_mono" ] && ext_mono=$(find_first '*.otf' "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono")
-  [ -z "$ext_mono" ] && ext_mono=$(find_first 'Mono*.ttf' "$MFFM_DIR")
-  [ -z "$ext_mono" ] && ext_mono=$(find_first 'Mono*.otf' "$MFFM_DIR")
+  _mono_dirs=$(get_category_dirs Monospace)
+  ext_mono=$(find_first 'Mono*.ttf' "$FONT_DIR" $_mono_dirs)
+  [ -z "$ext_mono" ] && ext_mono=$(find_first 'Mono*.otf' "$FONT_DIR" $_mono_dirs)
+  [ -z "$ext_mono" ] && ext_mono=$(find_first 'CutiveMono.ttf' "$FONT_DIR" $_mono_dirs)
+  [ -z "$ext_mono" ] && ext_mono=$(find_first 'DroidSansMono.ttf' "$FONT_DIR" $_mono_dirs)
+  [ -z "$ext_mono" ] && ext_mono=$(find_first '*.ttf' $_mono_dirs)
+  [ -z "$ext_mono" ] && ext_mono=$(find_first '*.otf' $_mono_dirs)
   if [ -n "$ext_mono" ]; then
     if is_variable_font "$ext_mono"; then
       cp -f "$ext_mono" "$SYS_FONT/CutiveMono.ttf"
@@ -1173,42 +1461,53 @@ else
       axes_info=$(extract_fvar_axes "$ext_mono")
       frag_file="$FONT_DIR/ext_mono.xml"
       generate_vf_xml_fragment "$ext_mono" "DroidSansMono.ttf" "$axes_info" > "$frag_file"
-      configure_variable_family_profile MONOSPACE_UPRIGHT "$ext_mono" normal "400" "$frag_file"
+      configure_variable_family_profile MONOSPACE_UPRIGHT "$ext_mono" normal "100 200 300 400 500 600 700 800 900" "$frag_file"
       for xml in "$SYS_XML" "$SYS_FALLBACK"; do
         [ -f "$xml" ] || continue
         replace_family "$xml" monospace "$frag_file"
         replace_family "$xml" cutive-mono "$frag_file"
         replace_family "$xml" droidsans-mono "$frag_file"
       done
-      status_ok "External Variable Monospace font (${ext_mono##*/}) auto-configured natively"
+      status_ok "Variable Monospace font (${ext_mono##*/}) auto-configured natively"
     else
+      prune_obsolete_profile_keys MONOSPACE_UPRIGHT
       # ── Static family: discover distinct weights, bundle into DroidSansMono.ttf TTC ──
       # POSIX-sh ordered list — no declare -A (not supported in mksh/ash)
       _mono_ttc_files=""
       _mono_idx_counter=0
 
       _mono_get_idx() {
-        local needle="$1" i=0 item
-        for item in $_mono_ttc_files; do
-          [ "$item" = "$needle" ] && echo "$i" && return
+        local needle="$1" i=0 line
+        [ -n "$needle" ] || { echo "0"; return; }
+        while IFS= read -r line; do
+          [ -z "$line" ] && continue
+          [ "$line" = "$needle" ] && echo "$i" && return
           i=$((i+1))
-        done
+        done << EOF
+$_mono_ttc_files
+EOF
         i=0
-        for item in $_mono_ttc_files; do
-          [ "$item" = "$_mr400" ] && echo "$i" && return
+        while IFS= read -r line; do
+          [ -z "$line" ] && continue
+          [ "$line" = "$_mr400" ] && echo "$i" && return
           i=$((i+1))
-        done
+        done << EOF
+$_mono_ttc_files
+EOF
         echo "0"
       }
 
       _mono_add_face() {
-        local file="$1" item already=0
+        local file="$1" line already=0
         [ -n "$file" ] || return
-        for item in $_mono_ttc_files; do
-          [ "$item" = "$file" ] && already=1 && break
-        done
+        while IFS= read -r line; do
+          [ "$line" = "$file" ] && already=1 && break
+        done << EOF
+$_mono_ttc_files
+EOF
         [ "$already" = "0" ] && {
-          _mono_ttc_files="${_mono_ttc_files:+$_mono_ttc_files }$file"
+          _mono_ttc_files="${_mono_ttc_files:+$_mono_ttc_files
+}$file"
           _mono_idx_counter=$((_mono_idx_counter + 1))
         }
       }
@@ -1231,32 +1530,7 @@ else
       fi
 
       if [ -n "$py_bin" ] && $py_bin -c "import fontTools" 2>/dev/null; then
-        _py_wmap=$($py_bin - "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono" <<'PYWEOF' 2>/dev/null
-import sys, os
-try:
-    from fontTools.ttLib import TTFont
-except ImportError:
-    sys.exit(1)
-dirs = [d for d in sys.argv[1:] if d and os.path.isdir(d)]
-for d in dirs:
-    for f in sorted(os.listdir(d)):
-        if not (f.endswith('.ttf') or f.endswith('.otf')):
-            continue
-        path = os.path.join(d, f)
-        try:
-            font = TTFont(path, lazy=True)
-            os2 = font['OS/2']
-            wt = os2.usWeightClass
-            name = font['name']
-            subfamily = (name.getDebugName(2) or '').lower()
-            fs = os2.fsSelection
-            is_italic = bool(fs & 0x01) or 'italic' in subfamily or 'oblique' in subfamily
-            style = 'italic' if is_italic else 'normal'
-            print(f"{wt}:{style}:{path}")
-        except Exception:
-            pass
-PYWEOF
-)
+        _py_wmap=$(_py_scan_font_weights $_mono_dirs)
         if [ -n "$_py_wmap" ]; then
           while IFS= read -r _wl; do
             [ -z "$_wl" ] && continue
@@ -1279,15 +1553,15 @@ EOF
         fi
       fi
 
-      [ -z "$_mr100" ] && _mr100=$(find_best_face 100 normal "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono")
-      [ -z "$_mr200" ] && _mr200=$(find_best_face 200 normal "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono")
-      [ -z "$_mr300" ] && _mr300=$(find_best_face 300 normal "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono")
-      [ -z "$_mr400" ] && _mr400=$(find_best_face 400 normal "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono")
-      [ -z "$_mr500" ] && _mr500=$(find_best_face 500 normal "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono")
-      [ -z "$_mr600" ] && _mr600=$(find_best_face 600 normal "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono")
-      [ -z "$_mr700" ] && _mr700=$(find_best_face 700 normal "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono")
-      [ -z "$_mr800" ] && _mr800=$(find_best_face 800 normal "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono")
-      [ -z "$_mr900" ] && _mr900=$(find_best_face 900 normal "$MFFM_DIR/Monospace" "$MFFM_DIR/Mono")
+      [ -z "$_mr100" ] && _mr100=$(find_best_face 100 normal $_mono_dirs)
+      [ -z "$_mr200" ] && _mr200=$(find_best_face 200 normal $_mono_dirs)
+      [ -z "$_mr300" ] && _mr300=$(find_best_face 300 normal $_mono_dirs)
+      [ -z "$_mr400" ] && _mr400=$(find_best_face 400 normal $_mono_dirs)
+      [ -z "$_mr500" ] && _mr500=$(find_best_face 500 normal $_mono_dirs)
+      [ -z "$_mr600" ] && _mr600=$(find_best_face 600 normal $_mono_dirs)
+      [ -z "$_mr700" ] && _mr700=$(find_best_face 700 normal $_mono_dirs)
+      [ -z "$_mr800" ] && _mr800=$(find_best_face 800 normal $_mono_dirs)
+      [ -z "$_mr900" ] && _mr900=$(find_best_face 900 normal $_mono_dirs)
       [ -z "$_mr400" ] && _mr400="$ext_mono"
 
       _mono_add_face "$_mr100"; _mono_add_face "$_mr200"; _mono_add_face "$_mr300"
@@ -1313,36 +1587,51 @@ EOF
       fi
 
       if [ -n "$py_bin" ] && $py_bin -c "import fontTools" 2>/dev/null; then
-        $py_bin - $_mono_ttc_files "$SYS_FONT/DroidSansMono.ttf" <<'PYEOF' 2>/dev/null
+        _mono_ttc_out="$SYS_FONT/DroidSansMono.ttf"
+        _mono_ttc_err=$(printf '%s\n' "$_mono_ttc_files" | $py_bin -c '
 import sys
 from fontTools.ttLib import TTFont, TTCollection
-args = sys.argv[1:]
-out = args[-1]
-files = [f for f in args[:-1] if f]
+out = sys.argv[1]
+files = [l.strip() for l in sys.stdin.read().splitlines() if l.strip()]
+if not files:
+    sys.exit(1)
 col = TTCollection()
 for f in files:
-    col.fonts.append(TTFont(f))
+    try:
+        col.fonts.append(TTFont(f))
+    except Exception as e:
+        sys.stderr.write(f"Error loading {f}: {e}\n")
+if not col.fonts:
+    sys.exit(1)
 col.save(out)
-PYEOF
-        cp -f "$SYS_FONT/DroidSansMono.ttf" "$SYS_FONT/CutiveMono.ttf"
-        {
-          [ -n "$_mr100" ] && printf '    <font weight="100" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx100"
-          [ -n "$_mr200" ] && printf '    <font weight="200" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx200"
-          [ -n "$_mr300" ] && printf '    <font weight="300" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx300"
-          printf '    <font weight="400" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx400"
-          [ -n "$_mr500" ] && printf '    <font weight="500" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx500"
-          [ -n "$_mr600" ] && printf '    <font weight="600" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx600"
-          [ -n "$_mr700" ] && printf '    <font weight="700" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx700"
-          [ -n "$_mr800" ] && printf '    <font weight="800" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx800"
-          [ -n "$_mr900" ] && printf '    <font weight="900" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx900"
-        } > "$frag_file"
-        for xml in "$SYS_XML" "$SYS_FALLBACK"; do
-          [ -f "$xml" ] || continue
-          replace_family "$xml" monospace "$frag_file"
-          replace_family "$xml" cutive-mono "$frag_file"
-          replace_family "$xml" droidsans-mono "$frag_file"
-        done
-        status_ok "Static Monospace TTC bundled ($_mono_idx_counter distinct faces → DroidSansMono.ttf, indexed)"
+' "$_mono_ttc_out" 2>&1)
+        if [ ! -f "$_mono_ttc_out" ] || [ ! -s "$_mono_ttc_out" ]; then
+          status_warn "Monospace TTC bundling failed — falling back to single-file mode"
+          [ -n "$_mono_ttc_err" ] && mffm_log_line "  TTC error: $_mono_ttc_err"
+          cp -f "$_mr400" "$SYS_FONT/DroidSansMono.ttf"
+          cp -f "$_mr400" "$SYS_FONT/CutiveMono.ttf"
+          status_ok "Static Monospace installed (single-file fallback, Regular only)"
+        else
+          cp -f "$_mono_ttc_out" "$SYS_FONT/CutiveMono.ttf"
+          {
+            [ -n "$_mr100" ] && printf '    <font weight="100" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx100"
+            [ -n "$_mr200" ] && printf '    <font weight="200" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx200"
+            [ -n "$_mr300" ] && printf '    <font weight="300" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx300"
+            printf '    <font weight="400" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx400"
+            [ -n "$_mr500" ] && printf '    <font weight="500" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx500"
+            [ -n "$_mr600" ] && printf '    <font weight="600" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx600"
+            [ -n "$_mr700" ] && printf '    <font weight="700" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx700"
+            [ -n "$_mr800" ] && printf '    <font weight="800" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx800"
+            [ -n "$_mr900" ] && printf '    <font weight="900" style="normal" index="%s">DroidSansMono.ttf</font>\n' "$_midx900"
+          } > "$frag_file"
+          for xml in "$SYS_XML" "$SYS_FALLBACK"; do
+            [ -f "$xml" ] || continue
+            replace_family "$xml" monospace "$frag_file"
+            replace_family "$xml" cutive-mono "$frag_file"
+            replace_family "$xml" droidsans-mono "$frag_file"
+          done
+          status_ok "Static Monospace TTC bundled ($_mono_idx_counter distinct faces → DroidSansMono.ttf, indexed)"
+        fi
       else
         cp -f "$_mr400" "$SYS_FONT/DroidSansMono.ttf"
         cp -f "$_mr400" "$SYS_FONT/CutiveMono.ttf"
@@ -1361,6 +1650,7 @@ if [ -f "$FONT_DIR/bengali.xml" ]; then
     replace_lang_family "$xml" "und-Beng" "$FONT_DIR/bengali.xml"
     replace_lang_family "$xml" "bn" "$FONT_DIR/bengali.xml"
   done
+  [ -z "$VF_BENGALI_AXIS_META" ] && prune_obsolete_profile_keys BENGALI_UPRIGHT
   status_ok "Native Bengali font (bundled in DroidSans.ttf with full 100-900 weight class)"
 elif [ -f "$FONT_DIR/Beng-Regular.ttf" ] && [ -f "$FONT_DIR/Beng-Medium.ttf" ] && [ -f "$FONT_DIR/Beng-Bold.ttf" ]; then
   cp -f "$FONT_DIR/Beng-Regular.ttf" "$SYS_FONT/NotoSansBengali-VF.ttf"
@@ -1373,10 +1663,25 @@ elif [ -f "$FONT_DIR/Beng-Regular.ttf" ] && [ -f "$FONT_DIR/Beng-Medium.ttf" ] &
   done
   status_ok "Bengali fonts (standalone module files)"
 else
-  ext_beng=$(find_first '*.ttf' "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng")
-  [ -z "$ext_beng" ] && ext_beng=$(find_first '*.otf' "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng")
-  [ -z "$ext_beng" ] && ext_beng=$(find_first 'Beng*.ttf' "$MFFM_DIR")
-  [ -z "$ext_beng" ] && ext_beng=$(find_first 'Beng*.otf' "$MFFM_DIR")
+  _beng_dirs=$(get_category_dirs Bengali)
+  # Flatten this category into a private staging directory. This accepts a
+  # complete static family placed in a nested Bengali subfolder while keeping
+  # discovery isolated from Sans, Serif, and Monospace files elsewhere in MFFM.
+  _beng_stage="$FONT_DIR/.mffm-bengali-static"
+  for _beng_dir in $_beng_dirs; do
+    [ -d "$_beng_dir" ] || continue
+    mkdir -p "$_beng_stage"
+    find "$_beng_dir" -type f \( -iname '*.ttf' -o -iname '*.otf' \) ! -iname 'DroidSans.ttf' ! -iname 'GoogleSansClock*.ttf' -exec cp -f {} "$_beng_stage"/ \; 2>/dev/null
+  done
+  if [ -d "$_beng_stage" ] && find "$_beng_stage" -maxdepth 1 -type f \( -iname '*.ttf' -o -iname '*.otf' \) -print -quit | grep -q .; then
+    _beng_dirs="$_beng_stage $_beng_dirs"
+  fi
+  ext_beng=$(find_first 'Beng*.ttf' "$FONT_DIR" $_beng_dirs)
+  [ -z "$ext_beng" ] && ext_beng=$(find_first 'Beng*.otf' "$FONT_DIR" $_beng_dirs)
+  [ -z "$ext_beng" ] && ext_beng=$(find_first 'NotoSansBengali*.ttf' "$FONT_DIR" $_beng_dirs)
+  [ -z "$ext_beng" ] && ext_beng=$(find_first 'NotoSerifBengali*.ttf' "$FONT_DIR" $_beng_dirs)
+  [ -z "$ext_beng" ] && ext_beng=$(find_first '*.ttf' $_beng_dirs)
+  [ -z "$ext_beng" ] && ext_beng=$(find_first '*.otf' $_beng_dirs)
   if [ -n "$ext_beng" ]; then
     if is_variable_font "$ext_beng"; then
       cp -f "$ext_beng" "$SYS_FONT/NotoSansBengali-VF.ttf"
@@ -1391,34 +1696,45 @@ else
         replace_lang_family "$xml" "und-Beng" "$frag_file"
         replace_lang_family "$xml" "bn" "$frag_file"
       done
-      status_ok "External Variable Bengali font (${ext_beng##*/}) auto-configured natively"
+      status_ok "Variable Bengali font (${ext_beng##*/}) auto-configured natively"
     else
+      prune_obsolete_profile_keys BENGALI_UPRIGHT
       # ── POSIX-sh ordered list (no declare -A — not supported in mksh/ash) ─
       _beng_ttc_files=""
       _beng_idx_counter=0
 
       _beng_get_idx() {
-        local needle="$1" i=0 item
-        for item in $_beng_ttc_files; do
-          [ "$item" = "$needle" ] && echo "$i" && return
+        local needle="$1" i=0 line
+        [ -n "$needle" ] || { echo "0"; return; }
+        while IFS= read -r line; do
+          [ -z "$line" ] && continue
+          [ "$line" = "$needle" ] && echo "$i" && return
           i=$((i+1))
-        done
+        done << EOF
+$_beng_ttc_files
+EOF
         i=0
-        for item in $_beng_ttc_files; do
-          [ "$item" = "$_r400" ] && echo "$i" && return
+        while IFS= read -r line; do
+          [ -z "$line" ] && continue
+          [ "$line" = "$_r400" ] && echo "$i" && return
           i=$((i+1))
-        done
+        done << EOF
+$_beng_ttc_files
+EOF
         echo "0"
       }
 
       _beng_add_face() {
-        local file="$1" item already=0
+        local file="$1" line already=0
         [ -n "$file" ] || return
-        for item in $_beng_ttc_files; do
-          [ "$item" = "$file" ] && already=1 && break
-        done
+        while IFS= read -r line; do
+          [ "$line" = "$file" ] && already=1 && break
+        done << EOF
+$_beng_ttc_files
+EOF
         [ "$already" = "0" ] && {
-          _beng_ttc_files="${_beng_ttc_files:+$_beng_ttc_files }$file"
+          _beng_ttc_files="${_beng_ttc_files:+$_beng_ttc_files
+}$file"
           _beng_idx_counter=$((_beng_idx_counter + 1))
         }
       }
@@ -1446,33 +1762,7 @@ else
 
       if [ -n "$py_bin" ] && $py_bin -c "import fontTools" 2>/dev/null; then
         # Read usWeightClass from OS/2 table — works even for hex-named cache files
-        _py_weight_map=$($py_bin - "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" <<'PYWEOF' 2>/dev/null
-import sys, os
-try:
-    from fontTools.ttLib import TTFont
-except ImportError:
-    sys.exit(1)
-dirs = [d for d in sys.argv[1:] if d and os.path.isdir(d)]
-for d in dirs:
-    for f in sorted(os.listdir(d)):
-        if not (f.endswith('.ttf') or f.endswith('.otf')):
-            continue
-        path = os.path.join(d, f)
-        try:
-            font = TTFont(path, lazy=True)
-            os2 = font['OS/2']
-            wt = os2.usWeightClass
-            # Detect italic from name table subfamily or fsSelection bit
-            name = font['name']
-            subfamily = (name.getDebugName(2) or '').lower()
-            fs = os2.fsSelection
-            is_italic = bool(fs & 0x01) or 'italic' in subfamily or 'oblique' in subfamily
-            style = 'italic' if is_italic else 'normal'
-            print(f"{wt}:{style}:{path}")
-        except Exception:
-            pass
-PYWEOF
-)
+        _py_weight_map=$(_py_scan_font_weights $_beng_dirs)
         # Parse output: "weight:style:path" lines — pick best file per slot
         if [ -n "$_py_weight_map" ]; then
           while IFS= read -r _wline; do
@@ -1500,15 +1790,15 @@ EOF
       fi
 
       # Fallback: filename heuristic (for weights not yet assigned by Python scan)
-      [ -z "$_r100" ] && _r100=$(find_best_face 100 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
-      [ -z "$_r200" ] && _r200=$(find_best_face 200 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
-      [ -z "$_r300" ] && _r300=$(find_best_face 300 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
-      [ -z "$_r400" ] && _r400=$(find_best_face 400 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
-      [ -z "$_r500" ] && _r500=$(find_best_face 500 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
-      [ -z "$_r600" ] && _r600=$(find_best_face 600 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
-      [ -z "$_r700" ] && _r700=$(find_best_face 700 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
-      [ -z "$_r800" ] && _r800=$(find_best_face 800 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
-      [ -z "$_r900" ] && _r900=$(find_best_face 900 normal "$MFFM_DIR/Bengali" "$MFFM_DIR/Beng" "$MFFM_DIR")
+      [ -z "$_r100" ] && _r100=$(find_best_face 100 normal $_beng_dirs "$MFFM_DIR")
+      [ -z "$_r200" ] && _r200=$(find_best_face 200 normal $_beng_dirs "$MFFM_DIR")
+      [ -z "$_r300" ] && _r300=$(find_best_face 300 normal $_beng_dirs "$MFFM_DIR")
+      [ -z "$_r400" ] && _r400=$(find_best_face 400 normal $_beng_dirs "$MFFM_DIR")
+      [ -z "$_r500" ] && _r500=$(find_best_face 500 normal $_beng_dirs "$MFFM_DIR")
+      [ -z "$_r600" ] && _r600=$(find_best_face 600 normal $_beng_dirs "$MFFM_DIR")
+      [ -z "$_r700" ] && _r700=$(find_best_face 700 normal $_beng_dirs "$MFFM_DIR")
+      [ -z "$_r800" ] && _r800=$(find_best_face 800 normal $_beng_dirs "$MFFM_DIR")
+      [ -z "$_r900" ] && _r900=$(find_best_face 900 normal $_beng_dirs "$MFFM_DIR")
       [ -z "$_r400" ] && _r400="$ext_beng"
 
       _beng_add_face "$_r100"; _beng_add_face "$_r200"; _beng_add_face "$_r300"
@@ -1533,42 +1823,57 @@ EOF
       fi
 
       if [ -n "$py_bin" ] && $py_bin -c "import fontTools" 2>/dev/null; then
-        # ── TTC bundle path: all distinct files packed into NotoSansBengali-VF.ttf
-        $py_bin - $_beng_ttc_files "$SYS_FONT/NotoSansBengali-VF.ttf" <<'PYEOF' 2>/dev/null
+        # ── TTC bundle: all distinct faces packed into NotoSansBengali-VF.ttf ─
+        _beng_ttc_out="$SYS_FONT/NotoSansBengali-VF.ttf"
+        _beng_ttc_err=$(printf '%s\n' "$_beng_ttc_files" | $py_bin -c '
 import sys
 from fontTools.ttLib import TTFont, TTCollection
-args = sys.argv[1:]
-out = args[-1]
-files = args[:-1]
-# strip the leading-space artifact from shell variable expansion
-files = [f for f in files if f]
+out = sys.argv[1]
+files = [l.strip() for l in sys.stdin.read().splitlines() if l.strip()]
+if not files:
+    sys.exit(1)
 col = TTCollection()
 for f in files:
-    col.fonts.append(TTFont(f))
+    try:
+        col.fonts.append(TTFont(f))
+    except Exception as e:
+        sys.stderr.write(f"Error loading {f}: {e}\n")
+if not col.fonts:
+    sys.exit(1)
 col.save(out)
-PYEOF
-        cp -f "$SYS_FONT/NotoSansBengali-VF.ttf" "$SYS_FONT/NotoSerifBengali-VF.ttf"
-        cp -f "$SYS_FONT/NotoSansBengali-VF.ttf" "$SYS_FONT/NotoSansBengaliUI-VF.ttf"
-        # Generate XML fragment only for the weights that have a real file
-        {
-          [ -n "$_r100" ] && printf '    <font weight="100" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx100"
-          [ -n "$_r200" ] && printf '    <font weight="200" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx200"
-          [ -n "$_r300" ] && printf '    <font weight="300" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx300"
-          printf '    <font weight="400" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx400"
-          [ -n "$_r500" ] && printf '    <font weight="500" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx500"
-          [ -n "$_r600" ] && printf '    <font weight="600" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx600"
-          [ -n "$_r700" ] && printf '    <font weight="700" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx700"
-          [ -n "$_r800" ] && printf '    <font weight="800" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx800"
-          [ -n "$_r900" ] && printf '    <font weight="900" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx900"
-        } > "$frag_file"
-        for xml in "$SYS_XML" "$SYS_FALLBACK"; do
-          [ -f "$xml" ] || continue
-          replace_lang_family "$xml" "und-Beng" "$frag_file"
-          replace_lang_family "$xml" "bn" "$frag_file"
-        done
-        status_ok "Static Bengali TTC bundled ($_beng_idx_counter distinct faces → NotoSansBengali-VF.ttf, indexed)"
+' "$_beng_ttc_out" 2>&1)
+        if [ ! -f "$_beng_ttc_out" ] || [ ! -s "$_beng_ttc_out" ]; then
+          status_warn "Bengali TTC bundling failed — falling back to 3-file mode"
+          [ -n "$_beng_ttc_err" ] && mffm_log_line "  TTC error: $_beng_ttc_err"
+          # ── 3-file fallback inside TTC-path (bundler failed) ──────────────────
+          cp -f "${_r400}" "$SYS_FONT/NotoSansBengali-VF.ttf"
+          cp -f "${_r500:-$_r400}" "$SYS_FONT/NotoSerifBengali-VF.ttf"
+          cp -f "${_r700:-${_r600:-$_r400}}" "$SYS_FONT/NotoSansBengaliUI-VF.ttf"
+          status_ok "Static Bengali installed (3-file fallback: Regular/Medium/Bold)"
+        else
+          cp -f "$_beng_ttc_out" "$SYS_FONT/NotoSerifBengali-VF.ttf"
+          cp -f "$_beng_ttc_out" "$SYS_FONT/NotoSansBengaliUI-VF.ttf"
+          # Generate XML fragment — only weights with a real face file
+          {
+            [ -n "$_r100" ] && printf '    <font weight="100" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx100"
+            [ -n "$_r200" ] && printf '    <font weight="200" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx200"
+            [ -n "$_r300" ] && printf '    <font weight="300" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx300"
+            printf '    <font weight="400" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx400"
+            [ -n "$_r500" ] && printf '    <font weight="500" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx500"
+            [ -n "$_r600" ] && printf '    <font weight="600" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx600"
+            [ -n "$_r700" ] && printf '    <font weight="700" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx700"
+            [ -n "$_r800" ] && printf '    <font weight="800" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx800"
+            [ -n "$_r900" ] && printf '    <font weight="900" style="normal" index="%s">NotoSansBengali-VF.ttf</font>\n' "$_idx900"
+          } > "$frag_file"
+          for xml in "$SYS_XML" "$SYS_FALLBACK"; do
+            [ -f "$xml" ] || continue
+            replace_lang_family "$xml" "und-Beng" "$frag_file"
+            replace_lang_family "$xml" "bn" "$frag_file"
+          done
+          status_ok "Static Bengali TTC bundled ($_beng_idx_counter distinct faces → NotoSansBengali-VF.ttf, indexed)"
+        fi
       else
-        # ── 3-file fallback: Regular / Medium / Bold only (no non-standard filenames)
+        # ── 3-file fallback: no Python/fontTools available ───────────────────
         local _fb_reg="${_r400}"
         local _fb_med="${_r500:-$_r400}"
         local _fb_bld="${_r700:-${_r600:-$_r400}}"
@@ -1596,63 +1901,91 @@ if [ -f "$FONT_DIR/serif.xml" ]; then
     replace_family "$xml" noto-serif "$FONT_DIR/serif.xml" "split"
     replace_family "$xml" serif-monospace "$FONT_DIR/serif.xml" "split"
   done
+  [ -z "$VF_SERIF_UPRIGHT_AXIS_META" ] && prune_obsolete_profile_keys SERIF_UPRIGHT
+  [ -z "$VF_SERIF_ITALIC_AXIS_META" ] && prune_obsolete_profile_keys SERIF_ITALIC
   status_ok "Native Serif font (bundled in DroidSans.ttf)"
-elif [ -f "$FONT_DIR/NotoSerif-Regular.ttf" ] && [ -f "$FONT_DIR/NotoSerif-Bold.ttf" ]; then
-  cp -f "$FONT_DIR/NotoSerif-Regular.ttf" "$SYS_FONT/NotoSerif-Regular.ttf"
-  [ -f "$FONT_DIR/NotoSerif-Italic.ttf" ] && cp -f "$FONT_DIR/NotoSerif-Italic.ttf" "$SYS_FONT/NotoSerif-Italic.ttf"
-  cp -f "$FONT_DIR/NotoSerif-Bold.ttf" "$SYS_FONT/NotoSerif-Bold.ttf"
-  [ -f "$FONT_DIR/NotoSerif-BoldItalic.ttf" ] && cp -f "$FONT_DIR/NotoSerif-BoldItalic.ttf" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
-  status_ok "Native Serif font (module standalone files)"
 else
-  ext_s_reg=$(find_best_face 400 normal "$MFFM_DIR/Serif")
-  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first '*.ttf' "$MFFM_DIR/Serif")
-  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first '*.otf' "$MFFM_DIR/Serif")
+  _serif_dirs=$(get_category_dirs Serif)
+  ext_s_reg=$(find_first 'Serif*.ttf' "$FONT_DIR" $_serif_dirs)
+  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first 'Serif*.otf' "$FONT_DIR" $_serif_dirs)
+  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first 'NotoSerif*.ttf' "$FONT_DIR" $_serif_dirs)
+  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_best_face 400 normal $_serif_dirs)
+  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first '*.ttf' $_serif_dirs)
+  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first '*.otf' $_serif_dirs)
 
   if [ -n "$ext_s_reg" ]; then
     if is_variable_font "$ext_s_reg"; then
-      # Variable serif: copy to all 4 stock serif slots, generate axis XML
+      # Variable serif: copy to stock serif slots, generate axis XML
       cp -f "$ext_s_reg" "$SYS_FONT/NotoSerif-Regular.ttf"
-      cp -f "$ext_s_reg" "$SYS_FONT/NotoSerif-Italic.ttf"
       cp -f "$ext_s_reg" "$SYS_FONT/NotoSerif-Bold.ttf"
-      cp -f "$ext_s_reg" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
       axes_info=$(extract_fvar_axes "$ext_s_reg")
       frag_file="$FONT_DIR/ext_serif.xml"
-      generate_vf_xml_fragment "$ext_s_reg" "NotoSerif-Regular.ttf" "$axes_info" > "$frag_file"
-      configure_variable_family_profile SERIF_UPRIGHT "$ext_s_reg" normal "400 700" "$frag_file"
+      generate_vf_xml_fragment "$ext_s_reg" "NotoSerif-Regular.ttf" "$axes_info" normal > "$frag_file"
+      configure_variable_family_profile SERIF_UPRIGHT "$ext_s_reg" normal "100 200 300 400 500 600 700 800 900" "$frag_file"
+
+      ext_s_ital=$(find_first '*Italic*.ttf' $_serif_dirs)
+      [ -z "$ext_s_ital" ] && ext_s_ital=$(find_first '*Italic*.otf' $_serif_dirs)
+      [ -z "$ext_s_ital" ] && ext_s_ital=$(find_best_face 400 italic $_serif_dirs)
+      if [ -n "$ext_s_ital" ] && is_variable_font "$ext_s_ital"; then
+        cp -f "$ext_s_ital" "$SYS_FONT/NotoSerif-Italic.ttf"
+        cp -f "$ext_s_ital" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
+        axes_ital_info=$(extract_fvar_axes "$ext_s_ital")
+        frag_ital_file="$FONT_DIR/ext_serif_ital.xml"
+        generate_vf_xml_fragment "$ext_s_ital" "NotoSerif-Italic.ttf" "$axes_ital_info" italic > "$frag_ital_file"
+        configure_variable_family_profile SERIF_ITALIC "$ext_s_ital" italic "100 200 300 400 500 600 700 800 900" "$frag_ital_file"
+        cat "$frag_ital_file" >> "$frag_file"
+      else
+        cp -f "$ext_s_reg" "$SYS_FONT/NotoSerif-Italic.ttf"
+        cp -f "$ext_s_reg" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
+        prune_obsolete_profile_keys SERIF_ITALIC
+      fi
+
       for xml in "$SYS_XML" "$SYS_FALLBACK"; do
         [ -f "$xml" ] || continue
         replace_family "$xml" serif "$frag_file" "split"
         replace_family "$xml" noto-serif "$frag_file" "split"
       done
-      status_ok "External Variable Serif font (${ext_s_reg##*/}) auto-configured natively"
+      status_ok "Variable Serif font (${ext_s_reg##*/}) auto-configured natively"
     else
+      prune_obsolete_profile_keys SERIF_UPRIGHT
+      prune_obsolete_profile_keys SERIF_ITALIC
       # ── Static family: discover all distinct weights + styles, bundle into NotoSerif-Regular.ttf TTC ──
       # POSIX-sh ordered list — no declare -A (not supported in mksh/ash)
       _serif_ttc_files=""
       _serif_idx_counter=0
 
       _serif_get_idx() {
-        local needle="$1" i=0 item
-        for item in $_serif_ttc_files; do
-          [ "$item" = "$needle" ] && echo "$i" && return
+        local needle="$1" i=0 line
+        [ -n "$needle" ] || { echo "0"; return; }
+        while IFS= read -r line; do
+          [ -z "$line" ] && continue
+          [ "$line" = "$needle" ] && echo "$i" && return
           i=$((i+1))
-        done
+        done << EOF
+$_serif_ttc_files
+EOF
         i=0
-        for item in $_serif_ttc_files; do
-          [ "$item" = "$_sr400" ] && echo "$i" && return
+        while IFS= read -r line; do
+          [ -z "$line" ] && continue
+          [ "$line" = "$_sr400" ] && echo "$i" && return
           i=$((i+1))
-        done
+        done << EOF
+$_serif_ttc_files
+EOF
         echo "0"
       }
 
       _serif_add_face() {
-        local file="$1" item already=0
+        local file="$1" line already=0
         [ -n "$file" ] || return
-        for item in $_serif_ttc_files; do
-          [ "$item" = "$file" ] && already=1 && break
-        done
+        while IFS= read -r line; do
+          [ "$line" = "$file" ] && already=1 && break
+        done << EOF
+$_serif_ttc_files
+EOF
         [ "$already" = "0" ] && {
-          _serif_ttc_files="${_serif_ttc_files:+$_serif_ttc_files }$file"
+          _serif_ttc_files="${_serif_ttc_files:+$_serif_ttc_files
+}$file"
           _serif_idx_counter=$((_serif_idx_counter + 1))
         }
       }
@@ -1679,32 +2012,7 @@ else
       _si100="" _si300="" _si400="" _si700=""
 
       if [ -n "$py_bin" ] && $py_bin -c "import fontTools" 2>/dev/null; then
-        _py_serif_map=$($py_bin - "$MFFM_DIR/Serif" <<'PYWEOF' 2>/dev/null
-import sys, os
-try:
-    from fontTools.ttLib import TTFont
-except ImportError:
-    sys.exit(1)
-dirs = [d for d in sys.argv[1:] if d and os.path.isdir(d)]
-for d in dirs:
-    for f in sorted(os.listdir(d)):
-        if not (f.endswith('.ttf') or f.endswith('.otf')):
-            continue
-        path = os.path.join(d, f)
-        try:
-            font = TTFont(path, lazy=True)
-            os2 = font['OS/2']
-            wt = os2.usWeightClass
-            name = font['name']
-            subfamily = (name.getDebugName(2) or '').lower()
-            fs = os2.fsSelection
-            is_italic = bool(fs & 0x01) or 'italic' in subfamily or 'oblique' in subfamily
-            style = 'italic' if is_italic else 'normal'
-            print(f"{wt}:{style}:{path}")
-        except Exception:
-            pass
-PYWEOF
-)
+        _py_serif_map=$(_py_scan_font_weights $_serif_dirs)
         if [ -n "$_py_serif_map" ]; then
           while IFS= read -r _wl; do
             [ -z "$_wl" ] && continue
@@ -1736,20 +2044,20 @@ EOF
       fi
 
       # Fallback: filename heuristic for any slots not filled by Python scan
-      [ -z "$_sr100" ] && _sr100=$(find_best_face 100 normal "$MFFM_DIR/Serif")
-      [ -z "$_sr200" ] && _sr200=$(find_best_face 200 normal "$MFFM_DIR/Serif")
-      [ -z "$_sr300" ] && _sr300=$(find_best_face 300 normal "$MFFM_DIR/Serif")
-      [ -z "$_sr400" ] && _sr400=$(find_best_face 400 normal "$MFFM_DIR/Serif")
-      [ -z "$_sr500" ] && _sr500=$(find_best_face 500 normal "$MFFM_DIR/Serif")
-      [ -z "$_sr600" ] && _sr600=$(find_best_face 600 normal "$MFFM_DIR/Serif")
-      [ -z "$_sr700" ] && _sr700=$(find_best_face 700 normal "$MFFM_DIR/Serif")
-      [ -z "$_sr800" ] && _sr800=$(find_best_face 800 normal "$MFFM_DIR/Serif")
-      [ -z "$_sr900" ] && _sr900=$(find_best_face 900 normal "$MFFM_DIR/Serif")
+      [ -z "$_sr100" ] && _sr100=$(find_best_face 100 normal $_serif_dirs)
+      [ -z "$_sr200" ] && _sr200=$(find_best_face 200 normal $_serif_dirs)
+      [ -z "$_sr300" ] && _sr300=$(find_best_face 300 normal $_serif_dirs)
+      [ -z "$_sr400" ] && _sr400=$(find_best_face 400 normal $_serif_dirs)
+      [ -z "$_sr500" ] && _sr500=$(find_best_face 500 normal $_serif_dirs)
+      [ -z "$_sr600" ] && _sr600=$(find_best_face 600 normal $_serif_dirs)
+      [ -z "$_sr700" ] && _sr700=$(find_best_face 700 normal $_serif_dirs)
+      [ -z "$_sr800" ] && _sr800=$(find_best_face 800 normal $_serif_dirs)
+      [ -z "$_sr900" ] && _sr900=$(find_best_face 900 normal $_serif_dirs)
       [ -z "$_sr400" ] && _sr400="$ext_s_reg"
-      [ -z "$_si400" ] && _si400=$(find_best_face 400 italic "$MFFM_DIR/Serif")
-      [ -z "$_si700" ] && _si700=$(find_best_face 700 italic "$MFFM_DIR/Serif")
-      [ -z "$_si100" ] && _si100=$(find_best_face 100 italic "$MFFM_DIR/Serif")
-      [ -z "$_si300" ] && _si300=$(find_best_face 300 italic "$MFFM_DIR/Serif")
+      [ -z "$_si400" ] && _si400=$(find_best_face 400 italic $_serif_dirs)
+      [ -z "$_si700" ] && _si700=$(find_best_face 700 italic $_serif_dirs)
+      [ -z "$_si100" ] && _si100=$(find_best_face 100 italic $_serif_dirs)
+      [ -z "$_si300" ] && _si300=$(find_best_face 300 italic $_serif_dirs)
 
       # Register all distinct real files (upright first, then italic)
       _serif_add_face "$_sr100"; _serif_add_face "$_sr200"; _serif_add_face "$_sr300"
@@ -1765,46 +2073,67 @@ EOF
       fi
 
       if [ -n "$py_bin" ] && $py_bin -c "import fontTools" 2>/dev/null; then
-        $py_bin - $_serif_ttc_files "$SYS_FONT/NotoSerif-Regular.ttf" <<'PYEOF' 2>/dev/null
+        _serif_ttc_out="$SYS_FONT/NotoSerif-Regular.ttf"
+        _serif_ttc_err=$(printf '%s\n' "$_serif_ttc_files" | $py_bin -c '
 import sys
 from fontTools.ttLib import TTFont, TTCollection
-args = sys.argv[1:]
-out = args[-1]
-files = [f for f in args[:-1] if f]
+out = sys.argv[1]
+files = [l.strip() for l in sys.stdin.read().splitlines() if l.strip()]
+if not files:
+    sys.exit(1)
 col = TTCollection()
 for f in files:
-    col.fonts.append(TTFont(f))
+    try:
+        col.fonts.append(TTFont(f))
+    except Exception as e:
+        sys.stderr.write(f"Error loading {f}: {e}\n")
+if not col.fonts:
+    sys.exit(1)
 col.save(out)
-PYEOF
-        # Replicate the single TTC to remaining stock serif slots
-        cp -f "$SYS_FONT/NotoSerif-Regular.ttf" "$SYS_FONT/NotoSerif-Italic.ttf"
-        cp -f "$SYS_FONT/NotoSerif-Regular.ttf" "$SYS_FONT/NotoSerif-Bold.ttf"
-        cp -f "$SYS_FONT/NotoSerif-Regular.ttf" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
-        # Build XML: upright entries
-        {
-          [ -n "$_sr100" ] && printf '    <font weight="100" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr100")"
-          [ -n "$_sr200" ] && printf '    <font weight="200" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr200")"
-          [ -n "$_sr300" ] && printf '    <font weight="300" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr300")"
-          printf '    <font weight="400" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr400")"
-          [ -n "$_sr500" ] && printf '    <font weight="500" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr500")"
-          [ -n "$_sr600" ] && printf '    <font weight="600" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr600")"
-          [ -n "$_sr700" ] && printf '    <font weight="700" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr700")"
-          [ -n "$_sr800" ] && printf '    <font weight="800" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr800")"
-          [ -n "$_sr900" ] && printf '    <font weight="900" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr900")"
-          # Italic entries
-          [ -n "$_si100" ] && printf '    <font weight="100" style="italic" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_si100")"
-          [ -n "$_si300" ] && printf '    <font weight="300" style="italic" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_si300")"
-          [ -n "$_si400" ] && printf '    <font weight="400" style="italic" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_si400")"
-          [ -n "$_si700" ] && printf '    <font weight="700" style="italic" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_si700")"
-        } > "$frag_file"
-        for xml in "$SYS_XML" "$SYS_FALLBACK"; do
-          [ -f "$xml" ] || continue
-          replace_family "$xml" serif "$frag_file" "split"
-          replace_family "$xml" noto-serif "$frag_file" "split"
-        done
-        status_ok "Static Serif TTC bundled ($_serif_idx_counter distinct faces → NotoSerif-Regular.ttf, indexed)"
+' "$_serif_ttc_out" 2>&1)
+        if [ ! -f "$_serif_ttc_out" ] || [ ! -s "$_serif_ttc_out" ]; then
+          status_warn "Serif TTC bundling failed — falling back to 4-file mode"
+          [ -n "$_serif_ttc_err" ] && mffm_log_line "  TTC error: $_serif_ttc_err"
+          local _sfb_reg="$_sr400"
+          local _sfb_ital="${_si400:-$_sr400}"
+          local _sfb_bold="${_sr700:-${_sr600:-$_sr400}}"
+          local _sfb_bital="${_si700:-$_sfb_ital}"
+          cp -f "$_sfb_reg"  "$SYS_FONT/NotoSerif-Regular.ttf"
+          cp -f "$_sfb_ital" "$SYS_FONT/NotoSerif-Italic.ttf"
+          cp -f "$_sfb_bold" "$SYS_FONT/NotoSerif-Bold.ttf"
+          cp -f "$_sfb_bital" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
+          status_ok "Static Serif installed (4-file fallback: Regular/Italic/Bold/BoldItalic)"
+        else
+          # Replicate TTC to remaining stock serif slots
+          cp -f "$_serif_ttc_out" "$SYS_FONT/NotoSerif-Italic.ttf"
+          cp -f "$_serif_ttc_out" "$SYS_FONT/NotoSerif-Bold.ttf"
+          cp -f "$_serif_ttc_out" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
+          # Build XML: upright + italic entries
+          {
+            [ -n "$_sr100" ] && printf '    <font weight="100" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr100")"
+            [ -n "$_sr200" ] && printf '    <font weight="200" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr200")"
+            [ -n "$_sr300" ] && printf '    <font weight="300" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr300")"
+            printf '    <font weight="400" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr400")"
+            [ -n "$_sr500" ] && printf '    <font weight="500" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr500")"
+            [ -n "$_sr600" ] && printf '    <font weight="600" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr600")"
+            [ -n "$_sr700" ] && printf '    <font weight="700" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr700")"
+            [ -n "$_sr800" ] && printf '    <font weight="800" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr800")"
+            [ -n "$_sr900" ] && printf '    <font weight="900" style="normal" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_sr900")"
+            # Italic entries
+            [ -n "$_si100" ] && printf '    <font weight="100" style="italic" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_si100")"
+            [ -n "$_si300" ] && printf '    <font weight="300" style="italic" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_si300")"
+            [ -n "$_si400" ] && printf '    <font weight="400" style="italic" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_si400")"
+            [ -n "$_si700" ] && printf '    <font weight="700" style="italic" index="%s">NotoSerif-Regular.ttf</font>\n' "$(_serif_get_idx "$_si700")"
+          } > "$frag_file"
+          for xml in "$SYS_XML" "$SYS_FALLBACK"; do
+            [ -f "$xml" ] || continue
+            replace_family "$xml" serif "$frag_file" "split"
+            replace_family "$xml" noto-serif "$frag_file" "split"
+          done
+          status_ok "Static Serif TTC bundled ($_serif_idx_counter distinct faces → NotoSerif-Regular.ttf, indexed)"
+        fi  # TTC success/failure
       else
-        # ── 4-file fallback using only stock filenames ──
+        # ── 4-file fallback: no Python/fontTools available ───────────────────
         local _sfb_reg="$_sr400"
         local _sfb_ital="${_si400:-$_sr400}"
         local _sfb_bold="${_sr700:-${_sr600:-$_sr400}}"
@@ -1814,14 +2143,14 @@ PYEOF
         cp -f "$_sfb_bold" "$SYS_FONT/NotoSerif-Bold.ttf"
         cp -f "$_sfb_bital" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
         status_ok "Static Serif installed (4-file fallback: Regular/Italic/Bold/BoldItalic)"
-      fi
-    fi
+      fi  # py_bin
+    fi  # is_variable_font else static
   else
     prune_obsolete_profile_keys SERIF_UPRIGHT
     prune_obsolete_profile_keys SERIF_ITALIC
     status_skip "Dedicated serif fonts not supplied"
-  fi
-fi
+  fi  # ext_s_reg
+fi  # Serif section
 
 section "4/5" "Finalizing root integration"
 
@@ -1851,6 +2180,22 @@ set_perm_recursive "$MODPATH" 0 0 0755 0644
 for script in service.sh uninstall.sh post-mount.sh; do
   [ -f "$MODPATH/$script" ] && set_perm "$MODPATH/$script" 0 0 0755
 done
+if [ -n "$VF_CONFIG_FILE" ] && [ -f "$VF_CONFIG_FILE" ]; then
+  if ! grep -Eq '^[[:space:]]*[A-Z_]+_(WGHT|WDTH)=' "$VF_CONFIG_FILE" 2>/dev/null; then
+    rm -f "$VF_CONFIG_FILE" 2>/dev/null
+    VF_CONFIG_FILE=""
+  fi
+fi
+
+# Clean leftover configuration files belonging to previous/other modules in /sdcard/MFFM
+if [ -d "$MFFM_DIR" ]; then
+  for old_conf in "$MFFM_DIR"/*.conf "$MFFM_DIR"/MFFMv14_*.conf; do
+    [ -f "$old_conf" ] || continue
+    [ -n "$VF_CONFIG_FILE" ] && [ "$old_conf" = "$VF_CONFIG_FILE" ] && continue
+    rm -f "$old_conf" 2>/dev/null
+  done
+fi
+
 rm -rf "$FONT_DIR"
 rm -f "$MODPATH/font-config.sh"
 status_ok "Permissions and cleanup"

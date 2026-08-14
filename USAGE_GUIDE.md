@@ -53,11 +53,11 @@ MFFMv14/
 │   ├── Serif/          ← Place Serif fonts here (optional)
 │   └── Bengali/        ← Place Bengali fonts here (optional)
 ├── Old Modules/        ← Old MFFM ZIPs to upgrade (for update.py)
-├── Updated Modules/    ← Output of update.py
-├── dist/               ← Output compiled module ZIPs land here
+├── dist/               ← Output compiled module ZIPs land here (build.py & update.py)
 ├── template/           ← Module template files (do not edit manually)
 ├── build.py            ← Main build script
 ├── update.py           ← Legacy module migration script
+├── package_template.py ← Clean source template packaging script
 ├── termux-build.sh     ← On-device Termux build script
 ├── font_module.py      ← Core compilation engine
 ├── requirements.txt
@@ -97,11 +97,12 @@ Fonts/Bengali/      ← Bengali/Bangla script family
 
 You may combine any of these. Building a Serif-only module (with Sans but no Mono/Bengali) is valid.
 
-### Font Filename Rules
+### Font Weight & Metadata Detection Rules
 
-**Filenames do not matter for weight detection.** The compiler reads the **OS/2 `usWeightClass`** field and **`fsSelection` italic bit** directly from the font binary. Any filename is accepted — descriptive names are recommended for your own organization but are not required.
-
-Accepted formats: `.ttf`, `.otf`, `.ttc`, `.otc`, `.woff`, `.woff2`
+- **Hybrid OS/2 & Name Table Analysis**: The compiler inspects the OS/2 `usWeightClass` field and cross-checks font name records (Subfamily, Typographic Family, PostScript name).
+- **Accurate Named Weight Resolution**: If a font face sets `usWeightClass = 400` as a generic fallback but its name table specifies "Black", "Light", "ExtraBold", or "Medium" (common in certain vendor fonts like Linotype), MFFMv14 automatically resolves it to its true weight (e.g., 900 Black) rather than collapsing all faces to 400.
+- **Strict Android Range Clamping**: All discovered weights are clamped to Android's supported 100–900 range without duplicate slot collisions.
+- **Accepted formats**: `.ttf`, `.otf`, `.ttc`, `.otc`, `.woff`, `.woff2`
 
 ---
 
@@ -124,8 +125,10 @@ The script will:
 
 ```
 dist/
-└── mffm14-YourFont-2026.08.08.zip    ← Flash this in your root manager
+└── mffm14-YourFont-2026.08.14.zip    ← Flash this in your root manager
 ```
+
+> **Clean Filename Format:** Output ZIPs use the standardized `mffm14-<FontName>-<Version>.zip` format. In `module.prop`, the module is assigned a distinct `id=mffm14_<slug>` identifier for full Magisk, Magisk Alpha, KernelSU, and APatch compatibility.
 
 ---
 
@@ -140,7 +143,7 @@ python build.py [options]
 | `--fonts-dir <path>` | Use a different source font directory (default: `./Fonts`) |
 | `--mode auto\|static\|variable` | Force font mode detection (default: auto) |
 | `--name "Display Name"` | Override the module display name in module.prop |
-| `--version "2026.08.08"` | Override the version string |
+| `--version "2026.08.14"` | Override the version string |
 | `--version-code <N>` | Override the numeric versionCode |
 | `--output-dir <path>` | Output directory for the ZIP (default: `./dist`) |
 | `--no-zip` | Prepare module files without packaging into a ZIP |
@@ -155,6 +158,7 @@ python build.py [options]
 | `--no-interactive` | Disable interactive feature selection prompt |
 | `--centered-colon` | Inject a contextual centered colon for digit clock display |
 | `--no-centered-colon` | Disable centered colon injection |
+| `--template` | Package `MFFMv14-Source-Template.zip` (excludes `RELEASE_POST.txt` and `.git*` files) |
 
 ---
 
@@ -214,13 +218,13 @@ To upgrade a module built with an older MFFM version to the MFFMv14 template:
    ```
    python update.py
    ```
-3. Updated ZIPs are saved to `Updated Modules/`
+3. Updated ZIPs are saved to `dist/`
 
 ```
 python update.py [options]
 
   --old-dir <path>      Source folder with old ZIPs (default: ./Old Modules)
-  --output-dir <path>   Output folder (default: ./Updated Modules)
+  --output-dir <path>   Output folder (default: ./dist)
   --mode auto|static|variable
   --name "Name"         Override display name for all outputs
   --no-sign             Skip signing
@@ -414,20 +418,30 @@ When flashed, the MFFMv14 module:
 1. **Replaces the system sans-serif font** — patches `fonts.xml` and `font_fallback.xml` with the bundled font family, covering all weight slots (100 Thin through 900 Black) and italic variants.
 2. **Patches Google/Pixel product fonts** — rewrites `fonts_customization.xml` on Pixel and Pixel-like ROMs to redirect Google Sans and variable font families to the new font.
 3. **Applies optional external fonts** — picks up Bengali, Serif, and Monospace fonts from `/sdcard/MFFM/` subdirectories and patches the relevant system fallback entries.
-4. **Runs custom scripts** — executes any `.sh` scripts found in `/sdcard/MFFM/` for post-install customization.
+4. **Hardened Mint Stock XML Discovery & Caching** — leverages Magisk root mirrors (`$MIRROR/...`) and persistent pristine stock XML caching (`/data/adb/mffm_stock_xml/`) to always patch against clean stock ROM font configurations without ever modifying or unmounting live partition overlays. Reflashing over an active font module without rebooting is 100% safe.
+5. **Universal Variable Font Configuration** — generates and maintains `.conf` files for all detected variable fonts (Sans, Serif, Monospace, Bengali) regardless of whether the primary Sans font is static or variable.
+6. **Runs custom scripts** — executes any `.sh` scripts found in `/sdcard/MFFM/` for post-install customization.
 
 ---
 
-## 3.2 Supported Root Environments
+## 3.2 Supported Root Environments & Storage Resolution
 
 | Root Manager | Detection Method | Overlay Method |
 |---|---|---|
-| **Magisk** | `command -v magisk` | Standard Magisk module overlay |
+| **Magisk / Magisk Alpha** | `command -v magisk` | Standard Magisk / Magisk Alpha module overlay |
 | **KernelSU** | `$KSU=true` or `$KSU_VER_CODE` | OverlayFS with `setfattr` opaque attr |
 | **APatch** | `$APATCH=true` or `$APATCH_VER_CODE` | OverlayFS with `setfattr` opaque attr |
 | **Mountify** | `$MOUNTIFY=true` or modules dir | Defers to Mountify overlay system |
 
-The module detects the root environment automatically and applies the appropriate overlay strategy. No manual configuration is needed.
+### Dynamic Multi-User Storage Resolution
+
+The installer dynamically resolves the user's active internal storage across:
+- `/storage/emulated/0`
+- `/data/media/0`
+- `/mnt/pass_through/0/emulated/0`
+- `/sdcard`
+
+If Termux is installed on the device but has not yet been opened or granted storage permissions, the installer automatically assigns permissions via Android package manager and AppOps (`pm grant com.termux android.permission.READ_EXTERNAL_STORAGE`, `appops set com.termux MANAGE_EXTERNAL_STORAGE allow`).
 
 ---
 
@@ -468,9 +482,9 @@ For each optional family (Bengali, Serif, Monospace), the installer checks sourc
 
 When static fonts are placed in the `/sdcard/MFFM/` subdirectories, the installer runs a **two-phase weight discovery**:
 
-### Phase 1 — OS/2 `usWeightClass` scan (Python + fontTools)
+### Phase 1 — OS/2 `usWeightClass` & Name-Table scan (Python + fontTools)
 
-If Python and fontTools are available (via Termux), the installer reads the **OS/2 `usWeightClass`** field directly from each font's binary. This correctly identifies all weight slots regardless of filename.
+If Python and fontTools are available (via Termux), the installer reads the **OS/2 `usWeightClass`** field and inspects typographic name records directly from each font's binary. This correctly identifies all weight slots (including generic 400 faces named "Black", "Light", etc.) regardless of filename.
 
 **Any filename works** — including Android font cache filenames like `7a4f1b0cdc12b2c1-s.p.ttf`.
 
@@ -534,38 +548,49 @@ Variable fonts (containing an `fvar` table) placed in `/sdcard/MFFM/` subdirecto
 1. **Detection** — reads the first 8 KB of the font binary for the `fvar` signature
 2. **Axis extraction** — uses Python's built-in `struct` module (no fontTools) to read axis tags, min/default/max values
 3. **XML generation** — generates per-weight `<font axis="wght=N">` entries clamped to the font's actual axis range
-4. **Auto-config** — creates a `.conf` file in `/sdcard/MFFM/` for live axis tuning (see Section 3.8)
+4. **Auto-config** — creates or updates a `.conf` file in `/sdcard/MFFM/` for live axis tuning (see Section 3.8)
 
 If Python is not available at all, axis extraction falls back to a safe default range of `wght:300:400:700`.
 
 ---
 
-## 3.8 Variable Font Axis Tuning (`.conf` Files)
+## 3.8 Universal Variable Font Configuration (`.conf` Files)
 
-For variable-font modules (built with a variable font in `Fonts/Sans/`), a configuration file is auto-created at:
+Whenever any Variable Font is detected — **Sans-serif, Serif, Monospace, or Bengali** (whether bundled in the module or placed in `/sdcard/MFFM/`) — a configuration file is auto-created or updated at:
 
 ```
 /sdcard/MFFM/MFFMv14_<FamilyName>_<IdentityHash>.conf
 ```
 
-This file contains one entry per weight slot per axis profile. You can edit the values and reflash to apply custom axis positions:
+### Static Sans with Variable Other Families
+Even if the module's primary Sans font is static, if you supply a Variable Serif, Monospace, or Bengali font in `/sdcard/MFFM/`, the installer automatically initializes the `.conf` file and adds configurable axis controls for those variable families.
 
 ```ini
 # SANS-SERIF / UPRIGHT
-# Android 100 (THIN): variable wght range 100..900
+# Android 100 (THIN): variable wght range 100..700
 SANS_UPRIGHT_THIN_WGHT=100
-SANS_UPRIGHT_LIGHT_WGHT=300
 SANS_UPRIGHT_REGULAR_WGHT=400
-SANS_UPRIGHT_MEDIUM_WGHT=500
 SANS_UPRIGHT_BOLD_WGHT=700
-...
+SANS_UPRIGHT_WDTH=100
+
+# BENGALI / UPRIGHT
+# Android 100 (THIN): variable wght range 100..700
+BENGALI_UPRIGHT_THIN_WGHT=100
+BENGALI_UPRIGHT_REGULAR_WGHT=400
+BENGALI_UPRIGHT_BOLD_WGHT=700
+
+# MONOSPACE / UPRIGHT
+MONOSPACE_UPRIGHT_REGULAR_WGHT=400
+
+# SERIF / UPRIGHT
+SERIF_UPRIGHT_REGULAR_WGHT=400
+SERIF_UPRIGHT_BOLD_WGHT=700
 ```
 
-### Config rules
-- Values are validated against the font's actual axis range on every flash
-- Out-of-range or malformed values are auto-reset to the font's default and flagged `[!!]`
-- Config is **preserved across module updates** when the module identity hash matches
-- Obsolete keys (from removed font profiles) are **auto-pruned** on reflash
+### Reflash Auto-Pruning & Safety Rules
+- **Automatic Key Pruning**: If a variable font profile was present in `.conf` on flash #1, but is later removed or replaced with a static font on reflash, the installer **automatically prunes the obsolete keys** (`MONOSPACE_UPRIGHT_*`, `BENGALI_UPRIGHT_*`, `SERIF_UPRIGHT_*`, `SANS_*`) from `.conf`.
+- **Weight Clamping**: Initial default values generated in `.conf` are strictly clamped to the font's actual `wght_min..wght_max` range (e.g. 100..700), preventing out-of-range value errors.
+- **Config Persistence**: Custom axis positions are preserved across module updates when the module identity hash matches.
 
 ---
 
@@ -578,6 +603,16 @@ The module patches the following system files (copies to module overlay, never m
 | `/system/etc/fonts.xml` | Primary font family definitions |
 | `/system/etc/font_fallback.xml` | Script/language fallback families |
 | `/system/product/etc/fonts_customization.xml` | Google Sans / Pixel product overrides |
+
+### Strict Pristine Mint Stock Recovery
+Before patching, the installer extracts the strict untouched original XML configurations via a multi-tier non-destructive hierarchy:
+1. **Persistent Validated Cache** (`/data/adb/mffm_stock_xml/`): Read first if confirmed clean and unadulterated.
+2. **Magisk & Magisk Alpha Root Mirrors**: Searches across `$MAGISK_PATH/.magisk/mirror`, `/debug_ramdisk/.magisk/mirror`, `/data/adb/magisk/mirror`, `/dev/.magisk/mirror`, and `/sbin/.magisk/mirror`.
+3. **Mountify & KernelSU/APatch OverlayFS Lowerdir**: Dynamically parses `/proc/mounts` for active OverlayFS lowerdirs (`/system`, `/system_root`, `/product`), directly reading the untouched underlying ROM partition layer.
+4. **Isolated Block Device Read-Only Temp Mount**: Resolves the hardware block device from `/proc/mounts` (e.g. `/dev/block/mapper/system`, `/dev/block/by-name/system`) and temporarily mounts it read-only in an isolated scratch directory (`/dev/.mffm_stock_probe_$$`) to extract pristine ROM files directly with zero side effects.
+5. **Direct Mount**: Used only if verified clean of any active font module overrides.
+
+The installer **never** issues destructive live `umount` operations on system partition overlays, keeping the root mount namespace and `/data/adb` 100% stable and intact.
 
 ---
 
@@ -620,6 +655,10 @@ Place any `.sh` scripts in `/sdcard/MFFM/` (up to 2 directory levels deep). The 
 
 ## 3.12 Troubleshooting
 
+### Flashing over an existing font module without rebooting
+
+**Fix:** In MFFMv14, persistent pristine stock XML caching (`/data/adb/mffm_stock_xml/`) and Magisk mirror discovery allow the installer to always patch against clean, unadulterated stock ROM font XMLs without executing live `umount` operations on system partition overlays. Reflashing a new module over an existing font module without rebooting or uninstalling is completely safe and keeps the root manager mount namespace and `/data/adb` intact.
+
 ### Bengali/Serif/Monospace fonts detected but not bundled into TTC
 
 **Cause:** Termux is not installed or fontTools is not installed.
@@ -644,3 +683,4 @@ Place any `.sh` scripts in `/sdcard/MFFM/` (up to 2 directory levels deep). The 
 
 **Cause:** Another font module is active and takes priority, or system font cache needs clearing.
 **Fix:** Disable/uninstall any other active font modules and reboot. If the issue persists, wipe the Dalvik/ART cache from recovery.
+
