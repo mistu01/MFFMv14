@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
@@ -14,7 +15,19 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-API_URL = "https://api.github.com/repos/MrCarb0n/zipsignerust/releases/latest"
+# Supply-chain pin: the release tag ZipSignerust publishes plus the exact
+# SHA-256 of every binary we are willing to execute. The tag alone is not a
+# pin (the project tags its release "latest"), so the digests are the real
+# gate — if the release is re-published with different bytes, downloads fail
+# until these constants are re-verified and bumped together.
+ZIPSIGNERUST_TAG = "latest"
+ZIPSIGNERUST_RELEASE_URL = f"https://api.github.com/repos/MrCarb0n/zipsignerust/releases/tags/{ZIPSIGNERUST_TAG}"
+ZIPSIGNERUST_SHA256 = {
+    "zipsignerust-android-arm64": "531ffe746bb0d76c2d2957acd6c71a12d42580ea5539a01859d1b6139f64d592",
+    "zipsignerust-android-armv7": "406359208378d94dd71a5f40a8a5f1bb67c9d68ab03dc103c01dc4917dcd495c",
+    "zipsignerust-linux-x64": "dc51bec0646f025a90a182f6f39cdb0a73e23dfa6bd9432bc16e870004c47ac9",
+    "zipsignerust-windows-x64.exe": "d0bda8d29faf69794dba2de445f335a0d53ca72ff3b427b69fb2efe6f82d879f",
+}
 CACHE_NAME = ".mffm-signer"
 
 
@@ -40,29 +53,52 @@ def _request(url: str) -> urllib.request.Request:
     return urllib.request.Request(url, headers={"User-Agent": "MFFMv14-builder", "Accept": "application/vnd.github+json"})
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _ensure_binary(root: Path) -> Path:
     path_binary = shutil.which("zipsignerust") or shutil.which("zipsignerust.exe")
     cache = root / CACHE_NAME / "bin"
     name = _asset_name()
     binary = cache / name
+    expected_hash = ZIPSIGNERUST_SHA256.get(name)
     if binary.exists():
-        binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
-        return binary
+        if expected_hash is None or _sha256_file(binary) == expected_hash:
+            binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
+            return binary
+        print(f"Warning: cached {name} failed SHA-256 verification; re-downloading from the pinned release")
+        binary.unlink()
 
     try:
-        with urllib.request.urlopen(_request(API_URL), timeout=30) as response:
+        with urllib.request.urlopen(_request(ZIPSIGNERUST_RELEASE_URL), timeout=30) as response:
             release = json.loads(response.read().decode("utf-8"))
         asset = next(item for item in release.get("assets", []) if item.get("name") == name)
         cache.mkdir(parents=True, exist_ok=True)
         temp = binary.with_suffix(binary.suffix + ".download")
         with urllib.request.urlopen(_request(asset["browser_download_url"]), timeout=90) as response, temp.open("wb") as handle:
             shutil.copyfileobj(response, handle)
+        if expected_hash is not None:
+            actual_hash = _sha256_file(temp)
+            if actual_hash != expected_hash:
+                temp.unlink(missing_ok=True)
+                raise ZipSignerError(
+                    f"Downloaded {name} SHA-256 mismatch: got {actual_hash}, expected {expected_hash}. "
+                    "The pinned ZipSignerust release may have been re-published; verify the new binary "
+                    "and update ZIPSIGNERUST_TAG/ZIPSIGNERUST_SHA256 in zipsigner_auto.py."
+                )
         temp.replace(binary)
         binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
         return binary
+    except ZipSignerError:
+        raise
     except Exception as exc:
         if path_binary:
-            print(f"Warning: download failed; using ZipSignerust from PATH: {exc}")
+            print(f"Warning: download failed; using ZipSignerust from PATH (unpinned): {exc}")
             return Path(path_binary)
         raise ZipSignerError(f"Could not obtain ZipSignerust: {exc}") from exc
 

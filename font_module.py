@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Literal
@@ -38,6 +39,63 @@ WEIGHT_LABELS = (
     (r"light", 300),
     (r"regular|normal|book|roman", 400),
 )
+
+CATEGORY_ORDER = ("sans", "mono", "serif", "bengali")
+OPTIONAL_CATEGORIES = ("mono", "serif", "bengali")
+
+
+@dataclass(frozen=True)
+class FontCategory:
+    """Describes one supported font family category.
+
+    The Python build pipeline (directory/stem classification, face routing,
+    XML fragment emission) is fully driven by this registry. Adding a new
+    script family is mostly a new table entry here, plus installer-side
+    support in template/customize.sh (fallback file sets, TTC aliases and
+    the Android fallback families to patch).
+    """
+
+    key: str
+    label: str
+    default_dir: str
+    dir_aliases: tuple[str, ...]
+    stem_keywords: tuple[str, ...]
+    stem_excludes: tuple[str, ...] = ()
+    family_keywords: tuple[str, ...] = ()
+    fragment_name: str = ""
+
+
+FONT_CATEGORIES: dict[str, FontCategory] = {
+    cat.key: cat
+    for cat in (
+        FontCategory(
+            key="sans", label="Sans-serif", default_dir="Sans",
+            dir_aliases=("sans", "sans-serif"),
+            stem_keywords=(),
+        ),
+        FontCategory(
+            key="mono", label="Monospace", default_dir="Monospace",
+            dir_aliases=("monospace", "mono"),
+            stem_keywords=("mono", "code", "consolas", "courier"),
+            family_keywords=("mono", "code", "consolas", "courier"),
+            fragment_name="mono.xml",
+        ),
+        FontCategory(
+            key="serif", label="Serif", default_dir="Serif",
+            dir_aliases=("serif",),
+            stem_keywords=("serif",), stem_excludes=("sans",),
+            family_keywords=("serif", "bookerly", "times", "georgia"),
+            fragment_name="serif.xml",
+        ),
+        FontCategory(
+            key="bengali", label="Bengali", default_dir="Bengali",
+            dir_aliases=("bengali", "beng"),
+            stem_keywords=("bengali", "beng"),
+            family_keywords=("bengali", "beng"),
+            fragment_name="bengali.xml",
+        ),
+    )
+}
 
 
 @dataclass(frozen=True)
@@ -101,6 +159,25 @@ def write_props(path: Path, props: dict[str, str]) -> None:
     keys = [key for key in preferred if key in props]
     keys.extend(key for key in props if key not in keys)
     path.write_text("".join(f"{key}={props[key]}\n" for key in keys), encoding="utf-8", newline="\n")
+
+
+TEMPLATE_COPY_ITEMS = (
+    "module.prop", "customize.sh", "service.sh", "uninstall.sh", "post-mount.sh",
+    "font-config.sh", "META-INF",
+)
+
+
+def copy_template(source_dir: Path, destination_dir: Path) -> None:
+    """Copy the shared template payload; Files/ is created empty for compiled output."""
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    for name in TEMPLATE_COPY_ITEMS:
+        source = source_dir / name
+        target = destination_dir / name
+        if source.is_dir():
+            shutil.copytree(source, target)
+        elif source.is_file():
+            shutil.copy2(source, target)
+    (destination_dir / "Files").mkdir(exist_ok=True)
 
 
 def clean_family_name(value: str) -> str:
@@ -240,14 +317,45 @@ def _inspect_font(path: Path, font_number: int | None, category: str = "sans") -
         )
 
 
+def classify_source_path(rel_parts: list[str], stem_lower: str) -> str:
+    """Map a source file to a category by path parts, then filename stem.
+
+    Directory match precedence is mono > serif > bengali > sans, matching the
+    legacy hard-coded chain (a file under Sans/ never falls through to stem
+    heuristics; unknown directories do).
+    """
+    for key in ("mono", "serif", "bengali", "sans"):
+        if any(part in FONT_CATEGORIES[key].dir_aliases for part in rel_parts):
+            return key
+    for key in OPTIONAL_CATEGORIES:
+        cat = FONT_CATEGORIES[key]
+        if cat.stem_keywords and any(keyword in stem_lower for keyword in cat.stem_keywords) \
+                and not any(excluded in stem_lower for excluded in cat.stem_excludes):
+            return key
+    return "sans"
+
+
+def classify_face_category(face: SourceFace) -> str:
+    """Route a discovered face using its metadata family/style keywords."""
+    family_lower = face.family.lower()
+    style_lower = face.style_name.lower()
+    for key in OPTIONAL_CATEGORIES:
+        cat = FONT_CATEGORIES[key]
+        if face.category == key or any(
+            keyword in family_lower or keyword in style_lower for keyword in cat.family_keywords
+        ):
+            return key
+    return "sans"
+
+
 def discover_faces(fonts_dir: Path) -> list[SourceFace]:
     TTCollection, _font = require_fonttools()
     if not fonts_dir.is_dir():
         fonts_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Automatically ensure mandatory family subdirectories exist
-    for sub in ("Sans", "Monospace", "Serif", "Bengali"):
-        (fonts_dir / sub).mkdir(parents=True, exist_ok=True)
+    for key in CATEGORY_ORDER:
+        (fonts_dir / FONT_CATEGORIES[key].default_dir).mkdir(parents=True, exist_ok=True)
 
     # 2. Strict Rule: Reject font files placed directly in root of fonts_dir
     root_fonts = [
@@ -256,14 +364,16 @@ def discover_faces(fonts_dir: Path) -> list[SourceFace]:
     ]
     if root_fonts:
         sample_names = ", ".join(p.name for p in root_fonts[:3])
+        dir_lines = "\n".join(
+            f"  - {'Primary ' if key == 'sans' else ''}{FONT_CATEGORIES[key].label} font"
+            f" -> '{fonts_dir / FONT_CATEGORIES[key].default_dir}'"
+            for key in CATEGORY_ORDER
+        )
         raise SystemExit(
             f"Strict layout rule error: Font file(s) [{sample_names}] found directly in '{fonts_dir}'.\n"
             f"Fonts MUST be placed inside their respective subdirectories:\n"
-            f"  - Primary Sans-serif font -> '{fonts_dir / 'Sans'}'\n"
-            f"  - Monospace font          -> '{fonts_dir / 'Monospace'}'\n"
-            f"  - Serif font              -> '{fonts_dir / 'Serif'}'\n"
-            f"  - Bengali font            -> '{fonts_dir / 'Bengali'}'\n"
-            f"Please move your fonts into '{fonts_dir / 'Sans'}' (or 'Monospace'/'Serif'/'Bengali')."
+            f"{dir_lines}\n"
+            f"Please move your fonts into '{fonts_dir / FONT_CATEGORIES['sans'].default_dir}' (or 'Monospace'/'Serif'/'Bengali')."
         )
 
     file_entries: list[tuple[Path, str]] = []
@@ -272,30 +382,13 @@ def discover_faces(fonts_dir: Path) -> list[SourceFace]:
             rel_parts = [part.lower() for part in p.relative_to(fonts_dir).parts[:-1]]
             if not rel_parts:
                 continue
-            if any(part in ("monospace", "mono") for part in rel_parts):
-                cat = "mono"
-            elif any(part == "serif" for part in rel_parts):
-                cat = "serif"
-            elif any(part in ("bengali", "beng") for part in rel_parts):
-                cat = "bengali"
-            elif any(part in ("sans", "sans-serif") for part in rel_parts):
-                cat = "sans"
-            else:
-                stem_lower = p.stem.lower()
-                if any(m in stem_lower for m in ("mono", "code", "consolas", "courier")):
-                    cat = "mono"
-                elif "serif" in stem_lower and "sans" not in stem_lower:
-                    cat = "serif"
-                elif any(m in stem_lower for m in ("bengali", "beng")):
-                    cat = "bengali"
-                else:
-                    cat = "sans"
-            file_entries.append((p, cat))
+            file_entries.append((p, classify_source_path(rel_parts, p.stem.lower())))
 
     if not file_entries:
+        expected = ", ".join(f"'{fonts_dir / FONT_CATEGORIES[key].default_dir}'" for key in CATEGORY_ORDER)
         raise SystemExit(
-            f"No font files found in '{fonts_dir / 'Sans'}', '{fonts_dir / 'Monospace'}', '{fonts_dir / 'Serif'}', or '{fonts_dir / 'Bengali'}'.\n"
-            f"Please place your primary body font file(s) into '{fonts_dir / 'Sans'}'."
+            f"No font files found in {expected}.\n"
+            f"Please place your primary body font file(s) into '{fonts_dir / FONT_CATEGORIES['sans'].default_dir}'."
         )
 
     faces: list[SourceFace] = []
@@ -1125,13 +1218,14 @@ def _write_fragments(files_dir: Path, normal: list[tuple[int, str, str]], conden
         (files_dir / "serif.xml").write_text(_serif_fragment(normal) + "\n", encoding="utf-8", newline="\n")
 
 
-def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, mono_faces: list[SourceFace] | None = None, serif_faces: list[SourceFace] | None = None, bengali_faces: list[SourceFace] | None = None) -> tuple[list[SourceFace], tuple[str, ...], int | None]:
+def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, optional_faces: dict[str, list[SourceFace]] | None = None) -> tuple[list[SourceFace], tuple[str, ...], int | None]:
     TTCollection, _font = require_fonttools()
+    optional_faces = {key: list(value) for key, value in (optional_faces or {}).items() if value}
     ordered = _dedupe_static(faces)
     fonts = []
     mono_index: int | None = None
 
-    if len(ordered) == 1 and not mono_faces and not serif_faces and not bengali_faces:
+    if len(ordered) == 1 and not optional_faces:
         face = ordered[0]
         output_name = "DroidSans.ttf"
         font = _open_font(face)
@@ -1152,34 +1246,16 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
             _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
             fonts.append(font)
 
-        mface_idx_map: dict[int, int] = {}
-        if mono_faces:
-            for mface in mono_faces:
-                mfont = _open_font(mface)
-                _process_font(mfont, keep_hinting=keep_hinting, prefix_family=prefix_family)
-                midx = len(fonts)
-                mface_idx_map[id(mface)] = midx
-                if mono_index is None:
-                    mono_index = midx
-                fonts.append(mfont)
-
-        sface_idx_map: dict[int, int] = {}
-        if serif_faces:
-            for sface in serif_faces:
-                sfont = _open_font(sface)
-                _process_font(sfont, keep_hinting=keep_hinting, prefix_family=prefix_family)
-                sidx = len(fonts)
-                sface_idx_map[id(sface)] = sidx
-                fonts.append(sfont)
-
-        bface_idx_map: dict[int, int] = {}
-        if bengali_faces:
-            for bface in bengali_faces:
-                bfont = _open_font(bface)
-                _process_font(bfont, keep_hinting=keep_hinting, prefix_family=prefix_family)
-                bidx = len(fonts)
-                bface_idx_map[id(bface)] = bidx
-                fonts.append(bfont)
+        face_idx_maps: dict[str, dict[int, int]] = {}
+        for cat_key in OPTIONAL_CATEGORIES:
+            for face in optional_faces.get(cat_key, ()):
+                font = _open_font(face)
+                _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
+                idx = len(fonts)
+                face_idx_maps.setdefault(cat_key, {})[id(face)] = idx
+                if cat_key == "mono" and mono_index is None:
+                    mono_index = idx
+                fonts.append(font)
 
         output_name = "DroidSans.ttf"
         collection = TTCollection()
@@ -1189,17 +1265,12 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
         for font in fonts:
             font.close()
 
-    if mono_faces:
-        mono_lines = _generate_full_family_xml(mono_faces, "DroidSans.ttf", lambda f: mface_idx_map[id(f)])
-        (files_dir / "mono.xml").write_text("\n".join(mono_lines) + "\n", encoding="utf-8", newline="\n")
-
-    if serif_faces:
-        serif_lines = _generate_full_family_xml(serif_faces, "DroidSans.ttf", lambda f: sface_idx_map[id(f)])
-        (files_dir / "serif.xml").write_text("\n".join(serif_lines) + "\n", encoding="utf-8", newline="\n")
-
-    if bengali_faces:
-        bengali_lines = _generate_full_family_xml(bengali_faces, "DroidSans.ttf", lambda f: bface_idx_map[id(f)])
-        (files_dir / "bengali.xml").write_text("\n".join(bengali_lines) + "\n", encoding="utf-8", newline="\n")
+    for cat_key in OPTIONAL_CATEGORIES:
+        cat_faces = optional_faces.get(cat_key) or []
+        if not cat_faces:
+            continue
+        lines = _generate_full_family_xml(cat_faces, "DroidSans.ttf", lambda f, ck=cat_key: face_idx_maps[ck][id(f)])
+        (files_dir / FONT_CATEGORIES[cat_key].fragment_name).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
     normal: list[tuple[int, str, str]] = []
     condensed: list[tuple[int, str, str]] = []
@@ -1209,7 +1280,7 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
     if not normal:
         normal = list(condensed)
 
-    _write_fragments(files_dir, normal, condensed, has_custom_serif=bool(serif_faces))
+    _write_fragments(files_dir, normal, condensed, has_custom_serif=bool(optional_faces.get("serif")))
     return ordered, (output_name,), mono_index
 
 
@@ -1241,8 +1312,9 @@ def _save_face(face: SourceFace, output: Path, *, keep_hinting: bool, prefix_fam
         font.close()
 
 
-def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, mono_faces: list[SourceFace] | None = None, serif_faces: list[SourceFace] | None = None, bengali_faces: list[SourceFace] | None = None) -> tuple[list[SourceFace], tuple[str, ...], int | None]:
+def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, optional_faces: dict[str, list[SourceFace]] | None = None) -> tuple[list[SourceFace], tuple[str, ...], int | None]:
     TTCollection, _font = require_fonttools()
+    optional_faces = {key: list(value) for key, value in (optional_faces or {}).items() if value}
     upright, italic = _pick_variable_faces(faces)
     output_name = "DroidSans.ttf"
     var_fonts = []
@@ -1260,40 +1332,20 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
         italic_idx = len(var_fonts)
         var_fonts.append(italic_font)
 
-    mface_idx_map: dict[int, int] = {}
-    if mono_faces:
-        for mface in mono_faces:
-            mfont = _open_font(mface)
-            _process_font(mfont, keep_hinting=keep_hinting, prefix_family=prefix_family)
-            midx = len(var_fonts)
-            mface_idx_map[id(mface)] = midx
-            if mono_index is None:
-                mono_index = midx
-            var_fonts.append(mfont)
-        mono_lines = _generate_full_family_xml(mono_faces, output_name, lambda f: mface_idx_map[id(f)])
-        (files_dir / "mono.xml").write_text("\n".join(mono_lines) + "\n", encoding="utf-8", newline="\n")
-
-    sface_idx_map: dict[int, int] = {}
-    if serif_faces:
-        for sface in serif_faces:
-            sfont = _open_font(sface)
-            _process_font(sfont, keep_hinting=keep_hinting, prefix_family=prefix_family)
-            sidx = len(var_fonts)
-            sface_idx_map[id(sface)] = sidx
-            var_fonts.append(sfont)
-        serif_lines = _generate_full_family_xml(serif_faces, output_name, lambda f: sface_idx_map[id(f)])
-        (files_dir / "serif.xml").write_text("\n".join(serif_lines) + "\n", encoding="utf-8", newline="\n")
-
-    bface_idx_map: dict[int, int] = {}
-    if bengali_faces:
-        for bface in bengali_faces:
-            bfont = _open_font(bface)
-            _process_font(bfont, keep_hinting=keep_hinting, prefix_family=prefix_family)
-            bidx = len(var_fonts)
-            bface_idx_map[id(bface)] = bidx
-            var_fonts.append(bfont)
-        bengali_lines = _generate_full_family_xml(bengali_faces, output_name, lambda f: bface_idx_map[id(f)])
-        (files_dir / "bengali.xml").write_text("\n".join(bengali_lines) + "\n", encoding="utf-8", newline="\n")
+    face_idx_maps: dict[str, dict[int, int]] = {}
+    for cat_key in OPTIONAL_CATEGORIES:
+        for face in optional_faces.get(cat_key, ()):
+            font = _open_font(face)
+            _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
+            idx = len(var_fonts)
+            face_idx_maps.setdefault(cat_key, {})[id(face)] = idx
+            if cat_key == "mono" and mono_index is None:
+                mono_index = idx
+            var_fonts.append(font)
+        cat_faces = optional_faces.get(cat_key) or []
+        if cat_faces:
+            lines = _generate_full_family_xml(cat_faces, output_name, lambda f, ck=cat_key: face_idx_maps[ck][id(f)])
+            (files_dir / FONT_CATEGORIES[cat_key].fragment_name).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
     collection = TTCollection()
     collection.fonts = var_fonts
@@ -1312,7 +1364,7 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
     if not entries:
         raise SystemExit("The variable font has no usable wght axis values between 100 and 900")
 
-    _write_fragments(files_dir, entries, [], has_custom_serif=bool(serif_faces))
+    _write_fragments(files_dir, entries, [], has_custom_serif=bool(optional_faces.get("serif")))
     return [upright] + ([italic] if italic != upright else []), tuple(payload), mono_index
 
 
@@ -1861,25 +1913,82 @@ def inject_centered_colon(font_path: Path) -> bool:
         return False
 
 
-def _separate_primary_and_optional_faces(all_faces: list[SourceFace], files_dir: Path) -> tuple[list[SourceFace], list[SourceFace], list[SourceFace], list[SourceFace]]:
-    sans_faces: list[SourceFace] = []
-    mono_faces: list[SourceFace] = []
-    serif_faces: list[SourceFace] = []
-    bengali_faces: list[SourceFace] = []
-
+def _separate_faces_by_category(all_faces: list[SourceFace]) -> dict[str, list[SourceFace]]:
+    """Split discovered faces per category, with legacy fallbacks preserved:
+    optional families are deduped, and when no Sans face exists the Sans slot
+    falls back to every face so a build can still proceed."""
+    separated: dict[str, list[SourceFace]] = {key: [] for key in CATEGORY_ORDER}
     for face in all_faces:
-        fam = face.family.lower()
-        sub = face.style_name.lower()
-        if face.category == "mono" or any(m in fam or m in sub for m in ("mono", "code", "consolas", "courier")):
-            mono_faces.append(face)
-        elif face.category == "serif" or any(m in fam or m in sub for m in ("serif", "bookerly", "times", "georgia")):
-            serif_faces.append(face)
-        elif face.category == "bengali" or any(m in fam or m in sub for m in ("bengali", "beng")):
-            bengali_faces.append(face)
-        else:
-            sans_faces.append(face)
+        separated[classify_face_category(face)].append(face)
+    separated["sans"] = separated["sans"] or list(all_faces)
+    for key in OPTIONAL_CATEGORIES:
+        separated[key] = _dedupe_static(separated[key])
+    return separated
 
-    return (sans_faces or all_faces), _dedupe_static(mono_faces), _dedupe_static(serif_faces), _dedupe_static(bengali_faces)
+
+def _collect_source_entries(fonts_dir: Path) -> list[tuple[Path, str]]:
+    """Find all source font files and classify each into a category."""
+    entries: list[tuple[Path, str]] = []
+    for path in sorted(fonts_dir.rglob("*")):
+        if path.is_file() and path.suffix.lower() in FONT_EXTENSIONS:
+            rel_parts = [part.lower() for part in path.relative_to(fonts_dir).parts[:-1]]
+            entries.append((path, classify_source_path(rel_parts, path.stem.lower())))
+    return entries
+
+
+def inspect_fonts(fonts_dir: Path, requested_mode: str = "auto") -> dict[str, object]:
+    """Scan a fonts workspace and report everything a build would detect, without compiling."""
+    temp_fonts_dir = Path(tempfile.mkdtemp(prefix="mffm-inspect-"))
+    try:
+        for path, category in _collect_source_entries(fonts_dir):
+            sub_dir = temp_fonts_dir / category
+            sub_dir.mkdir(parents=True, exist_ok=True)
+            _ensure_ttf(path, sub_dir)
+
+        separated = _separate_faces_by_category(discover_faces(temp_fonts_dir))
+        notes: list[str] = []
+        categories: dict[str, dict[str, object]] = {}
+        sans_provided = any(classify_face_category(face) == "sans" for face in separated["sans"])
+        for key in CATEGORY_ORDER:
+            cat_faces = separated[key]
+            info: dict[str, object] = {"label": FONT_CATEGORIES[key].label, "faces": []}
+            if cat_faces:
+                info["mode"] = detect_mode(cat_faces, requested_mode)
+                families = sorted({face.family for face in cat_faces})
+                info["families"] = families
+                if len(families) > 1:
+                    notes.append(
+                        f"{FONT_CATEGORIES[key].label}: multiple families ({', '.join(families)}); "
+                        "builds accept exactly one family per category"
+                    )
+                info["faces"] = [
+                    {
+                        "file": face.label,
+                        "family": face.family,
+                        "style_name": face.style_name,
+                        "weight": face.weight,
+                        "weight_name": WEIGHT_NAMES.get(face.weight, str(face.weight)),
+                        "style": face.style,
+                        "condensed": face.condensed,
+                        "variable": face.variable,
+                        "axes": {tag: list(values) for tag, values in face.axes.items()},
+                    }
+                    for face in cat_faces
+                ]
+            categories[key] = info
+
+        report: dict[str, object] = {"fonts_dir": str(fonts_dir), "categories": categories, "notes": notes}
+        primary = separated["sans"] or separated["bengali"] or separated["serif"] or separated["mono"]
+        if primary:
+            report["primary_mode"] = detect_mode(primary, requested_mode)
+            report["primary_families"] = sorted({face.family for face in primary})
+            if not sans_provided:
+                notes.append("No Sans-serif faces found; Sans is mandatory for normal builds")
+        else:
+            notes.append("No font faces found in any subdirectory")
+        return report
+    finally:
+        shutil.rmtree(temp_fonts_dir, ignore_errors=True)
 
 
 
@@ -1910,37 +2019,14 @@ def compile_fonts(
     temp_fonts_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        source_entries: list[tuple[Path, str]] = []
-        for path in sorted(fonts_dir.rglob("*")):
-            if path.is_file() and path.suffix.lower() in FONT_EXTENSIONS:
-                rel_parts = [part.lower() for part in path.relative_to(fonts_dir).parts[:-1]]
-                if any(part in ("monospace", "mono") for part in rel_parts):
-                    cat = "mono"
-                elif any(part == "serif" for part in rel_parts):
-                    cat = "serif"
-                elif any(part in ("bengali", "beng") for part in rel_parts):
-                    cat = "bengali"
-                elif any(part in ("sans", "sans-serif") for part in rel_parts):
-                    cat = "sans"
-                else:
-                    stem_lower = path.stem.lower()
-                    if any(m in stem_lower for m in ("mono", "code", "consolas", "courier")):
-                        cat = "mono"
-                    elif "serif" in stem_lower and "sans" not in stem_lower:
-                        cat = "serif"
-                    elif any(m in stem_lower for m in ("bengali", "beng")):
-                        cat = "bengali"
-                    else:
-                        cat = "sans"
-                source_entries.append((path, cat))
-
-        for path, cat in source_entries:
-            sub_dir = temp_fonts_dir / cat
+        for path, category in _collect_source_entries(fonts_dir):
+            sub_dir = temp_fonts_dir / category
             sub_dir.mkdir(parents=True, exist_ok=True)
             _ensure_ttf(path, sub_dir)
 
         all_faces = discover_faces(temp_fonts_dir)
-        faces, mono_faces, serif_faces, bengali_faces = _separate_primary_and_optional_faces(all_faces, files_dir)
+        separated = _separate_faces_by_category(all_faces)
+        faces, mono_faces, serif_faces, bengali_faces = (separated[key] for key in CATEGORY_ORDER)
 
         sans_ttf_paths = sorted({face.path for face in faces})
         mono_ttf_paths = sorted({face.path for face in mono_faces})
@@ -1948,11 +2034,14 @@ def compile_fonts(
         bengali_ttf_paths = sorted({face.path for face in bengali_faces})
 
         applied_features: list[str] = []
-        category_paths = (
-            ("sans", sans_ttf_paths, "Sans-serif"),
-            ("mono", mono_ttf_paths, "Monospace"),
-            ("serif", serif_ttf_paths, "Serif"),
-            ("bengali", bengali_ttf_paths, "Bengali"),
+        category_paths = tuple(
+            (key, paths, FONT_CATEGORIES[key].label)
+            for key, paths in (
+                ("sans", sans_ttf_paths),
+                ("mono", mono_ttf_paths),
+                ("serif", serif_ttf_paths),
+                ("bengali", bengali_ttf_paths),
+            )
         )
         # Per-category centered colon decisions. None = unset (prompt in interactive mode);
         # a global --centered-colon/--no-centered-colon flag applies to every category.
@@ -2031,7 +2120,10 @@ def compile_fonts(
                     inject_centered_colon(font_path)
 
         all_faces = discover_faces(temp_fonts_dir)
-        faces, mono_faces, serif_faces, bengali_faces = _separate_primary_and_optional_faces(all_faces, files_dir)
+        separated = _separate_faces_by_category(all_faces)
+        faces, mono_faces, serif_faces, bengali_faces = (separated[key] for key in CATEGORY_ORDER)
+        # When Sans is missing, _separate_faces_by_category already routed every
+        # face into the Sans slot, so the optional lists still apply alongside.
         primary_faces = faces or bengali_faces or serif_faces or mono_faces
         if not primary_faces:
             raise SystemExit("No valid font faces were found in input subdirectories.")
@@ -2042,10 +2134,11 @@ def compile_fonts(
         family = next(iter(families))
         if prefix_family:
             family = transform_family_name(family)
+        optional_faces = {key: separated[key] for key in OPTIONAL_CATEGORIES}
         if mode == "static":
-            selected, payload, mono_index = _compile_static(primary_faces if not faces else faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, mono_faces=mono_faces if faces else [], serif_faces=serif_faces if faces else [], bengali_faces=bengali_faces if faces else [])
+            selected, payload, mono_index = _compile_static(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, optional_faces=optional_faces)
         else:
-            selected, payload, mono_index = _compile_variable(primary_faces if not faces else faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, mono_faces=mono_faces if faces else [], serif_faces=serif_faces if faces else [], bengali_faces=bengali_faces if faces else [])
+            selected, payload, mono_index = _compile_variable(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, optional_faces=optional_faces)
 
         primary = payload[0]
         has_any_vf = (mode == "variable") or any(f.variable for f in mono_faces) or any(f.variable for f in serif_faces) or any(f.variable for f in bengali_faces)

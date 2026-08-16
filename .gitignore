@@ -56,3 +56,6 @@ Files/*
 !Files/.gitkeep
 
 
+
+# Local build config (build.py --save-config)
+.mffm-build.json

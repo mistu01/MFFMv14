@@ -4,22 +4,21 @@
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import zipfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+from build import ROOT, zip_timestamp
 
 # Explicit list of root files to include (RELEASE_POST.txt and Git files are strictly EXCLUDED)
 INCLUDE_FILES = (
     "build.py",
     "font_module.py",
     "requirements.txt",
+    "requirements-dev.txt",
     "termux-build.sh",
     "update.py",
     "USAGE_GUIDE.md",
-    "MFFMv14_DISTRIBUTION_GUIDE.txt",
-    "RELEASE_NOTES.txt",
+    "CHANGELOG.md",
     "zipsigner_auto.py",
 )
 
@@ -39,7 +38,7 @@ def build_template_zip(output_dir: Path | None = None) -> Path:
     target_dir.mkdir(parents=True, exist_ok=True)
     output_zip = target_dir / "MFFMv14-Source-Template.zip"
 
-    timestamp = dt.datetime.now().timetuple()[:6]
+    timestamp = zip_timestamp()
     with zipfile.ZipFile(output_zip, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for f_name in INCLUDE_FILES:
             file_path = ROOT / f_name

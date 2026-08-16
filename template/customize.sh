@@ -28,9 +28,13 @@ LOG_DIR=${LOG_DIR:-/sdcard/MFFM}
 LOG_FILE=${LOG_FILE:-"$LOG_DIR/mffmv14_debug_$(date '+%Y%m%d_%H%M%S' 2>/dev/null || echo current).log"}
 mkdir -p "$LOG_DIR" 2>/dev/null
 
-# Clean old log files from previous installations in LOG_DIR before initializing fresh log
+# Prune old debug logs, keeping the newest few for post-mortem comparison with
+# this run's log. Only mffmv14_debug_*.log files are touched; unrelated user
+# files in LOG_DIR are left alone.
+MFFM_LOG_KEEP=${MFFM_LOG_KEEP:-3}
 if [ -d "$LOG_DIR" ]; then
-  for old_log in "$LOG_DIR"/mffmv14_debug_*.log "$LOG_DIR"/*.log; do
+  old_logs=$(ls -t "$LOG_DIR"/mffmv14_debug_*.log 2>/dev/null | tail -n +"$((MFFM_LOG_KEEP + 1))")
+  for old_log in $old_logs; do
     [ -f "$old_log" ] && [ "$old_log" != "$LOG_FILE" ] && rm -f "$old_log" 2>/dev/null
   done
 fi

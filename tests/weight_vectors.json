@@ -1,0 +1,219 @@
+{
+  "_comment": "Shared weight-resolution test vectors. python_cases pin the build-time engine (font_module._inspect_font); shell_filename_cases pin the flash-time filename heuristic (find_best_face in template/customize.sh) via tests/shell/run_find_best_face.sh. Keep both engines green against this file so they cannot drift apart.",
+  "python_cases": [
+    {
+      "name": "plain regular os2",
+      "filename": "Test-Regular.ttf",
+      "family": "Test",
+      "style_name": "Regular",
+      "us_weight_class": 400,
+      "expected_weight": 400,
+      "expected_style": "normal"
+    },
+    {
+      "name": "linotype-style black misclassified as 400",
+      "filename": "Test-Black.ttf",
+      "family": "Linotype Demo",
+      "style_name": "Black",
+      "us_weight_class": 400,
+      "expected_weight": 900,
+      "expected_style": "normal"
+    },
+    {
+      "name": "os2 900 agrees with black name",
+      "filename": "Test-Black.ttf",
+      "family": "Test",
+      "style_name": "Black",
+      "us_weight_class": 900,
+      "expected_weight": 900,
+      "expected_style": "normal"
+    },
+    {
+      "name": "bold name beats semibold os2",
+      "filename": "Test-SemiBold.ttf",
+      "family": "Test",
+      "style_name": "Bold",
+      "us_weight_class": 600,
+      "expected_weight": 700,
+      "expected_style": "normal"
+    },
+    {
+      "name": "regular name does not beat os2 500",
+      "filename": "Test-Regular.ttf",
+      "family": "Test",
+      "style_name": "Regular",
+      "us_weight_class": 500,
+      "expected_weight": 500,
+      "expected_style": "normal"
+    },
+    {
+      "name": "android font cache filename uses os2",
+      "filename": "7a4f1b0cdc12b2c1-s.p.ttf",
+      "family": "Cached Family",
+      "style_name": "Regular",
+      "us_weight_class": 700,
+      "expected_weight": 700,
+      "expected_style": "normal"
+    },
+    {
+      "name": "extralight",
+      "filename": "Test-ExtraLight.ttf",
+      "family": "Test",
+      "style_name": "ExtraLight",
+      "us_weight_class": 200,
+      "expected_weight": 200,
+      "expected_style": "normal"
+    },
+    {
+      "name": "spaced semi bold",
+      "filename": "Test.ttf",
+      "family": "Test",
+      "style_name": "Semi Bold",
+      "us_weight_class": 400,
+      "expected_weight": 600,
+      "expected_style": "normal"
+    },
+    {
+      "name": "hairline",
+      "filename": "Test-Hairline.ttf",
+      "family": "Test",
+      "style_name": "Hairline",
+      "us_weight_class": 100,
+      "expected_weight": 100,
+      "expected_style": "normal"
+    },
+    {
+      "name": "medium name with generic 400 os2",
+      "filename": "Test-Medium.ttf",
+      "family": "Test",
+      "style_name": "Medium",
+      "us_weight_class": 400,
+      "expected_weight": 500,
+      "expected_style": "normal"
+    },
+    {
+      "name": "italic fsselection bit",
+      "filename": "Test-Italic.ttf",
+      "family": "Test",
+      "style_name": "Italic",
+      "us_weight_class": 400,
+      "italic": true,
+      "expected_weight": 400,
+      "expected_style": "italic"
+    },
+    {
+      "name": "condensed width class",
+      "filename": "Test-Condensed.ttf",
+      "family": "Test",
+      "style_name": "Condensed",
+      "us_weight_class": 400,
+      "us_width_class": 3,
+      "expected_weight": 400,
+      "expected_style": "normal",
+      "expected_condensed": true
+    },
+    {
+      "name": "nonstandard os2 550 resolves via name",
+      "filename": "Test-Medium.ttf",
+      "family": "Test",
+      "style_name": "Medium",
+      "us_weight_class": 550,
+      "expected_weight": 500,
+      "expected_style": "normal"
+    },
+    {
+      "name": "bengali directory routing",
+      "filename": "NotoSansBengali-Regular.ttf",
+      "family": "Noto Sans Bengali",
+      "style_name": "Regular",
+      "us_weight_class": 400,
+      "dir": "Bengali",
+      "expected_weight": 400,
+      "expected_style": "normal",
+      "expected_category": "bengali"
+    },
+    {
+      "name": "variable wght axis detected",
+      "filename": "TestVar-Roman.ttf",
+      "family": "Test Var",
+      "style_name": "Regular",
+      "us_weight_class": 400,
+      "wght_axis": [100, 400, 900],
+      "expected_weight": 400,
+      "expected_style": "normal",
+      "expected_variable": true
+    }
+  ],
+  "shell_filename_cases": [
+    {
+      "name": "exact bold at 700",
+      "files": ["MyFont-Bold.ttf"],
+      "weight": 700,
+      "style": "normal",
+      "expected": "MyFont-Bold.ttf"
+    },
+    {
+      "name": "android cache name scores below threshold",
+      "files": ["7a4f1b0cdc12b2c1-s.p.ttf"],
+      "weight": 700,
+      "style": "normal",
+      "expected": null
+    },
+    {
+      "name": "medium not reused for regular slot",
+      "files": ["MyFont-Medium.ttf"],
+      "weight": 400,
+      "style": "normal",
+      "expected": null
+    },
+    {
+      "name": "extrabold beats bold at 800",
+      "files": ["MyFont-Bold.ttf", "MyFont-ExtraBold.ttf"],
+      "weight": 800,
+      "style": "normal",
+      "expected": "MyFont-ExtraBold.ttf"
+    },
+    {
+      "name": "semibold target preferred over bold",
+      "files": ["MyFont-SemiBold.ttf", "MyFont-Bold.ttf"],
+      "weight": 600,
+      "style": "normal",
+      "expected": "MyFont-SemiBold.ttf"
+    },
+    {
+      "name": "bold italic matched for italic style",
+      "files": ["MyFont-BoldItalic.ttf"],
+      "weight": 700,
+      "style": "italic",
+      "expected": "MyFont-BoldItalic.ttf"
+    },
+    {
+      "name": "rg suffix scores high at 400",
+      "files": ["MyFont-rg.ttf"],
+      "weight": 400,
+      "style": "normal",
+      "expected": "MyFont-rg.ttf"
+    },
+    {
+      "name": "thin beats hairline at 100",
+      "files": ["MyFont-Hairline.ttf", "MyFont-Thin.ttf"],
+      "weight": 100,
+      "style": "normal",
+      "expected": "MyFont-Thin.ttf"
+    },
+    {
+      "name": "black wins over heavy at 900 on tie",
+      "files": ["MyFont-Black.ttf", "MyFont-Heavy.ttf"],
+      "weight": 900,
+      "style": "normal",
+      "expected": "MyFont-Black.ttf"
+    },
+    {
+      "name": "italic file skipped for normal style",
+      "files": ["MyFont-MediumItalic.ttf"],
+      "weight": 500,
+      "style": "normal",
+      "expected": null
+    }
+  ]
+}

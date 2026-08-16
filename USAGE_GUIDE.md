@@ -39,6 +39,15 @@ pip install -r requirements.txt
 | `brotli` | WOFF2 font decompression |
 | `opentype-feature-freezer` | OpenType layout feature freezing into default glyph mappings |
 
+### Running the test suite (developers)
+
+The repository ships with a pytest suite that builds synthetic fonts on the fly (no binary fixtures needed):
+
+```
+python -m pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest tests
+```
+
 ---
 
 ## 1.2 Workspace Layout
@@ -158,6 +167,10 @@ python build.py [options]
 | `--no-interactive` | Disable interactive feature selection prompt |
 | `--centered-colon` | Inject a contextual centered colon for digit clock display |
 | `--no-centered-colon` | Disable centered colon injection |
+| `--config <path>` | Load build options from a JSON config file (default: `.mffm-build.json` in the project root, when present) |
+| `--no-config` | Ignore any build config file |
+| `--save-config` | Save the effective build options to the config file for repeat builds |
+| `--inspect` | Report detected fonts, weights and modes without building |
 | `--template` | Package `MFFMv14-Source-Template.zip` (excludes `RELEASE_POST.txt` and `.git*` files) |
 
 ---
@@ -227,13 +240,66 @@ python update.py [options]
   --output-dir <path>   Output folder (default: ./dist)
   --mode auto|static|variable
   --name "Name"         Override display name for all outputs
+  --version "2026.08.14"
+                       Override the version string
+  --version-code <N>    Override the numeric versionCode
   --no-sign             Skip signing
   --force               Overwrite existing output ZIPs
   --keep-hinting        Preserve TrueType hinting
-  --features TAGS       Freeze OpenType features during rebuild
+  --no-prefix           Do not prefix the internal font family name with MFFM
+  --features TAGS       Freeze OpenType features for Sans-serif (or all families)
+  --mono-features TAGS  Freeze OpenType features for the Monospace family
+  --serif-features TAGS Freeze OpenType features for the Serif family
+  --bengali-features TAGS
+                       Freeze OpenType features for the Bengali family
+  --interactive         Force interactive feature selection prompt
+  --no-interactive      Disable interactive feature selection prompt
+  --centered-colon      Inject a contextual centered colon for digit clock display
+  --no-centered-colon   Disable centered colon injection
+  --keep-temp           Keep extracted temporary working directories
 ```
 
 Supported old primary font names that `update.py` recognises: `DroidSans.ttc`, `DroidSans.ttf`, `DroidSans.otf`, `RobotoStatic-Regular.ttf`, `DroidSans-Bold.ttf`.
+
+---
+
+## 1.10 Build Configuration File
+
+`build.py` can persist your build options in a JSON config file so repeat builds are a single command:
+
+```
+python build.py --features ss01,zero --centered-colon --save-config
+python build.py          # reuses everything saved above
+```
+
+- The default config is `.mffm-build.json` in the project root; it is loaded automatically whenever it exists.
+- `--config <path>` loads a different file; `--no-config` ignores all config files.
+- Explicit CLI flags always win over config values — the config only fills in what you did not pass.
+- Recognized keys: `fonts_dir`, `mode`, `name`, `version`, `version_code`, `output_dir`, `keep_hinting`, `no_prefix`, `features`, `mono_features`, `serif_features`, `bengali_features`, `centered_colon`, `interactive`. Paths are stored relative to the project root when possible.
+- Packaging switches (`--no-zip`, `--no-sign`, `--template`) are deliberately not persisted.
+
+---
+
+## 1.11 Inspecting Fonts Without Building
+
+```
+python build.py --inspect [--fonts-dir <path>]
+```
+
+Runs the full discovery pipeline — format conversion, family/weight/style detection, axis extraction — and prints every detected face per family (Sans-serif, Monospace, Serif, Bengali) with its resolved weight name, mode and variable-axis ranges, plus warnings (e.g. multiple families, missing Sans). Nothing is compiled or written. Use this to verify weight detection before building, the same triage output you would get from a real build summary.
+
+---
+
+## 1.12 Reproducible Build Output
+
+Setting the standard `SOURCE_DATE_EPOCH` environment variable produces byte-identical output ZIPs across rebuilds (entry timestamps are clamped to the ZIP format's 1980 epoch):
+
+```
+export SOURCE_DATE_EPOCH=1723680000
+python build.py --no-sign --version 1.0 --version-code 1
+```
+
+Combine with `--save-config` for fully repeatable "same input, same ZIP" builds. Signing is skipped in this example because signatures embed their own timestamps.
 
 ---
 
@@ -623,7 +689,7 @@ Every flash writes a full debug log to:
 /sdcard/MFFM/mffmv14_debug_<YYYYMMDD_HHMMSS>.log
 ```
 
-Old logs from previous installs are deleted automatically at the start of each new flash. The log includes complete `set -x` trace output — every command executed, every variable value, every decision branch.
+The three most recent debug logs are kept for comparison with the current run; older ones are deleted automatically at the start of each new flash (only `mffmv14_debug_*.log` files are pruned — unrelated files in the folder are untouched). The log includes complete `set -x` trace output — every command executed, every variable value, every decision branch.
 
 ### Log markers
 

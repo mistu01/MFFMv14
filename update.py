@@ -11,8 +11,8 @@ from pathlib import Path
 
 from build import ROOT, write_zip
 from font_module import (
-    FONT_EXTENSIONS, clean_family_name, compile_fonts, display_name_for_mode,
-    read_props, slugify, update_module_metadata,
+    FONT_EXTENSIONS, clean_family_name, compile_fonts, copy_template,
+    display_name_for_mode, read_props, slugify, update_module_metadata,
 )
 from zipsigner_auto import ZipSignerError, sign_zip
 
@@ -106,20 +106,6 @@ def find_sources(old_root: Path) -> list[Path]:
 TEMPLATE_DIR = ROOT / "template"
 
 
-def copy_template(destination: Path) -> None:
-    destination.mkdir(parents=True, exist_ok=True)
-    if TEMPLATE_DIR.is_dir():
-        for item in TEMPLATE_DIR.iterdir():
-            if item.name == "Files":
-                continue
-            target = destination / item.name
-            if item.is_dir():
-                shutil.copytree(item, target)
-            else:
-                shutil.copy2(item, target)
-    (destination / "Files").mkdir(parents=True, exist_ok=True)
-
-
 def copy_optional_assets(old_root: Path, new_root: Path) -> None:
     old_files = old_root / "Files"
     if not old_files.is_dir():
@@ -169,7 +155,7 @@ def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) ->
                 target_name = f"{index}-{target_name}"
             shutil.copy2(source, source_dir / target_name)
 
-        copy_template(module_dir)
+        copy_template(TEMPLATE_DIR, module_dir)
         copy_optional_assets(old_root, module_dir)
         result = compile_fonts(
             source_dir, module_dir,
