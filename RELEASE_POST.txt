@@ -1,14 +1,14 @@
 # MFFMv14 — Universal Android Font Module Builder
 Version: 2026.08.27
 
-Turn any font into a flashable module for Magisk, KernelSU, and APatch — on your PC or directly on your phone!
+Turn any font into a flashable module for Magisk, KernelSU, and APatch — on your PC or directly on your phone using Termux!
 
 ━━━━━━━━━━━━━━━━━━━━━━
 ✨ What's New
 ━━━━━━━━━━━━━━━━━━━━━━
 
-📱 No More Termux Required
-• Flash the new MFFM Runtime module once, and your phone can now handle all font installations and weight bundling automatically.
+📦 Standalone MFFM Runtime Module
+• No need to install Termux or set up pip just to flash fonts with extra languages/weights! Flash the `mffm-runtime` module once, and your phone will handle all on-device font scanning, metrics fixing, and TTC weight bundling automatically during module installation.
 
 🛡️ Google Font Update Blocker
 • Stops Google Play System updates from silently reverting your custom fonts.
@@ -16,29 +16,32 @@ Turn any font into a flashable module for Magisk, KernelSU, and APatch — on yo
 • Includes a handy one-tap "Action" button in KernelSU / APatch / MMRL to immediately restore your fonts without rebooting.
 
 🎨 Better Font & Multi-Language Support
-• Smarter font detection: reads actual font weights even if filenames are random or encrypted cache names.
+• Smarter weight detection: reads actual font weights directly from the font binary, so any filename works (even hashed cache names).
 • Fixed monospace and serif font priority so your code and text fonts don't clash.
 • Full variable font tuning: customize weights and widths in /sdcard/MFFM/*.conf.
 • Centered clock colons (12:30) and OpenType feature freezing (slashed zeros, custom alternates).
 
 🧹 Automatic Storage Cleanup
-• Installation files clean up after themselves automatically, saving internal phone storage.
+• Runtime installer automatically cleans up its heavy package files after extraction, saving internal phone storage.
 
 ━━━━━━━━━━━━━━━━━━━━━━
-🚀 Quick How-To
+🚀 How to Build & Use
 ━━━━━━━━━━━━━━━━━━━━━━
 
 Option 1: Build on PC
 1. Put your font files in Fonts/Sans/ (Monospace, Serif, and Bengali folders optional)
 2. Run: python build.py
-3. Flash the generated ZIP in dist/ via Magisk / KernelSU / APatch
+3. Flash the generated ZIP from dist/ in Magisk / KernelSU / APatch
 
-Option 2: On-Device (Recommended)
-1. Flash mffm-runtime-*.zip once in Magisk / KernelSU / APatch
-2. Flash any MFFMv14 font module — it will automatically configure everything!
+Option 2: Build on Android (Termux)
+1. Extract MFFMv14-Source-Template.zip into Termux
+2. Put your fonts into Fonts/Sans/
+3. Run: sh termux-build.sh (compiles and flashes automatically)
 
-Add Extra Fonts Later:
-• Drop any Bengali, Serif, or Monospace fonts into /sdcard/MFFM/<Family>/ and simply reflash the module. Any filename works!
+Option 3: Applying Extra Fonts On-Device
+1. Flash mffm-runtime-*.zip once in your root manager
+2. Drop any Bengali, Serif, or Monospace fonts into /sdcard/MFFM/<Family>/
+3. Reflash your font module — it will scan and bundle all weights on-the-fly!
 
 ━━━━━━━━━━━━━━━━━━━━━━
 © 2026 MFFM / Mistu
