@@ -10,6 +10,32 @@ if [ -d "/data/data/com.termux/files/usr/bin" ]; then
   mkdir -p "$TMPDIR" 2>/dev/null
 fi
 
+# --- MFFM Shared Runtime (Option 1) ---
+# Portable Python + fontTools installed once via mffm-runtime module to /data/adb/mffm_runtime
+MFFM_RUNTIME_DEST="/data/adb/mffm_runtime"
+mffm_find_runtime_python() {
+  # 1. Exec-safe destination (preferred)
+  if [ -x "$MFFM_RUNTIME_DEST/bin/python3" ]; then printf '%s' "$MFFM_RUNTIME_DEST/bin/python3"; return 0; fi
+  if [ -x "$MFFM_RUNTIME_DEST/bin/python" ]; then printf '%s' "$MFFM_RUNTIME_DEST/bin/python"; return 0; fi
+  # 2. Termux / system fallback
+  if command -v python3 >/dev/null 2>&1; then command -v python3; return 0; fi
+  if command -v python >/dev/null 2>&1; then command -v python; return 0; fi
+  return 1
+}
+mffm_runtime_helper() {
+  # Wrapper that prefers mffm-helper CLI (scan/ttc) when runtime provides it
+  if [ -x "$MFFM_RUNTIME_DEST/bin/mffm-helper" ]; then printf '%s' "$MFFM_RUNTIME_DEST/bin/mffm-helper"; return 0; fi
+  return 1
+}
+mffm_has_runtime() {
+  [ -x "$MFFM_RUNTIME_DEST/bin/python3" ] || [ -x "$MFFM_RUNTIME_DEST/bin/mffm-helper" ]
+}
+# Pre-export runtime lib to LD_LIBRARY_PATH if present (for brotli .so)
+if [ -d "$MFFM_RUNTIME_DEST/lib" ]; then
+  export LD_LIBRARY_PATH="$MFFM_RUNTIME_DEST/lib:$LD_LIBRARY_PATH"
+  export PYTHONPATH="$MFFM_RUNTIME_DEST/lib/python3.11/site-packages:$MFFM_RUNTIME_DEST/lib/python3.11:$MFFM_RUNTIME_DEST/lib:$MFFM_RUNTIME_DEST:$PYTHONPATH"
+fi
+
 if ! command -v ui_print >/dev/null 2>&1; then
   ui_print() { echo "$1"; }
 fi
@@ -450,12 +476,10 @@ LOWER_SYSTEM=$(get_overlay_lowerdir /system 2>/dev/null)
 LOWER_PRODUCT=$(get_overlay_lowerdir /product 2>/dev/null)
 [ -n "$LOWER_PRODUCT" ] || LOWER_PRODUCT=$(get_overlay_lowerdir /system/product 2>/dev/null)
 
-STOCK_XML_BACKUP="/data/adb/mffm_stock_xml"
-
 find_pristine_xml() {
   local target_rel_path=$1
   local part_type=$2
-  local cached_file="$STOCK_XML_BACKUP/${target_rel_path##*/}"
+  local temp_dest="/dev/.mffm_stock_${target_rel_path##*/}"
   local result=""
 
   # 1. Tier 1: Hardware Block Device Direct Read-Only Probe (Direct Physical Storage - 100% Genuine Factory ROM)
@@ -476,13 +500,9 @@ find_pristine_xml() {
       2>/dev/null)
   fi
   if [ -n "$block_dev" ]; then
-    local temp_dest="/dev/.mffm_extracted_${target_rel_path##*/}"
     rm -f "$temp_dest" 2>/dev/null
     if extract_from_block_dev "$block_dev" "$target_rel_path" "$temp_dest"; then
-      mkdir -p "$STOCK_XML_BACKUP" 2>/dev/null
-      cp -f "$temp_dest" "$cached_file" 2>/dev/null
-      rm -f "$temp_dest" 2>/dev/null
-      printf '%s\n' "$cached_file"
+      printf '%s\n' "$temp_dest"
       return 0
     fi
     rm -f "$temp_dest" 2>/dev/null
@@ -509,9 +529,7 @@ find_pristine_xml() {
         2>/dev/null)
     fi
     if [ -n "$result" ] && [ -f "$result" ]; then
-      mkdir -p "$STOCK_XML_BACKUP" 2>/dev/null
-      cp -f "$result" "$cached_file" 2>/dev/null
-      printf '%s\n' "$cached_file"
+      printf '%s\n' "$result"
       return 0
     fi
   done
@@ -531,19 +549,11 @@ find_pristine_xml() {
       2>/dev/null)
   fi
   if [ -n "$result" ] && [ -f "$result" ]; then
-    mkdir -p "$STOCK_XML_BACKUP" 2>/dev/null
-    cp -f "$result" "$cached_file" 2>/dev/null
-    printf '%s\n' "$cached_file"
+    printf '%s\n' "$result"
     return 0
   fi
 
-  # 4. Tier 4: Saved Persistent Stock Cache
-  if [ -f "$cached_file" ]; then
-    printf '%s\n' "$cached_file"
-    return 0
-  fi
-
-  # 5. Tier 5: Direct System Path
+  # 4. Tier 4: Direct System Path
   local direct_path=""
   if [ "$part_type" = "system" ]; then
     direct_path=$(first_file /system_root/system$target_rel_path /system$target_rel_path 2>/dev/null)
@@ -1330,7 +1340,7 @@ ui_print "    Root manager : $ROOT_IMPL"
 ui_print "    Font model   : $FONT_MODE"
 ui_print "    Font family  : $FONT_FAMILY"
 
-if [ "$FONT_MODE" = "variable" ] || [ -n "$VF_MONO_AXIS_META" ] || [ -n "$VF_SERIF_UPRIGHT_AXIS_META" ] || [ -n "$VF_BENGALI_AXIS_META" ]; then
+if [ "$FONT_MODE" = "variable" ] || [ -n "$VF_UPRIGHT_AXIS_META" ] || [ -n "$VF_ITALIC_AXIS_META" ] || [ -n "$VF_MONO_AXIS_META" ] || [ -n "$VF_SERIF_UPRIGHT_AXIS_META" ] || [ -n "$VF_BENGALI_AXIS_META" ]; then
   prepare_variable_config
   ui_print "    Axis config  : $VF_CONFIG_FILE"
 fi
@@ -1342,13 +1352,68 @@ if [ "$FONT_MODE" != "variable" ]; then
   prune_obsolete_profile_keys CONDENSED_ITALIC
 fi
 
+# ── Dynamic On-Device Compilation Engine (MFFM Runtime) ──────────────────────
+_helper=$(mffm_runtime_helper 2>/dev/null)
+if [ -n "$_helper" ] && [ -x "$_helper" ]; then
+  _should_compile=0
+  if [ ! -f "$FONT_DIR/sans.xml" ] || [ ! -f "$FONT_DIR/DroidSans.ttf" ]; then
+    _should_compile=1
+  else
+    for _chk_dir in "$MFFM_DIR/Sans" "$MFFM_DIR/sans" "$MFFM_DIR/Monospace" "$MFFM_DIR/monospace" "$MFFM_DIR/mono" "$MFFM_DIR/Serif" "$MFFM_DIR/serif" "$MFFM_DIR/Bengali" "$MFFM_DIR/bengali" "$FONT_DIR/Sans" "$FONT_DIR/Monospace" "$FONT_DIR/Serif" "$FONT_DIR/Bengali"; do
+      if [ -d "$_chk_dir" ] && [ "$(ls -A "$_chk_dir" 2>/dev/null)" ]; then
+        _should_compile=1; break
+      fi
+    done
+  fi
+
+  if [ "$_should_compile" = "1" ]; then
+    ui_print "- Dynamic compilation via MFFM Runtime..."
+    "$_helper" compile-bundle \
+      --out-dir "$FONT_DIR" \
+      --sans-dir "$FONT_DIR/Sans" --sans-dir "$MFFM_DIR/Sans" --sans-dir "$FONT_DIR" \
+      --mono-dir "$FONT_DIR/Monospace" --mono-dir "$MFFM_DIR/Monospace" \
+      --serif-dir "$FONT_DIR/Serif" --serif-dir "$MFFM_DIR/Serif" \
+      --bengali-dir "$FONT_DIR/Bengali" --bengali-dir "$MFFM_DIR/Bengali" >/dev/null 2>&1
+    if [ -f "$FONT_DIR/font-config.sh" ]; then
+      . "$FONT_DIR/font-config.sh"
+      FONT_FILES="DroidSans.ttf"
+    fi
+  fi
+fi
+
+# Re-evaluate the variable-axis config after the on-device compiler may have
+# refreshed font-config.sh (FONT_MODE / FONT_FAMILY / VF_*_AXIS_META). The
+# build-time call above ran against pre-compile state, so without this
+# re-check the /sdcard/MFFM/MFFMv14_*.conf file is either never created (when
+# the build was static and the user dropped VF fonts in /sdcard/MFFM/) or
+# carries stale weights and gets cleaned up by the post-process gate.
+if [ "$FONT_MODE" = "variable" ] || [ -n "$VF_UPRIGHT_AXIS_META" ] || [ -n "$VF_ITALIC_AXIS_META" ] || [ -n "$VF_MONO_AXIS_META" ] || [ -n "$VF_SERIF_UPRIGHT_AXIS_META" ] || [ -n "$VF_BENGALI_AXIS_META" ]; then
+  # Drop the build-time config so a stale file cannot shadow the runtime's
+  # axis metadata; ensure_variable_config_file will recreate it with the
+  # current VF_* variables.
+  if [ -n "$VF_CONFIG_FILE" ] && [ -f "$VF_CONFIG_FILE" ]; then
+    rm -f "$VF_CONFIG_FILE" 2>/dev/null
+  fi
+  VF_CONFIG_FILE=""
+  prepare_variable_config
+  ui_print "    Axis config (runtime): $VF_CONFIG_FILE"
+fi
+
 section "1/5" "Installing primary font payload"
 
-for font_file in $FONT_FILES; do
-  [ -f "$FONT_DIR/$font_file" ] || fail "Payload font is missing: $font_file"
-  cp -f "$FONT_DIR/$font_file" "$SYS_FONT/$font_file" || fail "Could not install $font_file"
-  status_ok "$font_file"
-done
+if [ -f "$FONT_DIR/DroidSans.ttf" ]; then
+  cp -f "$FONT_DIR/DroidSans.ttf" "$SYS_FONT/DroidSans.ttf" || fail "Could not install DroidSans.ttf"
+  status_ok "DroidSans.ttf"
+else
+  _primary_src=$(find_first '*.ttf' "$FONT_DIR/Sans" "$FONT_DIR")
+  [ -z "$_primary_src" ] && _primary_src=$(find_first '*.otf' "$FONT_DIR/Sans" "$FONT_DIR")
+  if [ -n "$_primary_src" ]; then
+    cp -f "$_primary_src" "$SYS_FONT/DroidSans.ttf" || fail "Could not install ${_primary_src##*/}"
+    status_ok "${_primary_src##*/} -> DroidSans.ttf"
+  else
+    fail "No primary font payload found in $FONT_DIR"
+  fi
+fi
 
 section "2/5" "Patching Android font families"
 
@@ -1384,6 +1449,65 @@ fi
 # Outputs "weight:style:path" lines for each .ttf/.otf in the given directories.
 # Combines OS/2 usWeightClass with name-table / filename label resolution for
 # correct weight assignment even when fonts have misconfigured OS/2 headers.
+# Runtime helper path (mffm-helper scan) is tried first for portable execution without relying on $py_bin.
+mffm_scan_weights() {
+  _helper=$(mffm_runtime_helper 2>/dev/null)
+  if [ -n "$_helper" ] && [ -x "$_helper" ]; then
+    "$_helper" scan "$@" 2>/dev/null && return 0
+  fi
+  _py_scan_font_weights "$@" 2>/dev/null
+}
+mffm_build_ttc() {
+  # $1 = output TTC path, stdin = list of files (one per line) or args
+  _out="$1"; shift
+  _helper=$(mffm_runtime_helper 2>/dev/null)
+  if [ -n "$_helper" ] && [ -x "$_helper" ]; then
+    if [ $# -gt 0 ]; then
+      printf '%s\n' "$@" | "$_helper" ttc --out "$_out" 2>&1; return $?
+    else
+      "$_helper" ttc --out "$_out" 2>&1; return $?
+    fi
+  fi
+  # Fallback to python TTCollection
+  [ -n "$py_bin" ] || return 1
+  if [ $# -gt 0 ]; then
+    printf '%s\n' "$@" | $py_bin -c '
+import sys
+from fontTools.ttLib import TTFont, TTCollection
+out = sys.argv[1]
+files = [l.strip() for l in sys.stdin.read().splitlines() if l.strip()]
+if not files:
+    sys.exit(1)
+col = TTCollection()
+for f in files:
+    try:
+        col.fonts.append(TTFont(f))
+    except Exception as e:
+        sys.stderr.write(f"Error loading {f}: {e}\n")
+if not col.fonts:
+    sys.exit(1)
+col.save(out)
+' "$_out" 2>&1; return $?
+  else
+    $py_bin -c '
+import sys
+from fontTools.ttLib import TTFont, TTCollection
+out = sys.argv[1]
+files = [l.strip() for l in sys.stdin.read().splitlines() if l.strip()]
+if not files:
+    sys.exit(1)
+col = TTCollection()
+for f in files:
+    try:
+        col.fonts.append(TTFont(f))
+    except Exception as e:
+        sys.stderr.write(f"Error loading {f}: {e}\n")
+if not col.fonts:
+    sys.exit(1)
+col.save(out)
+' "$_out" 2>&1; return $?
+  fi
+}
 _py_scan_font_weights() {
   [ -n "$py_bin" ] || return 1
   $py_bin -c '
@@ -1443,12 +1567,14 @@ if [ -f "$FONT_DIR/mono.xml" ]; then
     replace_family "$xml" monospace "$FONT_DIR/mono.xml"
     replace_family "$xml" cutive-mono "$FONT_DIR/mono.xml"
     replace_family "$xml" droidsans-mono "$FONT_DIR/mono.xml"
-    if [ ! -f "$FONT_DIR/serif.xml" ]; then
-      replace_family "$xml" serif-monospace "$FONT_DIR/mono.xml" "prepend"
-    fi
+    replace_family "$xml" serif-monospace "$FONT_DIR/mono.xml"
   done
   [ -z "$VF_MONO_AXIS_META" ] && prune_obsolete_profile_keys MONOSPACE_UPRIGHT
-  status_ok "Native Monospace font (bundled in DroidSans.ttf)"
+  if [ -d "$FONT_DIR/Monospace" ] && [ "$(ls -A "$FONT_DIR/Monospace" 2>/dev/null)" ]; then
+    status_ok "Monospace font from module (bundled in DroidSans.ttf)"
+  else
+    status_ok "Monospace font from /sdcard/MFFM (bundled in DroidSans.ttf)"
+  fi
 else
   # ── Find first font file in Monospace dirs to check variable vs static ──
   _mono_dirs=$(get_category_dirs Monospace)
@@ -1520,21 +1646,41 @@ EOF
       _mr100="" _mr200="" _mr300="" _mr400="" _mr500="" _mr600="" _mr700="" _mr800="" _mr900=""
 
       local py_bin=""
-      command -v python3 >/dev/null 2>&1 && py_bin="python3"
-      [ -z "$py_bin" ] && command -v python >/dev/null 2>&1 && py_bin="python"
+      # 1. Try shared runtime first (Option 1: /data/adb/mffm_runtime)
+      py_bin=$(mffm_find_runtime_python 2>/dev/null) || py_bin=""
+      if [ -z "$py_bin" ]; then
+        command -v python3 >/dev/null 2>&1 && py_bin="python3"
+        [ -z "$py_bin" ] && command -v python >/dev/null 2>&1 && py_bin="python"
+      fi
+      # Validate fontTools, try Termux pip bootstrap if missing and runtime not present
       if [ -n "$py_bin" ] && ! $py_bin -c "import fontTools" 2>/dev/null; then
-        if [ -d "/data/data/com.termux/files/usr/bin" ]; then
+        # Try mffm-helper as alternative (provides scan without full fontTools import check)
+        _helper_try=$(mffm_runtime_helper 2>/dev/null)
+        if [ -n "$_helper_try" ] && [ -x "$_helper_try" ]; then
+          # Helper available — treat as valid runtime even if fontTools import check fails for py_bin
+          py_bin="$_helper_try"
+        elif [ -d "/data/data/com.termux/files/usr/bin" ]; then
           status_skip "fontTools not found. Auto-installing via Termux pip..."
           su -c "env PATH=/data/data/com.termux/files/usr/bin:\$PATH pip install fonttools brotli 2>&1" || true
           $py_bin -c "import fontTools" 2>/dev/null || py_bin=""
           [ -z "$py_bin" ] && status_skip "fontTools install failed — falling back to single-file mode"
         else
-          py_bin=""
+          # Check if helper became available after Termux fallback check
+          _helper_try2=$(mffm_runtime_helper 2>/dev/null)
+          if [ -n "$_helper_try2" ] && [ -x "$_helper_try2" ]; then py_bin="$_helper_try2"; else py_bin=""; fi
         fi
       fi
 
-      if [ -n "$py_bin" ] && $py_bin -c "import fontTools" 2>/dev/null; then
-        _py_wmap=$(_py_scan_font_weights $_mono_dirs)
+      # Determine if we have any runtime (python+fontTools or helper)
+      _has_runtime=0
+      if [ -n "$py_bin" ]; then
+        if printf '%s' "$py_bin" | grep -q "mffm-helper"; then _has_runtime=1
+        elif $py_bin -c "import fontTools" 2>/dev/null; then _has_runtime=1; fi
+      fi
+      if [ "$_has_runtime" = "1" ]; then
+        # Use mffm_scan_weights wrapper which prefers helper
+        _py_wmap=$(mffm_scan_weights $_mono_dirs)
+        if [ -z "$_py_wmap" ]; then _py_wmap=$(_py_scan_font_weights $_mono_dirs 2>/dev/null); fi
         if [ -n "$_py_wmap" ]; then
           while IFS= read -r _wl; do
             [ -z "$_wl" ] && continue
@@ -1584,15 +1730,26 @@ EOF
 
       frag_file="$FONT_DIR/ext_mono.xml"
 
-      if [ -z "$py_bin" ] && [ "$_mono_idx_counter" -gt 2 ]; then
-        status_skip "WARNING: Multiple Monospace faces detected but Termux+Python not found."
-        status_skip "Install Termux and run: pip install fonttools — then reflash."
-        status_skip "Falling back to single-file install (Regular only)."
+      if [ -z "$py_bin" ] && [ "$_has_runtime" != "1" ] && [ "$_mono_idx_counter" -gt 2 ]; then
+        if mffm_has_runtime 2>/dev/null; then
+          status_warn "Multiple Monospace faces detected but runtime helper not responding, retrying..."
+        else
+          status_skip "WARNING: Multiple Monospace faces detected but no Python runtime found."
+          status_skip "Install mffm-runtime module or Termux (pip install fonttools) — then reflash."
+          status_skip "Falling back to single-file install (Regular only)."
+        fi
       fi
 
-      if [ -n "$py_bin" ] && $py_bin -c "import fontTools" 2>/dev/null; then
+      if [ "$_has_runtime" = "1" ]; then
         _mono_ttc_out="$SYS_FONT/DroidSansMono.ttf"
-        _mono_ttc_err=$(printf '%s\n' "$_mono_ttc_files" | $py_bin -c '
+        _mono_ttc_err=$(printf '%s\n' "$_mono_ttc_files" | mffm_build_ttc "$_mono_ttc_out" 2>&1)
+        # Fallback if mffm_build_ttc helper not usable, try raw py_bin
+        if [ ! -f "$_mono_ttc_out" ] || [ ! -s "$_mono_ttc_out" ]; then
+          if printf '%s' "$py_bin" | grep -q "mffm-helper"; then
+            # helper path already tried, no fallback
+            _mono_ttc_err="$_mono_ttc_err (helper failed)"
+          else
+            _mono_ttc_err2=$(printf '%s\n' "$_mono_ttc_files" | $py_bin -c '
 import sys
 from fontTools.ttLib import TTFont, TTCollection
 out = sys.argv[1]
@@ -1609,6 +1766,9 @@ if not col.fonts:
     sys.exit(1)
 col.save(out)
 ' "$_mono_ttc_out" 2>&1)
+            [ -n "$_mono_ttc_err2" ] && _mono_ttc_err="$_mono_ttc_err; $_mono_ttc_err2"
+          fi
+        fi
         if [ ! -f "$_mono_ttc_out" ] || [ ! -s "$_mono_ttc_out" ]; then
           status_warn "Monospace TTC bundling failed — falling back to single-file mode"
           [ -n "$_mono_ttc_err" ] && mffm_log_line "  TTC error: $_mono_ttc_err"
@@ -1655,7 +1815,11 @@ if [ -f "$FONT_DIR/bengali.xml" ]; then
     replace_lang_family "$xml" "bn" "$FONT_DIR/bengali.xml"
   done
   [ -z "$VF_BENGALI_AXIS_META" ] && prune_obsolete_profile_keys BENGALI_UPRIGHT
-  status_ok "Native Bengali font (bundled in DroidSans.ttf with full 100-900 weight class)"
+  if [ -d "$FONT_DIR/Bengali" ] && [ "$(ls -A "$FONT_DIR/Bengali" 2>/dev/null)" ]; then
+    status_ok "Bengali font from module (bundled in DroidSans.ttf)"
+  else
+    status_ok "Bengali font from /sdcard/MFFM (bundled in DroidSans.ttf)"
+  fi
 elif [ -f "$FONT_DIR/Beng-Regular.ttf" ] && [ -f "$FONT_DIR/Beng-Medium.ttf" ] && [ -f "$FONT_DIR/Beng-Bold.ttf" ]; then
   cp -f "$FONT_DIR/Beng-Regular.ttf" "$SYS_FONT/NotoSansBengali-VF.ttf"
   cp -f "$FONT_DIR/Beng-Medium.ttf" "$SYS_FONT/NotoSerifBengali-VF.ttf"
@@ -1747,26 +1911,36 @@ EOF
 
       # ── Detect Python + fontTools (used for both weight-scan AND TTC build) ─
       local py_bin=""
-      command -v python3 >/dev/null 2>&1 && py_bin="python3"
-      [ -z "$py_bin" ] && command -v python >/dev/null 2>&1 && py_bin="python"
-
+      py_bin=$(mffm_find_runtime_python 2>/dev/null) || py_bin=""
+      if [ -z "$py_bin" ]; then
+        command -v python3 >/dev/null 2>&1 && py_bin="python3"
+        [ -z "$py_bin" ] && command -v python >/dev/null 2>&1 && py_bin="python"
+      fi
       if [ -n "$py_bin" ] && ! $py_bin -c "import fontTools" 2>/dev/null; then
-        if [ -d "/data/data/com.termux/files/usr/bin" ]; then
+        _helper_try=$(mffm_runtime_helper 2>/dev/null)
+        if [ -n "$_helper_try" ] && [ -x "$_helper_try" ]; then py_bin="$_helper_try"
+        elif [ -d "/data/data/com.termux/files/usr/bin" ]; then
           status_skip "fontTools not found. Auto-installing via Termux pip..."
           su -c "env PATH=/data/data/com.termux/files/usr/bin:\$PATH pip install fonttools brotli 2>&1" || true
           $py_bin -c "import fontTools" 2>/dev/null || py_bin=""
           [ -z "$py_bin" ] && status_skip "fontTools install failed — falling back to filename-based mode"
         else
-          py_bin=""
+          _helper_try2=$(mffm_runtime_helper 2>/dev/null)
+          if [ -n "$_helper_try2" ] && [ -x "$_helper_try2" ]; then py_bin="$_helper_try2"; else py_bin=""; fi
         fi
       fi
 
       # ── Weight discovery: OS/2 usWeightClass (Python) or filename heuristic ─
       _r100="" _r200="" _r300="" _r400="" _r500="" _r600="" _r700="" _r800="" _r900=""
-
-      if [ -n "$py_bin" ] && $py_bin -c "import fontTools" 2>/dev/null; then
+      _has_runtime=0
+      if [ -n "$py_bin" ]; then
+        if printf '%s' "$py_bin" | grep -q "mffm-helper"; then _has_runtime=1
+        elif $py_bin -c "import fontTools" 2>/dev/null; then _has_runtime=1; fi
+      fi
+      if [ "$_has_runtime" = "1" ]; then
         # Read usWeightClass from OS/2 table — works even for hex-named cache files
-        _py_weight_map=$(_py_scan_font_weights $_beng_dirs)
+        _py_weight_map=$(mffm_scan_weights $_beng_dirs)
+        [ -z "$_py_weight_map" ] && _py_weight_map=$(_py_scan_font_weights $_beng_dirs 2>/dev/null)
         # Parse output: "weight:style:path" lines — pick best file per slot
         if [ -n "$_py_weight_map" ]; then
           while IFS= read -r _wline; do
@@ -1820,16 +1994,26 @@ EOF
       _idx800=$(_beng_get_idx "${_r800:-$_r700}")
       _idx900=$(_beng_get_idx "${_r900:-$_r800}")
 
-      if [ -z "$py_bin" ] && [ "$_beng_idx_counter" -gt 3 ]; then
-        status_skip "WARNING: Multiple Bengali faces detected but Termux+Python not found."
-        status_skip "Install Termux and run: pip install fonttools  — then reflash."
-        status_skip "Falling back to 3-file install (Regular/Medium/Bold only)."
+      if [ -z "$py_bin" ] && [ "$_has_runtime" != "1" ] && [ "$_beng_idx_counter" -gt 3 ]; then
+        if mffm_has_runtime 2>/dev/null; then
+          status_warn "Multiple Bengali faces detected but runtime helper not responding"
+        else
+          status_skip "WARNING: Multiple Bengali faces detected but no Python runtime found."
+          status_skip "Install mffm-runtime module or Termux (pip install fonttools) — then reflash."
+          status_skip "Falling back to 3-file install (Regular/Medium/Bold only)."
+        fi
       fi
 
-      if [ -n "$py_bin" ] && $py_bin -c "import fontTools" 2>/dev/null; then
+      if [ "$_has_runtime" = "1" ]; then
         # ── TTC bundle: all distinct faces packed into NotoSansBengali-VF.ttf ─
         _beng_ttc_out="$SYS_FONT/NotoSansBengali-VF.ttf"
-        _beng_ttc_err=$(printf '%s\n' "$_beng_ttc_files" | $py_bin -c '
+        _beng_ttc_err=$(printf '%s\n' "$_beng_ttc_files" | mffm_build_ttc "$_beng_ttc_out" 2>&1)
+        # Fallback to raw python if helper failed and py_bin is real python
+        if [ ! -f "$_beng_ttc_out" ] || [ ! -s "$_beng_ttc_out" ]; then
+          if printf '%s' "$py_bin" | grep -q "mffm-helper"; then
+            _beng_ttc_err="$_beng_ttc_err (helper failed)"
+          else
+            _beng_ttc_err2=$(printf '%s\n' "$_beng_ttc_files" | $py_bin -c '
 import sys
 from fontTools.ttLib import TTFont, TTCollection
 out = sys.argv[1]
@@ -1846,6 +2030,9 @@ if not col.fonts:
     sys.exit(1)
 col.save(out)
 ' "$_beng_ttc_out" 2>&1)
+            [ -n "$_beng_ttc_err2" ] && _beng_ttc_err="$_beng_ttc_err; $_beng_ttc_err2"
+          fi
+        fi
         if [ ! -f "$_beng_ttc_out" ] || [ ! -s "$_beng_ttc_out" ]; then
           status_warn "Bengali TTC bundling failed — falling back to 3-file mode"
           [ -n "$_beng_ttc_err" ] && mffm_log_line "  TTC error: $_beng_ttc_err"
@@ -1903,11 +2090,19 @@ if [ -f "$FONT_DIR/serif.xml" ]; then
     [ -f "$xml" ] || continue
     replace_family "$xml" serif "$FONT_DIR/serif.xml" "split"
     replace_family "$xml" noto-serif "$FONT_DIR/serif.xml" "split"
-    replace_family "$xml" serif-monospace "$FONT_DIR/serif.xml" "split"
+    if [ ! -f "$FONT_DIR/mono.xml" ]; then
+      replace_family "$xml" serif-monospace "$FONT_DIR/serif.xml" "split"
+    fi
   done
   [ -z "$VF_SERIF_UPRIGHT_AXIS_META" ] && prune_obsolete_profile_keys SERIF_UPRIGHT
   [ -z "$VF_SERIF_ITALIC_AXIS_META" ] && prune_obsolete_profile_keys SERIF_ITALIC
-  status_ok "Native Serif font (bundled in DroidSans.ttf)"
+  if [ -d "$FONT_DIR/Serif" ] && [ "$(ls -A "$FONT_DIR/Serif" 2>/dev/null)" ]; then
+    status_ok "Serif font from module (bundled in DroidSans.ttf)"
+  elif [ "$HAS_CUSTOM_SERIF" = "true" ]; then
+    status_ok "Serif font from /sdcard/MFFM (bundled in DroidSans.ttf)"
+  else
+    status_ok "Serif font (derived from Sans faces)"
+  fi
 else
   _serif_dirs=$(get_category_dirs Serif)
   ext_s_reg=$(find_first 'Serif*.ttf' "$FONT_DIR" $_serif_dirs)
@@ -1998,25 +2193,36 @@ EOF
 
       # ── Detect Python + fontTools (weight-scan + TTC build) ───────────────
       local py_bin=""
-      command -v python3 >/dev/null 2>&1 && py_bin="python3"
-      [ -z "$py_bin" ] && command -v python >/dev/null 2>&1 && py_bin="python"
+      py_bin=$(mffm_find_runtime_python 2>/dev/null) || py_bin=""
+      if [ -z "$py_bin" ]; then
+        command -v python3 >/dev/null 2>&1 && py_bin="python3"
+        [ -z "$py_bin" ] && command -v python >/dev/null 2>&1 && py_bin="python"
+      fi
       if [ -n "$py_bin" ] && ! $py_bin -c "import fontTools" 2>/dev/null; then
-        if [ -d "/data/data/com.termux/files/usr/bin" ]; then
+        _helper_try=$(mffm_runtime_helper 2>/dev/null)
+        if [ -n "$_helper_try" ] && [ -x "$_helper_try" ]; then py_bin="$_helper_try"
+        elif [ -d "/data/data/com.termux/files/usr/bin" ]; then
           status_skip "fontTools not found. Auto-installing via Termux pip..."
           su -c "env PATH=/data/data/com.termux/files/usr/bin:\$PATH pip install fonttools brotli 2>&1" || true
           $py_bin -c "import fontTools" 2>/dev/null || py_bin=""
           [ -z "$py_bin" ] && status_skip "fontTools install failed — falling back to filename-based mode"
         else
-          py_bin=""
+          _helper_try2=$(mffm_runtime_helper 2>/dev/null)
+          if [ -n "$_helper_try2" ] && [ -x "$_helper_try2" ]; then py_bin="$_helper_try2"; else py_bin=""; fi
         fi
       fi
 
       # ── Weight discovery: OS/2 usWeightClass (Python) or filename heuristic ─
       _sr100="" _sr200="" _sr300="" _sr400="" _sr500="" _sr600="" _sr700="" _sr800="" _sr900=""
       _si100="" _si300="" _si400="" _si700=""
-
-      if [ -n "$py_bin" ] && $py_bin -c "import fontTools" 2>/dev/null; then
-        _py_serif_map=$(_py_scan_font_weights $_serif_dirs)
+      _has_runtime=0
+      if [ -n "$py_bin" ]; then
+        if printf '%s' "$py_bin" | grep -q "mffm-helper"; then _has_runtime=1
+        elif $py_bin -c "import fontTools" 2>/dev/null; then _has_runtime=1; fi
+      fi
+      if [ "$_has_runtime" = "1" ]; then
+        _py_serif_map=$(mffm_scan_weights $_serif_dirs)
+        [ -z "$_py_serif_map" ] && _py_serif_map=$(_py_scan_font_weights $_serif_dirs 2>/dev/null)
         if [ -n "$_py_serif_map" ]; then
           while IFS= read -r _wl; do
             [ -z "$_wl" ] && continue
@@ -2070,15 +2276,25 @@ EOF
       _serif_add_face "$_si100"; _serif_add_face "$_si300"
       _serif_add_face "$_si400"; _serif_add_face "$_si700"
 
-      if [ -z "$py_bin" ] && [ "$_serif_idx_counter" -gt 4 ]; then
-        status_skip "WARNING: Multiple Serif faces detected but Termux+Python not found."
-        status_skip "Install Termux and run: pip install fonttools — then reflash."
-        status_skip "Falling back to 4-file install (Regular/Italic/Bold/BoldItalic only)."
+      if [ -z "$py_bin" ] && [ "$_has_runtime" != "1" ] && [ "$_serif_idx_counter" -gt 4 ]; then
+        if mffm_has_runtime 2>/dev/null; then
+          status_warn "Multiple Serif faces detected but runtime helper not responding"
+        else
+          status_skip "WARNING: Multiple Serif faces detected but no Python runtime found."
+          status_skip "Install mffm-runtime module or Termux (pip install fonttools) — then reflash."
+          status_skip "Falling back to 4-file install (Regular/Italic/Bold/BoldItalic only)."
+        fi
       fi
 
-      if [ -n "$py_bin" ] && $py_bin -c "import fontTools" 2>/dev/null; then
+      if [ "$_has_runtime" = "1" ]; then
         _serif_ttc_out="$SYS_FONT/NotoSerif-Regular.ttf"
-        _serif_ttc_err=$(printf '%s\n' "$_serif_ttc_files" | $py_bin -c '
+        _serif_ttc_err=$(printf '%s\n' "$_serif_ttc_files" | mffm_build_ttc "$_serif_ttc_out" 2>&1)
+        # Fallback to raw python if helper failed and py_bin is real python
+        if [ ! -f "$_serif_ttc_out" ] || [ ! -s "$_serif_ttc_out" ]; then
+          if printf '%s' "$py_bin" | grep -q "mffm-helper"; then
+            _serif_ttc_err="$_serif_ttc_err (helper failed)"
+          else
+            _serif_ttc_err2=$(printf '%s\n' "$_serif_ttc_files" | $py_bin -c '
 import sys
 from fontTools.ttLib import TTFont, TTCollection
 out = sys.argv[1]
@@ -2095,6 +2311,9 @@ if not col.fonts:
     sys.exit(1)
 col.save(out)
 ' "$_serif_ttc_out" 2>&1)
+            [ -n "$_serif_ttc_err2" ] && _serif_ttc_err="$_serif_ttc_err; $_serif_ttc_err2"
+          fi
+        fi
         if [ ! -f "$_serif_ttc_out" ] || [ ! -s "$_serif_ttc_out" ]; then
           status_warn "Serif TTC bundling failed — falling back to 4-file mode"
           [ -n "$_serif_ttc_err" ] && mffm_log_line "  TTC error: $_serif_ttc_err"
@@ -2181,13 +2400,21 @@ section "5/5" "Running custom local scripts"
 run_custom_scripts
 
 set_perm_recursive "$MODPATH" 0 0 0755 0644
-for script in service.sh uninstall.sh post-mount.sh; do
+for script in service.sh uninstall.sh post-mount.sh action.sh; do
   [ -f "$MODPATH/$script" ] && set_perm "$MODPATH/$script" 0 0 0755
 done
 if [ -n "$VF_CONFIG_FILE" ] && [ -f "$VF_CONFIG_FILE" ]; then
+  # Keep header-only config files (created by ensure_variable_config_file with
+  # MODULE_IDENTITY= but no Android weight/width keys): they are intentional
+  # markers for "variable config is required but the runtime has no axis data
+  # to expose", e.g. a font whose fvar only carries non-wght/wdth axes.
   if ! grep -Eq '^[[:space:]]*[A-Z_]+_(WGHT|WDTH)=' "$VF_CONFIG_FILE" 2>/dev/null; then
-    rm -f "$VF_CONFIG_FILE" 2>/dev/null
-    VF_CONFIG_FILE=""
+    if grep -Eq '^[[:space:]]*MODULE_IDENTITY[[:space:]]*=' "$VF_CONFIG_FILE" 2>/dev/null; then
+      : # keep — header-only is valid
+    else
+      rm -f "$VF_CONFIG_FILE" 2>/dev/null
+      VF_CONFIG_FILE=""
+    fi
   fi
 fi
 
@@ -2202,6 +2429,7 @@ fi
 
 rm -rf "$FONT_DIR"
 rm -f "$MODPATH/font-config.sh"
+rm -f /dev/.mffm_stock_*.xml 2>/dev/null
 status_ok "Permissions and cleanup"
 
 ui_print ""

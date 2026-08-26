@@ -131,3 +131,37 @@ def test_props_round_trip(tmp_path):
     write_props(path, {"name": "N", "id": "i", "version": "1"})
     assert read_props(path) == {"name": "N", "id": "i", "version": "1"}
     assert path.read_text(encoding="utf-8").splitlines()[0].startswith("id=")
+
+
+def test_shell_scripts_syntax():
+    import os
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash") or shutil.which("sh")
+    if not bash:
+        for candidate in [r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files\Git\usr\bin\sh.exe"]:
+            if os.path.isfile(candidate):
+                bash = candidate
+                break
+    if not bash:
+        return
+
+    root = Path(__file__).resolve().parent.parent
+    scripts = [
+        root / "template" / "customize.sh",
+        root / "template" / "service.sh",
+        root / "template" / "action.sh",
+        root / "template" / "uninstall.sh",
+        root / "template" / "post-mount.sh",
+        root / "runtime-template" / "customize.sh",
+        root / "runtime-template" / "service.sh",
+        root / "runtime-template" / "uninstall.sh",
+        root / "runtime-template" / "post-mount.sh",
+        root / "termux-build.sh",
+    ]
+    for script in scripts:
+        if script.is_file():
+            res = subprocess.run([bash, "-n"], input=script.read_bytes(), capture_output=True)
+            assert res.returncode == 0, f"Syntax error in {script.name}: {res.stderr.decode('utf-8', errors='ignore')}"
+

@@ -2,6 +2,3 @@ fonttools>=4.55
 cryptography>=43.0
 brotli
 opentype-feature-freezer
-
-
-

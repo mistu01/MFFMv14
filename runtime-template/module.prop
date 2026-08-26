@@ -1,0 +1,7 @@
+id=mffm_runtime
+name=[MFFM Runtime] Python + fontTools
+version=2026.08.26
+versionCode=260826
+author=Mistu
+description=Shared Python 3 + fontTools runtime for MFFMv14 font modules. 
+updateJson=

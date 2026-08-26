@@ -8,4 +8,3 @@ for component in \
 do
   pm enable "$GMS/$component" >/dev/null 2>&1 || cmd package enable "$GMS/$component" >/dev/null 2>&1
 done
-rm -rf /data/adb/mffm_stock_xml 2>/dev/null

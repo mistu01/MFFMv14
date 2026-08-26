@@ -7,13 +7,17 @@
 *.woff2
 *.ttx
 
-# Archives
+# Archives & Binaries
 *.zip
 *.7z
 *.rar
 *.tar
 *.gz
 *.tgz
+*.xz
+*.zst
+*.deb
+.runtime-cache/
 
 # OS files
 .DS_Store
@@ -54,8 +58,6 @@ Fonts/*
 !Fonts/.gitkeep
 Files/*
 !Files/.gitkeep
-
-
 
 # Local build config (build.py --save-config)
 .mffm-build.json

@@ -27,7 +27,7 @@ from zipsigner_auto import ZipSignerError, sign_zip
 ROOT = Path(__file__).resolve().parent
 TEMPLATE_DIR = ROOT / "template"
 PAYLOAD_NAMES = (
-    "module.prop", "customize.sh", "service.sh", "uninstall.sh", "post-mount.sh",
+    "module.prop", "customize.sh", "service.sh", "action.sh", "uninstall.sh", "post-mount.sh",
     "font-config.sh", "META-INF", "Files",
 )
 
@@ -64,6 +64,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save-config", action="store_true", help=f"save the effective build options to the config file (default: {BUILD_CONFIG_NAME})")
     parser.add_argument("--inspect", action="store_true", help="report detected fonts, weights and modes without building")
     parser.add_argument("--template", action="store_true", help="package MFFMv14-Source-Template.zip (excluding RELEASE_POST.txt)")
+    parser.add_argument("--runtime", action="store_true", help="build MFFM Runtime module ZIP (shared Python + fontTools)")
     return parser.parse_args()
 
 
@@ -318,6 +319,14 @@ def build_module(args: argparse.Namespace) -> Path | None:
 
 def main() -> int:
     args = parse_args()
+    if args.runtime:
+        from build_runtime import build_runtime
+        if args.output_dir is None:
+            args.output_dir = ROOT / "dist"
+        else:
+            args.output_dir = _config_path(args.output_dir)
+        build_runtime(args)
+        return 0
     if args.template:
         from package_template import build_template_zip
         build_template_zip(args.output_dir if args.output_dir is not None else ROOT / "dist")

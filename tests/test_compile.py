@@ -48,23 +48,15 @@ def test_compile_static(tmp_path):
 
     assert result.mode == "static"
     assert result.family == transform_family_name("Fixture Sans")
-    assert result.payload_files == ("DroidSans.ttf",)
     assert result.family_faces["sans"]
     assert not result.family_faces["bengali"]
 
     files_dir = module / "Files"
-    assert (files_dir / "DroidSans.ttf").is_file()
-    assert len(TTCollection(str(files_dir / "DroidSans.ttf")).fonts) == 2
-    sans_xml = (files_dir / "sans.xml").read_text(encoding="utf-8")
-    assert 'weight="400"' in sans_xml
-    assert 'weight="700"' in sans_xml
-    assert 'index="0"' in sans_xml and 'index="1"' in sans_xml
-    # serif fallback is derived from the sans faces when no custom serif given
-    assert (files_dir / "serif.xml").read_text(encoding="utf-8").strip()
+    assert (files_dir / "Sans" / "Regular.ttf").is_file()
+    assert (files_dir / "Sans" / "Bold.ttf").is_file()
 
     config = (module / "font-config.sh").read_text(encoding="utf-8")
     assert "FONT_MODE='static'" in config
-    assert "FONT_PRIMARY='DroidSans.ttf'" in config
 
 
 def test_compile_static_with_optional_families(tmp_path):
@@ -85,14 +77,11 @@ def test_compile_static_with_optional_families(tmp_path):
     result = compile_fonts(fonts, module)
 
     files_dir = module / "Files"
-    assert (files_dir / "bengali.xml").is_file()
-    assert (files_dir / "serif.xml").is_file()
-    assert len(TTCollection(str(files_dir / "DroidSans.ttf")).fonts) == 4
+    assert (files_dir / "Sans" / "Regular.ttf").is_file()
+    assert (files_dir / "Bengali" / "Beng-Medium.ttf").is_file()
+    assert (files_dir / "Serif" / "SerifVF-Roman.ttf").is_file()
     assert len(result.family_faces["bengali"]) == 1
     assert len(result.family_faces["serif"]) == 1
-    # variable serif next to static sans still produces axis config
-    config = (module / "font-config.sh").read_text(encoding="utf-8")
-    assert "VF_SERIF_UPRIGHT_AXIS_META=" in config
 
 
 def test_compile_variable(tmp_path):
@@ -100,15 +89,11 @@ def test_compile_variable(tmp_path):
     result = compile_fonts(build_variable_workspace(tmp_path), module)
 
     assert result.mode == "variable"
+    files_dir = module / "Files"
+    assert (files_dir / "Sans" / "Var-Roman.ttf").is_file()
+    assert (files_dir / "Sans" / "Var-Italic.ttf").is_file()
     config = (module / "font-config.sh").read_text(encoding="utf-8")
     assert "FONT_MODE='variable'" in config
-    assert "VF_UPRIGHT_AXIS_META=" in config
-    assert "VF_ITALIC_AXIS_META=" in config
-    assert "VF_UPRIGHT_WEIGHTS='100 200 300 400 500 600 700 800 900'" in config
-
-    sans_xml = (module / "Files" / "sans.xml").read_text(encoding="utf-8")
-    assert '<axis tag="wght" stylevalue="100"/>' in sans_xml
-    assert '<axis tag="wght" stylevalue="900"/>' in sans_xml
 
 
 def test_compile_rejects_multiple_primary_families(tmp_path):
@@ -154,3 +139,47 @@ def test_update_module_metadata(tmp_path):
     assert props["version"] == "1.2"
     assert props["versionCode"] == "42"
     assert read_props(module / "module.prop")["versionCode"] == "42"
+
+
+def test_update_module_migration(tmp_path):
+    import argparse
+    import zipfile
+    from update import update_one
+
+    # Create synthetic old module ZIP
+    old_mod = tmp_path / "old_mod"
+    old_files = old_mod / "Files"
+    old_files.mkdir(parents=True)
+    build_synthetic_font(old_files / "DroidSans.ttf", family="Legacy Sans", us_weight_class=400)
+    build_synthetic_font(old_files / "Mono-Regular.ttf", family="Legacy Mono", us_weight_class=400)
+    build_synthetic_font(old_files / "Beng-Regular.ttf", family="Legacy Beng", us_weight_class=400)
+    (old_mod / "module.prop").write_text("id=old_mod\nname=[MFFM] Legacy Font\nversion=1.0\nversionCode=10\n", encoding="utf-8")
+
+    old_zip = tmp_path / "old_module.zip"
+    with zipfile.ZipFile(old_zip, "w") as z:
+        for p in old_mod.rglob("*"):
+            if p.is_file():
+                z.write(p, p.relative_to(old_mod).as_posix())
+
+    out_dir = tmp_path / "dist"
+    args = argparse.Namespace(
+        mode="auto", name=None, version=None, version_code=None,
+        output_dir=out_dir, no_sign=True, keep_hinting=False, no_prefix=False,
+        features=None, mono_features=None, serif_features=None, bengali_features=None,
+        interactive=False, centered_colon=False, force=True,
+    )
+    reserved = set()
+    result_zip = update_one(old_zip, args, reserved)
+
+    assert result_zip is not None and result_zip.is_file()
+
+    # Verify extracted contents of the updated ZIP
+    updated_dir = tmp_path / "updated"
+    with zipfile.ZipFile(result_zip) as z:
+        z.extractall(updated_dir)
+
+    files_dir = updated_dir / "Files"
+    assert (files_dir / "Sans" / "DroidSans.ttf").is_file()
+    assert (files_dir / "Monospace" / "Mono-Regular.ttf").is_file()
+    assert (files_dir / "Bengali" / "Beng-Regular.ttf").is_file()
+

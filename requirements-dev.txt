@@ -1,1 +1,2 @@
 pytest>=8.0
+zstandard>=0.22

@@ -51,6 +51,7 @@ usage: sh termux-build.sh [options] [-- build.py options...]
 
 Anything after -- is passed to build.py, for example:
   sh termux-build.sh -- --mode variable --fonts-dir ~/storage/shared/Download/MyFont
+  sh termux-build.sh -- --runtime   # Build and flash MFFM Runtime module
 EOF
   exit "${1:-0}"
 }

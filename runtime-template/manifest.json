@@ -1,0 +1,15 @@
+{
+  "version": "2026.08.26",
+  "versionCode": "260826",
+  "description": "MFFM Runtime - shared Python + fontTools. SHA256 pins for supply-chain verification (like zipsigner_auto.py).",
+  "python_version": "3.11.16",
+  "fonttools_version": "4.63.0",
+  "sha256": {
+    "aarch64": "913600a45013c24b3d5248faeedf61c69dae6e99cb5dad0f44200d787c626dfd",
+    "x64": "6639f1d6d3752f8625d344a6d74915e581abdb4c25570688f2386c3b05957829"
+  },
+  "notes": "aarch64/x64: static musl CPython + pure-python fontTools (runs without Termux).",
+  "python_release_tag": "20260814",
+  "python_variant": "lto+static-full",
+  "source": "astral-sh/python-build-standalone"
+}

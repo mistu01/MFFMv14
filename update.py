@@ -17,7 +17,8 @@ from font_module import (
 from zipsigner_auto import ZipSignerError, sign_zip
 
 TEMPLATE_ITEMS = (
-    "module.prop", "customize.sh", "service.sh", "uninstall.sh", "post-mount.sh", "META-INF",
+    "module.prop", "customize.sh", "service.sh", "action.sh", "uninstall.sh", "post-mount.sh",
+    "font-config.sh", "META-INF",
 )
 OLD_PRIMARY_NAMES = (
     "DroidSans.ttc", "DroidSans.ttf", "DroidSans.otf", "RobotoStatic-Regular.ttf",
@@ -67,52 +68,37 @@ def locate_module_root(extracted: Path) -> Path:
     raise SystemExit(f"Could not identify a unique module root in {extracted}")
 
 
-def find_sources(old_root: Path) -> list[Path]:
+def find_categorized_sources(old_root: Path) -> dict[str, list[Path]]:
     files_dir = old_root / "Files"
-    candidates: list[Path] = []
-    for name in OLD_PRIMARY_NAMES:
-        path = files_dir / name
-        if path.is_file() and path not in candidates:
-            candidates.append(path)
-    if not candidates and files_dir.is_dir():
-        candidates.extend(
-            path for path in files_dir.iterdir()
-            if path.is_file() and path.suffix.lower() in FONT_EXTENSIONS
-            and not path.name.startswith(("Beng", "Serif", "Mono"))
-        )
-    if not candidates:
+    categorized: dict[str, list[Path]] = {"sans": [], "mono": [], "serif": [], "bengali": []}
+
+    if files_dir.is_dir():
+        for path in sorted(files_dir.iterdir()):
+            if not path.is_file() or path.suffix.lower() not in FONT_EXTENSIONS:
+                continue
+            name_l = path.name.lower()
+            if name_l.startswith("mono") or "cutivemono" in name_l or "droidsansmono" in name_l:
+                categorized["mono"].append(path)
+            elif name_l.startswith("serif") or "notoserif" in name_l:
+                categorized["serif"].append(path)
+            elif name_l.startswith("beng") or "notosansbengali" in name_l:
+                categorized["bengali"].append(path)
+            else:
+                categorized["sans"].append(path)
+
+    if not categorized["sans"]:
         for directory in (old_root / "system" / "fonts", old_root):
             if directory.is_dir():
-                candidates.extend(
-                    path for path in directory.iterdir()
-                    if path.is_file() and path.name in OLD_PRIMARY_NAMES
-                )
-    if not candidates:
-        raise SystemExit(f"No prepared primary font payload found in {old_root}")
+                for path in sorted(directory.iterdir()):
+                    if not path.is_file() or path.suffix.lower() not in FONT_EXTENSIONS:
+                        continue
+                    if path.name in OLD_PRIMARY_NAMES:
+                        categorized["sans"].append(path)
 
-    primary = candidates[0]
-    if primary.suffix.lower() in {".ttc", ".otc"}:
-        return [primary]
-    if primary.name in {"DroidSans.ttf", "DroidSans.otf"}:
-        selected = [primary]
-        for path in candidates[1:]:
-            if path.name in {"DroidSans-Italic.ttf", "DroidSans-Italic.otf", "DroidSans-Bold.ttf"}:
-                selected.append(path)
-                break
-        return selected
-    return candidates
+    return categorized
 
 
 TEMPLATE_DIR = ROOT / "template"
-
-
-def copy_optional_assets(old_root: Path, new_root: Path) -> None:
-    old_files = old_root / "Files"
-    if not old_files.is_dir():
-        return
-    for path in old_files.iterdir():
-        if path.is_file() and path.name.startswith(("Beng", "Serif", "Mono")):
-            shutil.copy2(path, new_root / "Files" / path.name)
 
 
 def old_display_name(old_root: Path) -> str | None:
@@ -148,15 +134,23 @@ def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) ->
         with zipfile.ZipFile(zip_path) as archive:
             safe_extract(archive, extracted)
         old_root = locate_module_root(extracted)
-        sources = find_sources(old_root)
-        for index, source in enumerate(sources):
-            target_name = source.name
-            if (source_dir / target_name).exists():
-                target_name = f"{index}-{target_name}"
-            shutil.copy2(source, source_dir / target_name)
+        categorized = find_categorized_sources(old_root)
+        if not any(categorized.values()):
+            raise SystemExit(f"No prepared font payload found in {old_root}")
+
+        cat_names = {"sans": "Sans", "mono": "Monospace", "serif": "Serif", "bengali": "Bengali"}
+        for cat_key, paths in categorized.items():
+            if not paths:
+                continue
+            cat_dir = source_dir / cat_names[cat_key]
+            cat_dir.mkdir(parents=True, exist_ok=True)
+            for index, source in enumerate(paths):
+                target_name = source.name
+                if (cat_dir / target_name).exists():
+                    target_name = f"{index}-{target_name}"
+                shutil.copy2(source, cat_dir / target_name)
 
         copy_template(TEMPLATE_DIR, module_dir)
-        copy_optional_assets(old_root, module_dir)
         result = compile_fonts(
             source_dir, module_dir,
             requested_mode=args.mode,
@@ -202,7 +196,7 @@ def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) ->
         print(f"  output : {output}")
         return output
     finally:
-        if args.keep_temp:
+        if getattr(args, "keep_temp", False):
             print(f"  temp   : {work}")
         else:
             shutil.rmtree(work, ignore_errors=True)

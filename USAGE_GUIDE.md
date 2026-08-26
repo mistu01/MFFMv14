@@ -7,6 +7,16 @@
 - [Part 1 — Module Creation on PC](#part-1--module-creation-on-pc)
 - [Part 2 — Module Creation on Device (Termux)](#part-2--module-creation-on-device-termux)
 - [Part 3 — Module Information, Capabilities & Usage](#part-3--module-information-capabilities--usage)
+  - [3.1 What the Module Does](#31-what-the-module-does)
+  - [3.6 Termux / MFFM Runtime Dependency Handling](#36-termux--mffm-runtime-dependency-handling)
+  - [3.12 Google Font Update Protection](#312-google-font-update-protection)
+  - [3.13 Troubleshooting](#313-troubleshooting)
+- [Part 4 — MFFM Runtime Module](#part-4--mffm-runtime-module-shared-python--fonttools)
+  - [4.1 Why Use the MFFM Runtime Module?](#41-why-use-the-mffm-runtime-module)
+  - [4.2 Architecture & ABI Support](#42-architecture--abi-support)
+  - [4.3 Building the Runtime Module](#43-building-the-runtime-module)
+  - [4.6 Runtime Helper CLI Subcommands](#46-runtime-helper-cli-subcommands-mffm-helper)
+  - [4.7 Developer Notes: Variable Contracts & Synchronization](#47-developer-notes-variable-contracts--synchronization)
 
 ---
 
@@ -64,6 +74,15 @@ MFFMv14/
 ├── Old Modules/        ← Old MFFM ZIPs to upgrade (for update.py)
 ├── dist/               ← Output compiled module ZIPs land here (build.py & update.py)
 ├── template/           ← Module template files (do not edit manually)
+│   ├── customize.sh    ← On-device installer
+│   ├── service.sh      ← Boot-time Google font protection daemon
+│   ├── action.sh       ← On-demand neutralization action (KSU/APatch/MMRL)
+│   ├── uninstall.sh    ← Module uninstall hook
+│   ├── post-mount.sh   ← Post-mount hook
+│   ├── font-config.sh  ← Font metadata (regenerated at build time)
+│   ├── module.prop     ← Module metadata template
+│   ├── META-INF/       ← TWRP/Magisk update-binary
+│   └── Files/          ← Placeholder for compiled font output
 ├── build.py            ← Main build script
 ├── update.py           ← Legacy module migration script
 ├── package_template.py ← Clean source template packaging script
@@ -172,6 +191,7 @@ python build.py [options]
 | `--save-config` | Save the effective build options to the config file for repeat builds |
 | `--inspect` | Report detected fonts, weights and modes without building |
 | `--template` | Package `MFFMv14-Source-Template.zip` (excludes `RELEASE_POST.txt` and `.git*` files) |
+| `--runtime` | Build the MFFM Runtime module ZIP (shared Python + fontTools for on-device use) |
 
 ---
 
@@ -484,9 +504,10 @@ When flashed, the MFFMv14 module:
 1. **Replaces the system sans-serif font** — patches `fonts.xml` and `font_fallback.xml` with the bundled font family, covering all weight slots (100 Thin through 900 Black) and italic variants.
 2. **Patches Google/Pixel product fonts** — rewrites `fonts_customization.xml` on Pixel and Pixel-like ROMs to redirect Google Sans and variable font families to the new font.
 3. **Applies optional external fonts** — picks up Bengali, Serif, and Monospace fonts from `/sdcard/MFFM/` subdirectories and patches the relevant system fallback entries.
-4. **Hardened Mint Stock XML Discovery & Caching** — leverages Magisk root mirrors (`$MIRROR/...`) and persistent pristine stock XML caching (`/data/adb/mffm_stock_xml/`) to always patch against clean stock ROM font configurations without ever modifying or unmounting live partition overlays. Reflashing over an active font module without rebooting is 100% safe.
+4. **Hardened Mint Stock XML Discovery** — dynamically probes hardware block devices, Magisk root mirrors (`$MIRROR/...`), and OverlayFS lowerdirs to always patch against clean stock ROM font configurations without ever modifying or unmounting live partition overlays. Reflashing over an active font module without rebooting is 100% safe.
 5. **Universal Variable Font Configuration** — generates and maintains `.conf` files for all detected variable fonts (Sans, Serif, Monospace, Bengali) regardless of whether the primary Sans font is static or variable.
 6. **Runs custom scripts** — executes any `.sh` scripts found in `/sdcard/MFFM/` for post-install customization.
+7. **Protects against Google font overrides** — `service.sh` runs at boot and launches a background watcher daemon that detects and clears any `/data/fonts` updates staged by AOSP `FontManagerService` or Google Play System updates, and disables the GMS font provider components. See [Section 3.12](#312-google-font-update-protection).
 
 ---
 
@@ -508,6 +529,11 @@ The installer dynamically resolves the user's active internal storage across:
 - `/sdcard`
 
 If Termux is installed on the device but has not yet been opened or granted storage permissions, the installer automatically assigns permissions via Android package manager and AppOps (`pm grant com.termux android.permission.READ_EXTERNAL_STORAGE`, `appops set com.termux MANAGE_EXTERNAL_STORAGE allow`).
+
+### Module Lifecycle Hooks
+
+- **`post-mount.sh`**: Runs automatically after root managers mount module overlays on boot. On KernelSU and APatch, it re-applies OverlayFS opaque attributes (`trusted.overlay.opaque=y`) to `/system/fonts`, `/system/product/fonts`, `/system/etc`, and `/system/product/etc` so system font definitions are cleanly overridden.
+- **`uninstall.sh`**: Triggered when the module is uninstalled via Magisk / KernelSU / APatch. It automatically re-enables Google Play Services font provider components (`FontsProvider`, `UpdateSchedulerService`) that were disabled by `service.sh`, cleanly restoring default system font behavior.
 
 ---
 
@@ -572,23 +598,29 @@ When multiple distinct weight faces are found, they are packed into a single **T
 
 ---
 
-## 3.6 Termux Dependency Handling
+## 3.6 Termux / MFFM Runtime Dependency Handling
 
-The installer manages Python/fontTools availability at flash time:
+The installer resolves Python+fontTools availability at flash time in this order:
 
 ```
-Termux installed?
+MFFM Runtime module installed? (/data/adb/mffm_runtime)
 │
-├─ YES → fontTools importable?
-│         ├─ YES → Full mode: OS/2 weight scan + TTC bundling
-│         └─ NO  → Auto-install fontTools via pip → retry
-│                   ├─ Install OK → Full mode
-│                   └─ Install failed → Warn + fallback mode
+├─ YES → Full mode: OS/2 weight scan + TTC bundling (no Termux needed)
 │
-└─ NO → Python available from system?
-          ├─ YES, but no fontTools, no Termux → fallback mode
-          └─ NO → fallback mode
+└─ NO → Termux installed?
+          │
+          ├─ YES → fontTools importable?
+          │         ├─ YES → Full mode: OS/2 weight scan + TTC bundling
+          │         └─ NO  → Auto-install fontTools via pip → retry
+          │                   ├─ Install OK → Full mode
+          │                   └─ Install failed → Warn + fallback mode
+          │
+          └─ NO → Python available from system?
+                    ├─ YES, but no fontTools, no Termux → fallback mode
+                    └─ NO → fallback mode
 ```
+
+> **Recommended:** Flash the **MFFM Runtime module** (`mffm-runtime-*.zip`) once. All font modules will detect it automatically without any Termux setup. See [Part 4](#part-4--mffm-runtime-module-shared-python--fonttools).
 
 ### Fallback mode (no Termux / no fontTools)
 
@@ -639,6 +671,10 @@ SANS_UPRIGHT_REGULAR_WGHT=400
 SANS_UPRIGHT_BOLD_WGHT=700
 SANS_UPRIGHT_WDTH=100
 
+# SANS-SERIF / CONDENSED (if condensed variable axes present)
+CONDENSED_UPRIGHT_REGULAR_WGHT=400
+CONDENSED_UPRIGHT_BOLD_WGHT=700
+
 # BENGALI / UPRIGHT
 # Android 100 (THIN): variable wght range 100..700
 BENGALI_UPRIGHT_THIN_WGHT=100
@@ -651,6 +687,10 @@ MONOSPACE_UPRIGHT_REGULAR_WGHT=400
 # SERIF / UPRIGHT
 SERIF_UPRIGHT_REGULAR_WGHT=400
 SERIF_UPRIGHT_BOLD_WGHT=700
+
+# SERIF / ITALIC (if italic variable axes present)
+SERIF_ITALIC_REGULAR_WGHT=400
+SERIF_ITALIC_BOLD_WGHT=700
 ```
 
 ### Reflash Auto-Pruning & Safety Rules
@@ -670,15 +710,35 @@ The module patches the following system files (copies to module overlay, never m
 | `/system/etc/font_fallback.xml` | Script/language fallback families |
 | `/system/product/etc/fonts_customization.xml` | Google Sans / Pixel product overrides |
 
+### XML Family Aliases Patched
+
+Within those files, the installer rewrites these named font family entries:
+
+| Family alias | Replaced with | Condition |
+|---|---|---|
+| `sans-serif` | Custom Sans font | Always |
+| `sans-serif-condensed` | Custom Sans condensed faces (if present) | If condensed faces detected |
+| `google-sans` | Custom Sans font | Always |
+| `google-sans-text` | Custom Sans font | Always |
+| `roboto-flex` | Custom Sans font | Always |
+| `monospace` | Custom Monospace font | If Monospace supplied |
+| `cutive-mono` | Custom Monospace font | If Monospace supplied |
+| `droidsans-mono` | Custom Monospace font | If Monospace supplied |
+| `serif-monospace` | Custom **Monospace** font | If Monospace supplied |
+| `serif-monospace` | Custom **Serif** font | Only if Monospace not supplied |
+| `serif` | Custom Serif font | If Serif supplied |
+| `noto-serif` | Custom Serif font | If Serif supplied |
+
+> **`serif-monospace` routing**: This XML family alias is shared between Monospace and Serif use cases. When a custom Monospace font is present, it always wins the `serif-monospace` slot. Serif only fills it as a fallback when no Monospace is supplied.
+
 ### Strict Pristine Mint Stock Recovery
 Before patching, the installer extracts the strict untouched original XML configurations via a multi-tier non-destructive hierarchy:
-1. **Persistent Validated Cache** (`/data/adb/mffm_stock_xml/`): Read first if confirmed clean and unadulterated.
+1. **Isolated Block Device Read-Only Temp Mount**: Resolves the hardware block device from `/proc/mounts` (e.g. `/dev/block/mapper/system_a`, `/dev/block/bootdevice/by-name/system`) and temporarily mounts it read-only in an isolated scratch directory (`/dev/.mffm_stock_probe_$$`) to extract pristine ROM files directly from physical hardware with zero side effects.
 2. **Magisk & Magisk Alpha Root Mirrors**: Searches across `$MAGISK_PATH/.magisk/mirror`, `/debug_ramdisk/.magisk/mirror`, `/data/adb/magisk/mirror`, `/dev/.magisk/mirror`, and `/sbin/.magisk/mirror`.
 3. **Mountify & KernelSU/APatch OverlayFS Lowerdir**: Dynamically parses `/proc/mounts` for active OverlayFS lowerdirs (`/system`, `/system_root`, `/product`), directly reading the untouched underlying ROM partition layer.
-4. **Isolated Block Device Read-Only Temp Mount**: Resolves the hardware block device from `/proc/mounts` (e.g. `/dev/block/mapper/system`, `/dev/block/by-name/system`) and temporarily mounts it read-only in an isolated scratch directory (`/dev/.mffm_stock_probe_$$`) to extract pristine ROM files directly with zero side effects.
-5. **Direct Mount**: Used only if verified clean of any active font module overrides.
+4. **Direct Mount**: Used as fallback if no partition overlay is active.
 
-The installer **never** issues destructive live `umount` operations on system partition overlays, keeping the root mount namespace and `/data/adb` 100% stable and intact.
+The installer **never** issues destructive live `umount` operations on system partition overlays and creates zero persistent cache folders in `/data/adb`.
 
 ---
 
@@ -689,9 +749,16 @@ Every flash writes a full debug log to:
 /sdcard/MFFM/mffmv14_debug_<YYYYMMDD_HHMMSS>.log
 ```
 
-The three most recent debug logs are kept for comparison with the current run; older ones are deleted automatically at the start of each new flash (only `mffmv14_debug_*.log` files are pruned — unrelated files in the folder are untouched). The log includes complete `set -x` trace output — every command executed, every variable value, every decision branch.
+The three most recent debug logs are kept; older ones are deleted automatically at the start of each new flash. You can override the retention count by setting `MFFM_LOG_KEEP` before flashing:
 
-### Log markers
+```sh
+# Keep the last 5 logs instead of 3 (Termux or root shell)
+export MFFM_LOG_KEEP=5
+```
+
+Only `mffmv14_debug_*.log` files are pruned — unrelated files in `/sdcard/MFFM/` are untouched. The log includes complete `set -x` trace output — every command executed, every variable value, every decision branch.
+
+### Installation log markers
 
 | Marker | Meaning |
 |---|---|
@@ -699,6 +766,17 @@ The three most recent debug logs are kept for comparison with the current run; o
 | `[--]` | Step skipped (font not supplied or not applicable) |
 | `[!!]` | Warning — non-fatal, install continues |
 | `[ERROR]` | Fatal error — installation stopped |
+
+### Google Font Protection log (`font_service.log`)
+
+The boot service (`service.sh`) and manual action (`action.sh`) write a separate protection log:
+
+```
+$MODDIR/font_service.log
+/sdcard/MFFM/font_service.log   (mirrored when /sdcard/MFFM exists)
+```
+
+Entries use the format `[YYYY-MM-DD HH:MM:SS] [SERVICE|ACTION] <message>`. Check this log if your custom font reverts after boot or after a Google Play System update.
 
 ---
 
@@ -719,16 +797,79 @@ Place any `.sh` scripts in `/sdcard/MFFM/` (up to 2 directory levels deep). The 
 
 ---
 
-## 3.12 Troubleshooting
+## 3.12 Google Font Update Protection
+
+MFFMv14 includes a **two-layer defence** against Google/AOSP font updates
+that would otherwise overwrite your system font through `/data/fonts/` (AOSP
+`FontManagerService`, Android 12+ Project Mainline) or GMS caches
+(`com.google.android.gms` font provider).
+
+### Layer 1 — Automatic Boot Service (`service.sh`)
+
+`service.sh` runs automatically at the late-start service stage (after
+`sys.boot_completed=1`). On every boot it:
+
+1. Executes `cmd font clear` — resets AOSP `FontManagerService` back to
+   `/system/etc/fonts.xml`.
+2. Recursively purges `/data/fonts/` hierarchy and
+   `/data/system/font_fallback.xml`.
+3. Disables Google Play Services font components:
+   - `com.google.android.gms.fonts.provider.FontsProvider`
+   - `com.google.android.gms.fonts.update.UpdateSchedulerService`
+4. Purges GMS downloaded font caches from `/data/data/…`, `/data/user/0/…`,
+   `/data/user_de/0/…`, and `/data/data/…/app_fonts/`.
+5. Spawns a **background watcher daemon** that polls every hour. If
+   `/data/fonts/` reappears (e.g. after a Play System update download),
+   it neutralizes it immediately without requiring a reboot.
+
+The daemon's PID is saved to `$MODDIR/service.pid`. Logs are written to
+`$MODDIR/font_service.log` and mirrored to `/sdcard/MFFM/font_service.log`.
+
+### Layer 2 — On-Demand Action (`action.sh`)
+
+For **KernelSU ≥ 0.7.0**, **APatch ≥ 0.10.0**, and **MMRL**, the module
+exposes an **Action button** in the root manager UI. Tapping it runs
+`action.sh`, which:
+
+- Checks for active staged font overrides in `/data/fonts/`
+- Runs the full neutralization sequence (identical to `service.sh`)
+- Verifies whether the background watcher daemon is alive
+- Automatically restarts the daemon if it was killed or crashed
+
+You can also trigger it manually from any root shell:
+```sh
+su -c sh /data/adb/modules/<module_id>/action.sh
+```
+
+> **Why might you need the action button?** After a large Google Play System
+> update, the GMS font provider may re-download fonts before the hourly watcher
+> fires. Tap "Action" to instantly restore your custom font without rebooting.
+
+### Background: How Google Overrides System Fonts
+
+| Mechanism | Location | Android Version |
+|---|---|---|
+| AOSP `FontManagerService` | `/data/fonts/files/` + `/data/fonts/config/config.xml` | Android 12+ (API 31+) |
+| Google Play Services provider | `/data/data/com.google.android.gms/files/fonts/` | All Android versions with GMS |
+| GMS User-DE cache | `/data/user_de/0/com.google.android.gms/files/fonts/` | Android 7+ |
+
+When present, `/data/fonts/` takes **unconditional priority** over
+`/system/fonts/` and `/system/etc/fonts.xml` regardless of your module
+overlay, which is why a passive overlay is insufficient on its own.
+
+---
+
+## 3.13 Troubleshooting
 
 ### Flashing over an existing font module without rebooting
 
-**Fix:** In MFFMv14, persistent pristine stock XML caching (`/data/adb/mffm_stock_xml/`) and Magisk mirror discovery allow the installer to always patch against clean, unadulterated stock ROM font XMLs without executing live `umount` operations on system partition overlays. Reflashing a new module over an existing font module without rebooting or uninstalling is completely safe and keeps the root manager mount namespace and `/data/adb` intact.
+**Fix:** In MFFMv14, hardware block device extraction, Magisk mirror discovery, and OverlayFS lowerdir inspection allow the installer to always patch against clean, unadulterated stock ROM font XMLs without executing live `umount` operations on system partition overlays. Reflashing a new module over an existing font module without rebooting or uninstalling is completely safe and keeps the root manager mount namespace intact.
 
 ### Bengali/Serif/Monospace fonts detected but not bundled into TTC
 
-**Cause:** Termux is not installed or fontTools is not installed.
-**Fix:** Install Termux from F-Droid, then run `pip install fonttools brotli` in Termux, then reflash.
+**Cause:** Neither MFFM Runtime module nor Termux+fontTools is installed.
+**Fix (Recommended):** Flash the **MFFM Runtime** module (`mffm-runtime-1.0.zip`) once via Magisk/KernelSU/APatch. All font modules will immediately detect it and bundle TTCs without Termux.
+**Alternative:** Install Termux from F-Droid, then run `pip install fonttools brotli` in Termux, then reflash.
 
 ### Fonts not applying after reboot
 
@@ -749,4 +890,103 @@ Place any `.sh` scripts in `/sdcard/MFFM/` (up to 2 directory levels deep). The 
 
 **Cause:** Another font module is active and takes priority, or system font cache needs clearing.
 **Fix:** Disable/uninstall any other active font modules and reboot. If the issue persists, wipe the Dalvik/ART cache from recovery.
+
+### Custom font reverts after a Google Play System update
+
+**Cause:** Android 12+ `FontManagerService` can restore font overrides from `/data/fonts/` after a Play System update, even with a module overlay active.
+**Fix:** The MFFMv14 `service.sh` background watcher detects this and clears `/data/fonts/` automatically (within ~1 hour). To restore immediately without waiting or rebooting, tap the **Action** button in KernelSU/APatch/MMRL, or run:
+```sh
+su -c sh /data/adb/modules/<module_id>/action.sh
+```
+Check `/sdcard/MFFM/font_service.log` for the neutralization history.
+
+### Service daemon not running / font_service.log empty
+
+**Cause:** `service.sh` may have been interrupted before spawning the background daemon, or the device rebooted after install without `sys.boot_completed` being set.
+**Fix:** Tap the **Action** button (KernelSU/APatch/MMRL) to restart the daemon, or reflash the module.
+
+---
+
+# Part 4 — MFFM Runtime Module (Shared Python + fontTools)
+
+The **MFFM Runtime module** (`mffm_runtime`) provides a self-contained, portable Python 3 + `fontTools` execution environment installed once to `/data/adb/mffm_runtime`.
+
+## 4.1 Why Use the MFFM Runtime Module?
+
+- **Zero Termux Dependency:** Eliminates the need to install Termux or run `pip install fonttools` on device.
+- **Accurate OS/2 Weight Class Detection:** Reads TrueType/OpenType tables directly on-device even if font filenames are obfuscated or hashed (e.g. hex cache files).
+- **Dynamic TTC Multi-Face Bundling:** Bundles Monospace, Bengali, and Serif families into multi-face TrueType Collections on-the-fly during module installation.
+- **Future-Proof Extensibility:** Provides full access to the `fontTools` suite (`ttLib`, `varLib`, `subset`, `cffLib`, `feaLib`, `otlLib`) for on-device font manipulation scripts.
+
+## 4.2 Architecture & ABI Support
+
+The standalone runtime builds statically against `musl` libc, allowing CPython to run natively on the Android Linux kernel without requiring Termux or `glibc`:
+
+| Architecture / ABI | Android ABI | Runtime Mode | Description |
+|---|---|---|---|
+| `aarch64` | `arm64-v8a` | **Standalone Musl** (Embedded) | Prebuilt static CPython 3.11 + fontTools archive (`python.tar.xz`). Supported by ~98% of modern Android devices. |
+| `x64` | `x86_64` | **Standalone Musl** (Embedded) | Prebuilt static CPython 3.11 + fontTools archive (`python.tar.xz`). Used by Android emulators, ChromeOS, and x86_64 devices. |
+| `armv7` / `x86` | `armeabi-v7a`, `x86` | **Termux Bootstrap** (Fallback) | Upstream `python-build-standalone` does not provide static musl builds for legacy 32-bit targets. If flashed on 32-bit devices, the installer automatically bootstraps fontTools via Termux `pip` if Termux is present. |
+
+## 4.3 Building the Runtime Module
+
+### Step 1: Prepare Payloads (Developer / Release Builder)
+To download pinned musl-static Python builds and package pure-python `fontTools` into ABI tarballs:
+```
+python prepare_runtime.py
+```
+Options:
+- `python prepare_runtime.py` — builds both `aarch64` and `x64` tarballs.
+- `python prepare_runtime.py --abi aarch64` — builds only the `aarch64` payload.
+- `python prepare_runtime.py --abi x64` — builds only the `x64` payload.
+
+This writes `runtime-template/runtime/<abi>/python.tar.xz` and updates SHA-256 supply-chain pins in `runtime-template/manifest.json`.
+
+### Step 2: Build the Flashable ZIP
+To package and cryptographically sign the runtime module ZIP:
+```
+python build.py --runtime
+```
+or:
+```
+python build_runtime.py
+```
+Output is saved to `dist/mffm-runtime-YYYY.MM.DD.zip` (e.g. `dist/mffm-runtime-2026.08.25.zip`).
+
+## 4.4 Packaging Clean Source Templates
+
+When sharing or archiving the template with `python build.py --template`, all heavy precompiled binary archives (`*.tar.xz`, `*.tar.gz`, `*.whl`, `*.ttf`, `*.deb`) are strictly excluded. The resulting `dist/MFFMv14-Source-Template.zip` stays under ~95 KB and contains clean, ready-to-use template skeletons without bundling heavy assets.
+
+## 4.5 On-Device Installation
+
+1. Flash `mffm-runtime-2026.08.25.zip` in **Magisk**, **KernelSU**, or **APatch**.
+2. The runtime extracts directly to `/data/adb/mffm_runtime`.
+3. Flash any MFFMv14 font module — it will automatically detect and use the runtime.
+
+## 4.6 Runtime Helper CLI Subcommands (`mffm-helper`)
+
+The runtime environment provides `/data/adb/mffm_runtime/bin/mffm-helper` (invocable via `mffm_runtime_helper` in `customize.sh` or standalone in root shell). It supports the following subcommands:
+
+| Subcommand | Usage | Purpose |
+|---|---|---|
+| `scan` | `mffm-helper scan <dir1> [dir2 ...]` | Scans font files, inspecting OS/2 tables, name records, and `fvar` axes; outputs normalized weight, style, and variable axis metadata. |
+| `ttc` | `mffm-helper ttc --out <output.ttc> [files ...]` | Bundles multiple TrueType/OpenType files into a single TrueType Collection (`.ttc`/`.ttf`). |
+| `process-font` | `mffm-helper process-font --in <font> [--out <out>] [--no-hinting]` | Strips TrueType hinting instructions and normalizes vertical font metrics. |
+| `compile-bundle` | `mffm-helper compile-bundle --out-dir <dir> [--sans-dir <dir>] [--mono-dir <dir>] [--serif-dir <dir>] [--bengali-dir <dir>]` | Performs a complete on-device compilation: resolves faces across multiple directories, packs them into unified TTC collections, generates XML fragments (`sans.xml`, `mono.xml`, `serif.xml`, `bengali.xml`), and emits an updated `font-config.sh` containing `FONT_MODE`, `FONT_FAMILY`, `VF_*_AXIS_META`, and `VF_*_WEIGHTS`. |
+
+## 4.7 Developer Notes: Variable Contracts & Synchronization
+
+- **`font-config.sh` Interface**: Sourced by `template/customize.sh`. Key variables:
+  - `FONT_MODE`: `'static'` or `'variable'`
+  - `FONT_FAMILY`: Display name of primary font
+  - `FONT_FILES`: Space-delimited list of payload font files
+  - `VF_UPRIGHT_AXIS_META` / `VF_UPRIGHT_WEIGHTS`: Variable axis min/default/max and supported weight classes for Sans upright
+  - `VF_ITALIC_AXIS_META` / `VF_ITALIC_WEIGHTS`: Variable axis metadata for Sans italic
+  - `VF_MONO_AXIS_META` / `VF_MONO_WEIGHTS`: Variable axis metadata for Monospace
+  - `VF_SERIF_UPRIGHT_AXIS_META` / `VF_SERIF_UPRIGHT_WEIGHTS`: Variable axis metadata for Serif upright
+  - `VF_SERIF_ITALIC_AXIS_META` / `VF_SERIF_ITALIC_WEIGHTS`: Variable axis metadata for Serif italic
+  - `VF_BENGALI_AXIS_META` / `VF_BENGALI_WEIGHTS`: Variable axis metadata for Bengali
+- **Synchronization Rule**: `runtime_helper.py` in the project root is the standalone reference implementation for `mffm-helper`. Its logic is also embedded in `runtime-template/customize.sh` for on-device deployment. Any updates to parsing or axis export must be mirrored across both files.
+
+
 

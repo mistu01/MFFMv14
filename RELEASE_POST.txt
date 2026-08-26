@@ -1,39 +1,54 @@
 MFFMv14 — Universal Android Font Module Builder
-Version: 2026.08.08
+Version: 2026.08.27
 
 Build flashable font modules for Magisk, KernelSU, APatch, and Mountify
 from any static or variable font family — on PC or directly from Termux.
 
 ━━━━━━━━━━━━━━━━━━━━━━
-Highlights
+What's New & Highlights
 ━━━━━━━━━━━━━━━━━━━━━━
 
-Weight detection reads the font binary, not the filename
-Weight and style are read directly from the OS/2 table, so any filename
-works — including Android font cache names like 61555016c4027e1b-s.p.ttf.
+1. MFFM Standalone Runtime Module (`mffm_runtime`)
+- Zero Termux dependency: flash the runtime module once to get a portable
+  CPython 3 + fontTools environment at `/data/adb/mffm_runtime`.
+- Built-in `mffm-helper` CLI (`scan`, `ttc`, `process-font`, `compile-bundle`)
+  for on-device font metrics normalization and TTC collection bundling.
+- Automatic self-cleanup: unpacks to `/data/adb/mffm_runtime/` and deletes the
+  heavy payload archive from the module directory to save internal storage.
 
-- One TTC packs every weight face (100–900 + Italic) with correct index XML
-- Sans, Serif, Monospace, and Bengali handled independently
-- External Serif/Monospace/Bengali fonts in /sdcard/MFFM/ are weight-scanned
-  and bundled into a single indexed TTC — only the weights you supply are used
-- Variable fonts: fvar axes auto-detected, weights clamped to the real range,
-  live .conf axis tuning preserved across module updates
-- OpenType feature freezing per family (ss01, zero, tnum...)
-- Centered colon injection for lockscreen clock digits, per family
-- Patches fonts.xml, font_fallback.xml, and Pixel fonts_customization.xml
-- Auto-detects Magisk, KernelSU, APatch, and Mountify overlay strategies
-- Runs your own .sh scripts from /sdcard/MFFM/ after install
-- Signed flashable ZIP, full set -x debug log saved to /sdcard/MFFM/
-- Termux: fontTools auto-installed at flash time if missing
+2. Google Font Update Neutralizer (Service & Fallback Action)
+- `service.sh`: Runs at boot, executes `cmd font clear` to reset AOSP
+  FontManagerService, purges `/data/fonts`, disables GMS font providers
+  (`FontsProvider`, `UpdateSchedulerService`), and spawns an hourly background
+  watcher to keep Google Play System font updates from overriding system fonts.
+- `action.sh`: On-demand root action triggerable via the KernelSU / APatch /
+  MMRL "Action" button in the module UI or CLI (`su -c sh .../action.sh`).
+  Immediately purges font overrides and restarts the protection daemon.
+- Dual event logging to `$MODDIR/font_service.log` and `/sdcard/MFFM/font_service.log`.
 
-━━━━━━━━━━━━━━━━━━━━━━
-Fallback (no Termux / no fontTools)
-━━━━━━━━━━━━━━━━━━━━━━
+3. Multi-Family Variable Font Axis Config & Auto-Recovery
+- `compile-bundle` on-device exports variable axis metadata (`VF_*_AXIS_META`,
+  `VF_*_WEIGHTS`) into `font-config.sh` across Sans, Monospace, Serif, and Bengali.
+- Installer re-evaluates the variable gate post-runtime, generating `/sdcard/MFFM/*.conf`
+  files even when external variable fonts are supplied for static Sans builds.
+- Obsolete profile keys are auto-pruned on reflash; header-only configs are preserved.
 
-Bengali   → 3 files  (Regular / Medium / Bold)
-Serif     → 4 files  (Regular / Italic / Bold / BoldItalic)
-Monospace → 1 file   (Regular only)
-Variable  → always works, no fontTools needed
+4. Accurate Weight & Font Routing Engine
+- Hybrid OS/2 table and name-record inspection detects true weights (e.g. Linotype
+  faces labeled 400 with "Black" names correctly resolve to 900 Black).
+- Fixed `serif-monospace` routing: custom Monospace fonts always win the slot;
+  Serif only fills `serif-monospace` as a fallback when no Monospace is present.
+- Extended XML family support: `roboto-flex`, `google-sans`, `google-sans-text`,
+  `droidsans-mono`, `cutive-mono`, `noto-serif`.
+- Pristine Mint Stock ROM XML recovery via isolated hardware block mounts,
+  Magisk root mirrors, and OverlayFS lowerdirs without live unmounting.
+
+5. Build System & Reproducibility
+- Build config persistence (`.mffm-build.json`, `--config`, `--save-config`).
+- Diagnostic triage with `python build.py --inspect`.
+- Byte-identical reproducible builds via `SOURCE_DATE_EPOCH`.
+- Pinned ZipSignerust downloads with SHA-256 integrity verification.
+- 68-test automated pytest regression suite and POSIX shell syntax guards.
 
 ━━━━━━━━━━━━━━━━━━━━━━
 Quick Start
@@ -41,24 +56,28 @@ Quick Start
 
 PC:
   1. pip install -r requirements.txt
-  2. Put fonts in Fonts/Sans/ (mandatory)
+  2. Put fonts in Fonts/Sans/ (mandatory; Mono/Serif/Bengali optional)
   3. python build.py
-  4. Flash dist/*.zip in Magisk / KernelSU / APatch
+  4. Flash dist/mffm14-*.zip in Magisk / KernelSU / APatch
 
-Termux (on-device):
+On-Device (Standalone Runtime - Recommended):
+  1. Flash dist/mffm-runtime-*.zip once in your root manager
+  2. Flash your font module — it will auto-detect the runtime
+
+On-Device (Termux):
   1. unzip MFFMv14-Source-Template.zip -d ~/MFFMv14
   2. cd ~/MFFMv14
   3. sh termux-build.sh
 
 Upgrading an old MFFM module:
-  1. Put the old ZIP in Old Modules/
-  2. python update.py  →  rebuilt on the v14 template in dist/
+  1. Put old ZIP(s) in Old Modules/
+  2. python update.py
 
-External fonts after flash — drop files and reflash:
+External fonts after flash — drop files into /sdcard/MFFM/ and reflash:
   /sdcard/MFFM/Bengali/
   /sdcard/MFFM/Serif/
   /sdcard/MFFM/Monospace/
-  Any filename accepted. Weight auto-detected from font binary.
+  Any filename accepted. Weights auto-detected from font binaries.
 
 ━━━━━━━━━━━━━━━━━━━━━━
 © 2026 MFFM / Mistu

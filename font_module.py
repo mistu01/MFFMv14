@@ -162,7 +162,7 @@ def write_props(path: Path, props: dict[str, str]) -> None:
 
 
 TEMPLATE_COPY_ITEMS = (
-    "module.prop", "customize.sh", "service.sh", "uninstall.sh", "post-mount.sh",
+    "module.prop", "customize.sh", "service.sh", "action.sh", "uninstall.sh", "post-mount.sh",
     "font-config.sh", "META-INF",
 )
 
@@ -866,7 +866,7 @@ class FontMetricRewriter:
 
 
 def _scale_ffix3_value(value: int, units_per_em: int) -> int:
-    return int(value / FFIX3_REFERENCE_UPM * units_per_em)
+    return int(round(value * units_per_em / FFIX3_REFERENCE_UPM))
 
 
 def _set_font_metric(font, table_name: str, field_name: str, value: int) -> None:
@@ -2134,86 +2134,70 @@ def compile_fonts(
         family = next(iter(families))
         if prefix_family:
             family = transform_family_name(family)
-        optional_faces = {key: separated[key] for key in OPTIONAL_CATEGORIES}
-        if mode == "static":
-            selected, payload, mono_index = _compile_static(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, optional_faces=optional_faces)
-        else:
-            selected, payload, mono_index = _compile_variable(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, optional_faces=optional_faces)
+        # Save prepared source fonts into categorized subfolders under Files/
+        sans_files_dir = files_dir / "Sans"
+        sans_files_dir.mkdir(parents=True, exist_ok=True)
+        for face in faces:
+            font = _open_font(face)
+            try:
+                if prefix_family:
+                    _apply_custom_metadata(font)
+                font.save(str(sans_files_dir / face.path.name))
+            finally:
+                font.close()
 
-        primary = payload[0]
-        has_any_vf = (mode == "variable") or any(f.variable for f in mono_faces) or any(f.variable for f in serif_faces) or any(f.variable for f in bengali_faces)
-        if has_any_vf:
-            comp_vf_faces = [f for f in (faces or primary_faces) if f.variable] + [f for f in (mono_faces + serif_faces + bengali_faces) if f.variable]
-            vf_id = _variable_config_identity(comp_vf_faces if comp_vf_faces else (faces or primary_faces))
-        else:
-            digest = hashlib.sha256()
-            digest.update(family.encode("utf-8", errors="replace"))
-            for f in sorted(payload):
-                p = files_dir / f
-                if p.is_file():
-                    digest.update(f.encode("utf-8"))
-                    digest.update(p.read_bytes())
-            vf_id = "vf-" + digest.hexdigest()[:20]
+        if mono_faces:
+            mono_files_dir = files_dir / "Monospace"
+            mono_files_dir.mkdir(parents=True, exist_ok=True)
+            for face in mono_faces:
+                font = _open_font(face)
+                try:
+                    if prefix_family:
+                        _apply_custom_metadata(font)
+                    font.save(str(mono_files_dir / face.path.name))
+                finally:
+                    font.close()
+
+        if serif_faces:
+            serif_files_dir = files_dir / "Serif"
+            serif_files_dir.mkdir(parents=True, exist_ok=True)
+            for face in serif_faces:
+                font = _open_font(face)
+                try:
+                    if prefix_family:
+                        _apply_custom_metadata(font)
+                    font.save(str(serif_files_dir / face.path.name))
+                finally:
+                    font.close()
+
+        if bengali_faces:
+            bengali_files_dir = files_dir / "Bengali"
+            bengali_files_dir.mkdir(parents=True, exist_ok=True)
+            for face in bengali_faces:
+                font = _open_font(face)
+                try:
+                    if prefix_family:
+                        _apply_custom_metadata(font)
+                    font.save(str(bengali_files_dir / face.path.name))
+                finally:
+                    font.close()
+
+        payload = []
+        for cat_dir in (sans_files_dir, files_dir / "Monospace", files_dir / "Serif", files_dir / "Bengali"):
+            if cat_dir.is_dir():
+                for pf in sorted(cat_dir.iterdir()):
+                    if pf.is_file():
+                        payload.append(str(pf.relative_to(files_dir).as_posix()))
+
         config = [
             f"FONT_MODE={shell_quote(mode)}",
             f"FONT_FAMILY={shell_quote(family)}",
             f"FONT_FILES={shell_quote(' '.join(payload))}",
-            f"FONT_PRIMARY={shell_quote(primary)}",
-            f"CLOCK_FONT={shell_quote('GoogleSansClock-Regular' + Path(primary).suffix)}",
+            f"FONT_PRIMARY={shell_quote(payload[0] if payload else 'Sans/DroidSans.ttf')}",
             "VF_CONFIG_SCHEMA='2'",
-            f"VF_CONFIG_ID={shell_quote(vf_id)}",
         ]
-        if mono_index is not None:
-            config.append(f"MONO_INDEX={shell_quote(str(mono_index))}")
-        if mode == "variable":
-            upright, italic = _pick_variable_faces(faces)
-            config.extend(
-                (
-                    f"VF_UPRIGHT_AXIS_META={shell_quote(_axis_metadata(upright, italic=False))}",
-                    f"VF_ITALIC_AXIS_META={shell_quote(_axis_metadata(italic, italic=True))}",
-                    f"VF_UPRIGHT_WEIGHTS={shell_quote(_supported_weights(upright))}",
-                    f"VF_ITALIC_WEIGHTS={shell_quote(_supported_weights(italic))}",
-                )
-            )
-        if mono_faces and any(f.variable for f in mono_faces):
-            mono_var = [f for f in mono_faces if f.variable]
-            upright_mono = next((f for f in mono_var if f.style == "normal"), mono_var[0])
-            if upright_mono.axes and "wght" in upright_mono.axes:
-                config.extend(
-                    (
-                        f"VF_MONO_AXIS_META={shell_quote(_axis_metadata(upright_mono, italic=False))}",
-                        f"VF_MONO_WEIGHTS={shell_quote(_supported_weights(upright_mono))}",
-                    )
-                )
-        if serif_faces and any(f.variable for f in serif_faces):
-            serif_var = [f for f in serif_faces if f.variable]
-            upright_serif = next((f for f in serif_var if f.style == "normal"), serif_var[0])
-            italic_serif = next((f for f in serif_var if f.style == "italic"), None)
-            if upright_serif.axes and "wght" in upright_serif.axes:
-                config.extend(
-                    (
-                        f"VF_SERIF_UPRIGHT_AXIS_META={shell_quote(_axis_metadata(upright_serif, italic=False))}",
-                        f"VF_SERIF_UPRIGHT_WEIGHTS={shell_quote(_supported_weights(upright_serif))}",
-                    )
-                )
-            if italic_serif and italic_serif.axes and "wght" in italic_serif.axes:
-                config.extend(
-                    (
-                        f"VF_SERIF_ITALIC_AXIS_META={shell_quote(_axis_metadata(italic_serif, italic=True))}",
-                        f"VF_SERIF_ITALIC_WEIGHTS={shell_quote(_supported_weights(italic_serif))}",
-                    )
-                )
-        if bengali_faces and any(f.variable for f in bengali_faces):
-            beng_var = [f for f in bengali_faces if f.variable]
-            upright_beng = next((f for f in beng_var if f.style == "normal"), beng_var[0])
-            if upright_beng.axes and "wght" in upright_beng.axes:
-                config.extend(
-                    (
-                        f"VF_BENGALI_AXIS_META={shell_quote(_axis_metadata(upright_beng, italic=False))}",
-                        f"VF_BENGALI_WEIGHTS={shell_quote(_supported_weights(upright_beng))}",
-                    )
-                )
         (module_dir / "font-config.sh").write_text("\n".join(config) + "\n", encoding="utf-8", newline="\n")
+
         family_faces = {
             "sans": tuple(faces),
             "mono": tuple(mono_faces),
@@ -2223,8 +2207,8 @@ def compile_fonts(
         return CompileResult(
             mode,
             family,
-            tuple(selected),
-            payload,
+            tuple(faces),
+            tuple(payload),
             tuple(applied_features),
             family_faces,
         )

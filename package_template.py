@@ -12,7 +12,11 @@ from build import ROOT, zip_timestamp
 # Explicit list of root files to include (RELEASE_POST.txt and Git files are strictly EXCLUDED)
 INCLUDE_FILES = (
     "build.py",
+    "build_runtime.py",
+    "prepare_runtime.py",
+    "runtime_helper.py",
     "font_module.py",
+    "package_template.py",
     "requirements.txt",
     "requirements-dev.txt",
     "termux-build.sh",
@@ -27,10 +31,17 @@ EMPTY_FOLDERS = (
     "Fonts/Monospace",
     "Fonts/Serif",
     "Fonts/Bengali",
-    "template/Files",
+    "template/Files/Sans",
+    "template/Files/Monospace",
+    "template/Files/Serif",
+    "template/Files/Bengali",
+    "runtime-template/runtime/aarch64",
+    "runtime-template/runtime/x64",
     "Old Modules",
     "dist",
 )
+
+EXCLUDED_ASSET_SUFFIXES = (".tar.xz", ".tar.gz", ".tar.zst", ".whl", ".deb", ".zip")
 
 
 def build_template_zip(output_dir: Path | None = None) -> Path:
@@ -49,18 +60,21 @@ def build_template_zip(output_dir: Path | None = None) -> Path:
                 info.compress_type = zipfile.ZIP_DEFLATED
                 archive.writestr(info, file_path.read_bytes())
 
-        template_dir = ROOT / "template"
-        if template_dir.exists():
-            for path in sorted(template_dir.rglob("*")):
-                if path.is_file() and not path.name.startswith(".git") and not path.name.startswith("."):
-                    if "RELEASE_POST" in path.name.upper():
-                        continue
-                    rel_path = path.relative_to(ROOT).as_posix()
-                    info = zipfile.ZipInfo(rel_path, timestamp)
-                    executable = path.name.endswith(".sh") or path.name == "update-binary"
-                    info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
-                    info.compress_type = zipfile.ZIP_DEFLATED
-                    archive.writestr(info, path.read_bytes())
+        for tdir in (ROOT / "template", ROOT / "runtime-template"):
+            if tdir.exists():
+                for path in sorted(tdir.rglob("*")):
+                    if path.is_file() and not path.name.startswith(".git") and not path.name.startswith("."):
+                        if "RELEASE_POST" in path.name.upper():
+                            continue
+                        # Never package heavy prebuilt runtime tarballs or font assets into the source template
+                        if any(path.name.endswith(sfx) for sfx in EXCLUDED_ASSET_SUFFIXES):
+                            continue
+                        rel_path = path.relative_to(ROOT).as_posix()
+                        info = zipfile.ZipInfo(rel_path, timestamp)
+                        executable = path.name.endswith(".sh") or path.name == "update-binary" or path.name in {"mffm-helper", "python3"}
+                        info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
+                        info.compress_type = zipfile.ZIP_DEFLATED
+                        archive.writestr(info, path.read_bytes())
 
         # Create empty directory entries cleanly without .gitkeep files
         for folder in EMPTY_FOLDERS:
@@ -72,7 +86,7 @@ def build_template_zip(output_dir: Path | None = None) -> Path:
     print("MFFMv14 Source Template Packaged")
     print("=" * 60)
     print(f"Output        : {output_zip}")
-    print("Excluded      : RELEASE_POST.txt, .gitignore, .gitattributes, .gitkeep, .git*")
+    print("Excluded      : RELEASE_POST.txt, .git*, runtime tarballs (*.tar.xz, *.tar.gz)")
     return output_zip
 
 

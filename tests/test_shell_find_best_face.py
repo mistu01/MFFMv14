@@ -16,9 +16,28 @@ VECTORS = json.loads((Path(__file__).parent / "weight_vectors.json").read_text(e
 CASES = VECTORS["shell_filename_cases"]
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not available")
+def _find_usable_bash() -> str | None:
+    # On Windows, prefer Git Bash / MSYS bash over WSL system32 bash.exe
+    for cand in (
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+        shutil.which("bash"),
+        shutil.which("sh"),
+    ):
+        if cand and Path(cand).is_file():
+            if "system32" in str(cand).lower():
+                continue
+            return str(cand)
+    found = shutil.which("bash")
+    return found if found and "system32" not in str(found).lower() else None
+
+
+USABLE_BASH = _find_usable_bash()
+
+
+@pytest.mark.skipif(USABLE_BASH is None, reason="usable bash shell is not available")
 def test_shell_find_best_face_vectors(tmp_path):
-    bash = shutil.which("bash")
+    bash = USABLE_BASH
     harness = Path(__file__).parent / "shell" / "run_find_best_face.sh"
     stdin = "".join(f"{case['weight']} {case['style']} {','.join(case['files'])}\n" for case in CASES)
 
