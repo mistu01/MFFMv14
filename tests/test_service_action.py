@@ -38,7 +38,7 @@ def test_action_sh_content():
 
 
 def test_template_and_font_module_packaging(tmp_path):
-    # Test that action.sh, service.sh, and font-config.sh are included across all module packaging configs
+    # Test that action.sh and service.sh are included across all module packaging configs
     from build import PAYLOAD_NAMES
     from font_module import TEMPLATE_COPY_ITEMS
     from update import TEMPLATE_ITEMS
@@ -50,12 +50,13 @@ def test_template_and_font_module_packaging(tmp_path):
     assert "service.sh" in TEMPLATE_COPY_ITEMS
     assert "action.sh" in TEMPLATE_ITEMS
     assert "service.sh" in TEMPLATE_ITEMS
-    assert "font-config.sh" in TEMPLATE_ITEMS
 
     out_zip = build_template_zip(tmp_path)
     with zipfile.ZipFile(out_zip, "r") as z:
         names = z.namelist()
-        assert "template/service.sh" in names
-        assert "template/action.sh" in names
-        assert "template/customize.sh" in names
-        assert "template/font-config.sh" in names
+        assert "service.sh" in names
+        assert "action.sh" in names
+        assert "customize.sh" in names
+        assert "module.prop" in names
+        assert "USAGE_GUIDE.md" in names
+        assert "CHANGELOG.md" in names

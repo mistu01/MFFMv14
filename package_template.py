@@ -9,36 +9,18 @@ from pathlib import Path
 
 from build import ROOT, zip_timestamp
 
-# Explicit list of root files to include (RELEASE_POST.txt and Git files are strictly EXCLUDED)
-INCLUDE_FILES = (
-    "build.py",
-    "build_runtime.py",
-    "prepare_runtime.py",
-    "runtime_helper.py",
-    "font_module.py",
-    "package_template.py",
-    "requirements.txt",
-    "requirements-dev.txt",
-    "termux-build.sh",
-    "update.py",
+# Explicit list of documentation and helper files to include at root alongside the template
+ROOT_EXTRA_FILES = (
     "USAGE_GUIDE.md",
     "CHANGELOG.md",
-    "zipsigner_auto.py",
+    "RUNTIME_ENHANCEMENTS.md",
 )
 
 EMPTY_FOLDERS = (
-    "Fonts/Sans",
-    "Fonts/Monospace",
-    "Fonts/Serif",
-    "Fonts/Bengali",
-    "template/Files/Sans",
-    "template/Files/Monospace",
-    "template/Files/Serif",
-    "template/Files/Bengali",
-    "runtime-template/runtime/aarch64",
-    "runtime-template/runtime/x64",
-    "Old Modules",
-    "dist",
+    "Files/Sans",
+    "Files/Monospace",
+    "Files/Serif",
+    "Files/Bengali",
 )
 
 EXCLUDED_ASSET_SUFFIXES = (".tar.xz", ".tar.gz", ".tar.zst", ".whl", ".deb", ".zip")
@@ -51,32 +33,33 @@ def build_template_zip(output_dir: Path | None = None) -> Path:
 
     timestamp = zip_timestamp()
     with zipfile.ZipFile(output_zip, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        for f_name in INCLUDE_FILES:
+        # 1. Package template skeleton directly at root
+        template_dir = ROOT / "template"
+        if template_dir.exists():
+            for path in sorted(template_dir.rglob("*")):
+                if path.is_file() and not path.name.startswith(".git") and not path.name.startswith("."):
+                    if "RELEASE_POST" in path.name.upper():
+                        continue
+                    if any(path.name.endswith(sfx) for sfx in EXCLUDED_ASSET_SUFFIXES):
+                        continue
+                    rel_path = path.relative_to(template_dir).as_posix()
+                    info = zipfile.ZipInfo(rel_path, timestamp)
+                    executable = path.name.endswith(".sh") or path.name == "update-binary"
+                    info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    archive.writestr(info, path.read_bytes())
+
+        # 2. Package documentation and shell builder at root
+        for f_name in ROOT_EXTRA_FILES:
             file_path = ROOT / f_name
             if file_path.is_file():
                 info = zipfile.ZipInfo(f_name, timestamp)
-                executable = f_name.endswith(".sh") or f_name.endswith(".py")
+                executable = f_name.endswith(".sh")
                 info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
                 info.compress_type = zipfile.ZIP_DEFLATED
                 archive.writestr(info, file_path.read_bytes())
 
-        for tdir in (ROOT / "template", ROOT / "runtime-template"):
-            if tdir.exists():
-                for path in sorted(tdir.rglob("*")):
-                    if path.is_file() and not path.name.startswith(".git") and not path.name.startswith("."):
-                        if "RELEASE_POST" in path.name.upper():
-                            continue
-                        # Never package heavy prebuilt runtime tarballs or font assets into the source template
-                        if any(path.name.endswith(sfx) for sfx in EXCLUDED_ASSET_SUFFIXES):
-                            continue
-                        rel_path = path.relative_to(ROOT).as_posix()
-                        info = zipfile.ZipInfo(rel_path, timestamp)
-                        executable = path.name.endswith(".sh") or path.name == "update-binary" or path.name in {"mffm-helper", "python3"}
-                        info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
-                        info.compress_type = zipfile.ZIP_DEFLATED
-                        archive.writestr(info, path.read_bytes())
-
-        # Create empty directory entries cleanly without .gitkeep files
+        # 3. Create empty font directory entries cleanly
         for folder in EMPTY_FOLDERS:
             info = zipfile.ZipInfo(f"{folder}/", timestamp)
             info.external_attr = (0o755 & 0xFFFF) << 16
@@ -86,7 +69,7 @@ def build_template_zip(output_dir: Path | None = None) -> Path:
     print("MFFMv14 Source Template Packaged")
     print("=" * 60)
     print(f"Output        : {output_zip}")
-    print("Excluded      : RELEASE_POST.txt, .git*, runtime tarballs (*.tar.xz, *.tar.gz)")
+    print("Contents      : Standalone font module template + USAGE_GUIDE.md, CHANGELOG.md")
     return output_zip
 
 

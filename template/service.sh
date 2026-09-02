@@ -9,13 +9,34 @@
 MODDIR=${0%/*}
 GMS="com.google.android.gms"
 LOG_FILE="$MODDIR/font_service.log"
-SD_LOG="/sdcard/MFFM/font_service.log"
+
+get_mffm_dir() {
+  for _sbase in /sdcard /storage/emulated/0 /data/media/0 /mnt/pass_through/0/emulated/0; do
+    if [ -d "$_sbase/MFFM" ]; then
+      echo "$_sbase/MFFM"
+      return 0
+    fi
+  done
+  for _sbase in /sdcard /storage/emulated/0 /data/media/0 /mnt/pass_through/0/emulated/0; do
+    if [ -d "$_sbase" ]; then
+      mkdir -p "$_sbase/MFFM" 2>/dev/null
+      if [ -d "$_sbase/MFFM" ]; then
+        echo "$_sbase/MFFM"
+        return 0
+      fi
+    fi
+  done
+  echo "/sdcard/MFFM"
+}
 
 log_msg() {
-  local timestamp
+  local timestamp sd_dir
   timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "N/A")
   printf '[%s] [SERVICE] %s\n' "$timestamp" "$1" >> "$LOG_FILE" 2>/dev/null
-  [ -d "/sdcard/MFFM" ] && printf '[%s] [SERVICE] %s\n' "$timestamp" "$1" >> "$SD_LOG" 2>/dev/null
+  sd_dir=$(get_mffm_dir)
+  if [ -d "$sd_dir" ]; then
+    printf '[%s] [SERVICE] %s\n' "$timestamp" "$1" >> "$sd_dir/font_service.log" 2>/dev/null
+  fi
 }
 
 neutralize_google_fonts() {
@@ -80,6 +101,13 @@ until [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; do
 done
 sleep 2
 
+# Wait for decrypted internal storage to become accessible so logs can mirror to /sdcard/MFFM
+for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  _target_mffm=$(get_mffm_dir)
+  [ -d "$_target_mffm" ] && break
+  sleep 2
+done
+
 neutralize_google_fonts "boot_completed"
 
 # Launch background watcher loop
@@ -95,4 +123,5 @@ neutralize_google_fonts "boot_completed"
 # Record the background subshell's PID ($! gives the last backgrounded process)
 echo "$!" > "$MODDIR/service.pid"
 log_msg "Background watcher daemon spawned (PID: $!)"
+
 

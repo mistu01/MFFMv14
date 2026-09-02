@@ -54,14 +54,11 @@ LOG_DIR=${LOG_DIR:-/sdcard/MFFM}
 LOG_FILE=${LOG_FILE:-"$LOG_DIR/mffmv14_debug_$(date '+%Y%m%d_%H%M%S' 2>/dev/null || echo current).log"}
 mkdir -p "$LOG_DIR" 2>/dev/null
 
-# Prune old debug logs, keeping the newest few for post-mortem comparison with
-# this run's log. Only mffmv14_debug_*.log files are touched; unrelated user
-# files in LOG_DIR are left alone.
-MFFM_LOG_KEEP=${MFFM_LOG_KEEP:-3}
+# Clean old debug logs and action logs from previous runs in LOG_DIR (keep only current log)
 if [ -d "$LOG_DIR" ]; then
-  old_logs=$(ls -t "$LOG_DIR"/mffmv14_debug_*.log 2>/dev/null | tail -n +"$((MFFM_LOG_KEEP + 1))")
-  for old_log in $old_logs; do
-    [ -f "$old_log" ] && [ "$old_log" != "$LOG_FILE" ] && rm -f "$old_log" 2>/dev/null
+  for old_log in "$LOG_DIR"/mffmv14_debug_*.log "$LOG_DIR"/mffmv14_runtime_*.log "$LOG_DIR"/mffm_debug_*.log "$LOG_DIR"/action.log "$LOG_DIR"/action_*.log; do
+    [ -f "$old_log" ] || continue
+    [ "$old_log" != "$LOG_FILE" ] && rm -f "$old_log" 2>/dev/null
   done
 fi
 
@@ -142,7 +139,7 @@ find_best_face() {
 
   for dir in "$@"; do
     [ -n "$dir" ] && [ -d "$dir" ] || continue
-    for file in "$dir"/*.ttf "$dir"/*.otf "$dir"/*.TTF "$dir"/*.OTF "$dir"/*.Ttf "$dir"/*.Otf; do
+    for file in "$dir"/*.ttf "$dir"/*.otf "$dir"/*.ttc "$dir"/*.otc "$dir"/*.woff "$dir"/*.woff2 "$dir"/*.TTF "$dir"/*.OTF "$dir"/*.TTC "$dir"/*.OTC "$dir"/*.WOFF "$dir"/*.WOFF2; do
       [ -f "$file" ] || continue
       name=${file##*/}
       name_lower=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
@@ -628,10 +625,17 @@ get_category_dirs() {
   printf '%s' "$dirs"
 }
 
-[ -f "$MODPATH/font-config.sh" ] || fail "font-config.sh is missing"
-. "$MODPATH/font-config.sh"
-[ "$FONT_MODE" = "static" ] || [ "$FONT_MODE" = "variable" ] || fail "Unknown FONT_MODE: $FONT_MODE"
-[ -n "$FONT_FILES" ] || fail "FONT_FILES is empty"
+if [ -f "$MODPATH/font-config.sh" ]; then
+  . "$MODPATH/font-config.sh"
+else
+  FONT_MODE=${FONT_MODE:-"variable"}
+  FONT_FILES=${FONT_FILES:-"DroidSans.ttf"}
+fi
+
+if [ -z "$FONT_FAMILY" ] && [ -f "$MODPATH/module.prop" ]; then
+  FONT_FAMILY=$(grep '^name=' "$MODPATH/module.prop" 2>/dev/null | cut -d= -f2- | sed 's/^\[MFFMv14\][[:space:]]*//')
+fi
+[ -n "$FONT_FAMILY" ] || FONT_FAMILY="Custom Font"
 
 mkdir -p "$SYS_FONT" "$SYS_ETC" "$PRODUCT_FONT" "$PRODUCT_ETC" || fail "Could not create module overlay directories"
 if [ "$MOUNTIFY" != "true" ] && [ ! -d "/data/adb/modules/mountify" ]; then
@@ -1197,6 +1201,10 @@ apply_profile() {
   done
 }
 
+clean_mod_slug() {
+  printf '%s' "$1" | tr '_' ' ' | sed -E 's/(^|[[:space:]])(MFFM|Mistu|Variable|VF|Var)([[:space:]]|$)/ /gI; s/(^|[[:space:]])(MFFM|Mistu|Variable|VF|Var)([[:space:]]|$)/ /gI' | tr -s ' ' '_' | sed 's/^_//;s/_$//'
+}
+
 ensure_variable_config_file() {
   [ -n "$VF_CONFIG_FILE" ] && [ -f "$VF_CONFIG_FILE" ] && return 0
 
@@ -1213,20 +1221,76 @@ ensure_variable_config_file() {
   VF_LEGACY_CONFIG="$MFFM_DIR/MFFMv14_${safe_family}_VF.conf"
   VF_CONFIG_RESET=0
 
-  # Preserve existing configuration when updating the same module family or identity
+  # Clean normalized family slug for strict same-family matching (e.g. Josefa_Rounded_Pro vs Josefa_Mistu_Rounded_Pro)
+  local clean_mod_family
+  clean_mod_family=$(clean_mod_slug "$safe_family")
+
+  # If VF_CONFIG_FILE already exists, verify that its MODULE_IDENTITY matches this module!
+  # If it belongs to a different module identity (from an old bug or collision), discard it.
+  if [ -f "$VF_CONFIG_FILE" ]; then
+    local existing_identity
+    existing_identity=$(sed -n 's/^[[:space:]]*MODULE_IDENTITY[[:space:]]*=[[:space:]]*//p' "$VF_CONFIG_FILE" 2>/dev/null |
+      tail -n 1 | sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//')
+    if [ -n "$existing_identity" ] && [ "$existing_identity" != "$VF_CONFIG_ID" ]; then
+      rm -f "$VF_CONFIG_FILE" 2>/dev/null
+    fi
+  fi
+
+  # Preserve existing configuration ONLY when updating the SAME module family or identity
   if [ -d "$MFFM_DIR" ]; then
-    local candidate saved_identity
+    local candidate saved_identity matched_conf=""
     if [ ! -f "$VF_CONFIG_FILE" ]; then
+      # Priority 1: Match by exact safe_family glob or legacy config
       for candidate in "$MFFM_DIR"/MFFMv14_${safe_family}_*.conf "$VF_LEGACY_CONFIG"; do
         [ -f "$candidate" ] || continue
         saved_identity=$(sed -n 's/^[[:space:]]*MODULE_IDENTITY[[:space:]]*=[[:space:]]*//p' "$candidate" 2>/dev/null |
           tail -n 1 | sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//')
-        if [ "$saved_identity" = "$VF_CONFIG_ID" ] || [ -z "$saved_identity" ]; then
-          cp -f "$candidate" "$VF_CONFIG_FILE" 2>/dev/null && rm -f "$candidate" 2>/dev/null
-          ui_print "  [OK] Retained existing configuration for $FONT_FAMILY"
+        if [ -z "$saved_identity" ] || [ "$saved_identity" = "$VF_CONFIG_ID" ]; then
+          matched_conf="$candidate"
           break
         fi
       done
+
+      # Priority 2: Match by exact MODULE_IDENTITY
+      if [ -z "$matched_conf" ]; then
+        for candidate in "$MFFM_DIR"/MFFMv14_*.conf; do
+          [ -f "$candidate" ] || continue
+          saved_identity=$(sed -n 's/^[[:space:]]*MODULE_IDENTITY[[:space:]]*=[[:space:]]*//p' "$candidate" 2>/dev/null |
+            tail -n 1 | sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//')
+          if [ -n "$saved_identity" ] && [ "$saved_identity" = "$VF_CONFIG_ID" ]; then
+            matched_conf="$candidate"
+            break
+          fi
+        done
+      fi
+
+      # Priority 3: Match strictly the SAME font family if only brand/variant tags differ
+      if [ -z "$matched_conf" ] && [ -n "$clean_mod_family" ]; then
+        local cand_base cand_clean
+        for candidate in "$MFFM_DIR"/MFFMv14_*.conf; do
+          [ -f "$candidate" ] || continue
+          cand_base="${candidate##*/}"
+          cand_base="${cand_base#MFFMv14_}"
+          cand_base="${cand_base%.conf}"
+          cand_base="${cand_base%_vf-*}"
+          cand_clean=$(clean_mod_slug "$cand_base")
+          if [ -n "$cand_clean" ] && [ "$cand_clean" = "$clean_mod_family" ]; then
+            saved_identity=$(sed -n 's/^[[:space:]]*MODULE_IDENTITY[[:space:]]*=[[:space:]]*//p' "$candidate" 2>/dev/null |
+              tail -n 1 | sed 's/[[:space:]]*[#;].*$//;s/[[:space:]]//g;s/\r$//')
+            if [ -z "$saved_identity" ] || [ "$saved_identity" = "$VF_CONFIG_ID" ]; then
+              matched_conf="$candidate"
+              break
+            fi
+          fi
+        done
+      fi
+
+      # DO NOT ADOPT CONFIG FROM OTHER MODULES!
+      # If matched_conf is found for THIS module/family, adopt it and clean up the old filename:
+      if [ -n "$matched_conf" ] && [ -f "$matched_conf" ]; then
+        cp -f "$matched_conf" "$VF_CONFIG_FILE" 2>/dev/null && rm -f "$matched_conf" 2>/dev/null
+        ui_print "  [OK] Retained existing configuration: ${matched_conf##*/}"
+      fi
     fi
   fi
 
@@ -1250,11 +1314,15 @@ EOF
   fi
   [ -f "$VF_CONFIG_FILE" ] || fail "Could not create variable-axis configuration: $VF_CONFIG_FILE"
 
-  # Clean any other stale/leftover configuration files from previous modules
+  # Clean any other stale/older module configs and older logs in /sdcard/MFFM
   if [ -d "$MFFM_DIR" ]; then
     for old_conf in "$MFFM_DIR"/*.conf "$MFFM_DIR"/MFFMv14_*.conf; do
       [ -f "$old_conf" ] || continue
       [ "$old_conf" != "$VF_CONFIG_FILE" ] && rm -f "$old_conf" 2>/dev/null
+    done
+    for old_log in "$MFFM_DIR"/mffmv14_debug_*.log "$MFFM_DIR"/mffmv14_runtime_*.log "$MFFM_DIR"/mffm_debug_*.log "$MFFM_DIR"/action.log "$MFFM_DIR"/action_*.log "$MFFM_DIR"/*.log; do
+      [ -f "$old_log" ] || continue
+      [ "$old_log" != "$LOG_FILE" ] && rm -f "$old_log" 2>/dev/null
     done
   fi
 }
@@ -1327,6 +1395,136 @@ prepare_variable_config() {
     ensure_profile_keys BENGALI_UPRIGHT "$VF_BENGALI_AXIS_META" "$VF_BENGALI_WEIGHTS"
     apply_profile BENGALI_UPRIGHT normal "$VF_BENGALI_AXIS_META" "$VF_BENGALI_WEIGHTS" "$FONT_DIR/bengali.xml"
   fi
+
+  # --- Centered Colon & OpenType Feature Freezing Configuration ---
+  local _helper
+  _helper=$(mffm_runtime_helper 2>/dev/null)
+  if [ -n "$_helper" ] && [ -x "$_helper" ] && [ -n "$VF_CONFIG_FILE" ] && [ -f "$VF_CONFIG_FILE" ]; then
+    # 1. Centered Colon Check
+    local _primary_sans
+    _primary_sans=$(find_first '*.ttf' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
+    [ -z "$_primary_sans" ] && _primary_sans=$(find_first '*.otf' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
+    [ -z "$_primary_sans" ] && _primary_sans=$(find_first '*.ttc' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
+    [ -z "$_primary_sans" ] && _primary_sans=$(find_first '*.woff2' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
+    [ -z "$_primary_sans" ] && _primary_sans=$(find_first '*.woff' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
+    if [ -n "$_primary_sans" ]; then
+      local _has_col
+      _has_col=$("$_helper" check-colon "$_primary_sans" 2>/dev/null)
+      if ! grep -q "^[[:space:]]*ENABLE_CENTERED_COLON[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+        {
+          printf '\n# ==============================================================================\n'
+          printf '# ADVANCED TYPOGRAPHY & LOCKSCREEN CLOCK SETTINGS\n'
+          printf '# ==============================================================================\n'
+          printf '# NOTE: All options below are optional! If you are unsure, leave them at defaults.\n'
+          printf '# After modifying any value, simply re-flash this module in your root manager.\n'
+          printf '# ==============================================================================\n\n'
+          printf '# ------------------------------------------------------------------------------\n'
+          printf '# 1. CENTERED CLOCK COLON (for Lockscreen & Status Bar)\n'
+          printf '# ------------------------------------------------------------------------------\n'
+          printf '# WHAT IT DOES:\n'
+          printf '#   Standard text fonts position the colon (:) low on the baseline for punctuation.\n'
+          printf '#   On lockscreen clocks (e.g. 12:30), this makes the colon look sunken and awkward.\n'
+          printf '#   Enabling this dynamically generates and injects a centered clock colon.\n'
+          printf '#\n'
+          printf '# WHEN TO CHOOSE:\n'
+          printf '#   - yes : If your clock colon sits too low or looks uneven between digits.\n'
+          printf '#   - no  : Keep the native font colon, or if the font already has one. [Default]\n'
+          if [ "$_has_col" = "true" ]; then
+            printf '# (Note: This font already appears to have a centered colon.)\n'
+          fi
+          printf 'ENABLE_CENTERED_COLON=no\n\n'
+          printf '# COLON ALIGNMENT:\n'
+          printf '#   Vertical reference point for the colon center:\n'
+          printf '#   - center     : Centers against clock digits (0-9). [Recommended]\n'
+          printf '#   - cap_height : Centers against capital letters (A-Z).\n'
+          printf '#   - x_height   : Centers against lowercase letters (a-z).\n'
+          printf 'COLON_ALIGNMENT=center\n\n'
+          printf '# COLON VERTICAL OFFSET:\n'
+          printf '#   Fine-tune vertical height (+/- in font units) if needed by your OEM ROM:\n'
+          printf '#   - 0          : Automatic optical center. [Recommended]\n'
+          printf '#   - +20, +40   : Shift colon higher.\n'
+          printf '#   - -20, -40   : Shift colon lower.\n'
+          printf 'COLON_OFFSET=0\n\n'
+          printf '# COLON TRIGGER RULE:\n'
+          printf '#   Controls when the centered colon appears so normal sentences stay untouched:\n'
+          printf '#   - between_digits : Only triggers between numbers (e.g. 12:30). [Recommended]\n'
+          printf '#   - after_digit    : Triggers after any number (e.g. 12:). Best for 2-line stacked clocks!\n'
+          printf '#   - always         : Replaces all colons system-wide.\n'
+          printf 'COLON_RULE=between_digits\n\n'
+          printf '# ------------------------------------------------------------------------------\n'
+          printf '# 2. TABULAR CLOCK DIGITS (Eliminates Clock Number Wobble / Jitter)\n'
+          printf '# ------------------------------------------------------------------------------\n'
+          printf '# WHAT IT DOES:\n'
+          printf '#   In standard proportional fonts, "1" is narrower than "0" or "8". When the\n'
+          printf '#   clock ticks (e.g. 11:59 -> 12:00) or seconds tick, the numbers jump sideways.\n'
+          printf '#   Enabling this equalizes digit advance widths (0-9) so the clock stays rock solid.\n'
+          printf '#\n'
+          printf '# WHEN TO CHOOSE:\n'
+          printf '#   - yes : If your lockscreen clock numbers jitter, shift, or wobble horizontally.\n'
+          printf '#   - no  : If you prefer natural proportional digit spacing in apps. [Default]\n'
+          printf 'ENABLE_TABULAR_CLOCK_DIGITS=no\n\n'
+          printf '# ------------------------------------------------------------------------------\n'
+          printf '# 3. SMART METRIC HARMONIZATION (Zero Accent / Diacritic Clipping)\n'
+          printf '# ------------------------------------------------------------------------------\n'
+          printf '# WHAT IT DOES:\n'
+          printf '#   Controls vertical font spacing, line height, and status bar padding.\n'
+          printf '#   Prevents tall accents (Vietnamese ê/ổ, Devanagari, Thai, Arabic, Å, Ŵ)\n'
+          printf '#   from getting cut off at the top or bottom in notifications and app buttons.\n'
+          printf '#\n'
+          printf '# OPTIONS:\n'
+          printf '#   - safe     : Audits all glyphs and automatically expands boundaries to eliminate\n'
+          printf '#                any clipping while strictly preserving the FFIX3 baseline ratio.\n'
+          printf '#                Buttons and status bar icons stay perfectly centered! [Recommended]\n'
+          printf '#   - compact  : Forces classic ultra-tight FFIX3 metrics (2128/-550). Best for\n'
+          printf '#                minimalist English-only setups. May clip tall foreign accents.\n'
+          printf '#   - preserve : Retains the font designer original vertical metrics untouched.\n'
+          printf 'METRICS_MODE=safe\n\n'
+          printf '# ------------------------------------------------------------------------------\n'
+          printf '# 4. TABLE OPTIMIZATION & ZYGOTE RAM SAVER\n'
+          printf '# ------------------------------------------------------------------------------\n'
+          printf '# WHAT IT DOES:\n'
+          printf '#   Prunes dead, obsolete desktop tables (DSIG, VDMX, hdmx, LTSH, PCLT, EBDT/EBLC,\n'
+          printf '#   Mac Roman duplicates) to shrink font file size by 10-30%% and reduce RAM\n'
+          printf '#   usage in Android'\''s Zygote process for every running app.\n'
+          printf '#\n'
+          printf '# OPTIONS:\n'
+          printf '#   - no  : Keep all original font tables untouched. [Default]\n'
+          printf '#   - yes : Prune obsolete tables for smaller file size and RAM savings.\n'
+          printf 'ENABLE_ZYGOTE_OPTIMIZATION=no\n'
+        } >> "$VF_CONFIG_FILE"
+      fi
+    fi
+
+    # 2. OpenType Feature Discovery & Reporting
+    if ! grep -q "^[[:space:]]*SANS_FREEZE_FEATURES[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+      local _feat_report
+      _feat_report=$("$_helper" report-features \
+        --sans-dir "$FONT_DIR/Sans" --sans-dir "$MFFM_DIR/Sans" --sans-dir "$FONT_DIR" \
+        --mono-dir "$FONT_DIR/Monospace" --mono-dir "$MFFM_DIR/Monospace" \
+        --serif-dir "$FONT_DIR/Serif" --serif-dir "$MFFM_DIR/Serif" \
+        --bengali-dir "$FONT_DIR/Bengali" --bengali-dir "$MFFM_DIR/Bengali" 2>/dev/null)
+      if [ -n "$_feat_report" ]; then
+        {
+          printf '\n# ------------------------------------------------------------------------------\n'
+          printf '# 4. OPENTYPE FEATURE FREEZING (Stylistic Alternates)\n'
+          printf '# ------------------------------------------------------------------------------\n'
+          printf '# WHAT IT DOES:\n'
+          printf '#   Bakes special character designs (like slashed zero, curved "l", single-story\n'
+          printf '#   "a" or "g") directly into default characters so all apps show them.\n'
+          printf '#\n'
+          printf '# HOW TO CHOOSE:\n'
+          printf '#   - Review the discovered features list below for your font.\n'
+          printf '#   - Enter comma-separated feature tags to freeze (e.g. ss01,zero) or leave blank.\n'
+          printf '#   - Reflash the module to apply your choices.\n#\n'
+          printf '%s\n' "$_feat_report"
+          printf 'SANS_FREEZE_FEATURES=\n'
+          printf 'MONO_FREEZE_FEATURES=\n'
+          printf 'SERIF_FREEZE_FEATURES=\n'
+          printf 'BENGALI_FREEZE_FEATURES=\n'
+        } >> "$VF_CONFIG_FILE"
+      fi
+    fi
+  fi
 }
 
 ui_print ""
@@ -1340,7 +1538,25 @@ ui_print "    Root manager : $ROOT_IMPL"
 ui_print "    Font model   : $FONT_MODE"
 ui_print "    Font family  : $FONT_FAMILY"
 
-if [ "$FONT_MODE" = "variable" ] || [ -n "$VF_UPRIGHT_AXIS_META" ] || [ -n "$VF_ITALIC_AXIS_META" ] || [ -n "$VF_MONO_AXIS_META" ] || [ -n "$VF_SERIF_UPRIGHT_AXIS_META" ] || [ -n "$VF_BENGALI_AXIS_META" ]; then
+if ! mffm_has_runtime; then
+  ui_print ""
+  ui_print "  ************************************************"
+  ui_print "  *  [!] WARNING: MFFM RUNTIME NOT INSTALLED!   *"
+  ui_print "  ************************************************"
+  ui_print "  * MFFMv14 requires the MFFM Runtime module to  *"
+  ui_print "  * process fonts, bundle TTCs, freeze features, *"
+  ui_print "  * and inject centered clock colons on-device.  *"
+  ui_print "  *                                              *"
+  ui_print "  * Download & install mffm-runtime module from: *"
+  ui_print "  *   https://t.me/MFFMMain                      *"
+  ui_print "  ************************************************"
+  ui_print ""
+  am start -a android.intent.action.VIEW -d "https://t.me/MFFMMain" >/dev/null 2>&1 || \
+    am start --user 0 -a android.intent.action.VIEW -d "https://t.me/MFFMMain" >/dev/null 2>&1
+fi
+
+_helper_avail=$(mffm_runtime_helper 2>/dev/null)
+if [ "$FONT_MODE" = "variable" ] || [ -n "$VF_UPRIGHT_AXIS_META" ] || [ -n "$VF_ITALIC_AXIS_META" ] || [ -n "$VF_MONO_AXIS_META" ] || [ -n "$VF_SERIF_UPRIGHT_AXIS_META" ] || [ -n "$VF_BENGALI_AXIS_META" ] || [ -n "$_helper_avail" ]; then
   prepare_variable_config
   ui_print "    Axis config  : $VF_CONFIG_FILE"
 fi
@@ -1366,17 +1582,78 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
     done
   fi
 
+  # Check if user requested centered colon, tabular digits, metrics mode, or feature freezing in .conf
+  _cfg_colon=$(config_value ENABLE_CENTERED_COLON)
+  _cfg_colon_align=$(config_value COLON_ALIGNMENT)
+  _cfg_colon_offset=$(config_value COLON_OFFSET)
+  _cfg_colon_rule=$(config_value COLON_RULE)
+  _cfg_tabular_digits=$(config_value ENABLE_TABULAR_CLOCK_DIGITS)
+  _cfg_metrics_mode=$(config_value METRICS_MODE)
+  _cfg_opt_tables=$(config_value ENABLE_ZYGOTE_OPTIMIZATION)
+  _cfg_sans_f=$(config_value SANS_FREEZE_FEATURES)
+  _cfg_mono_f=$(config_value MONO_FREEZE_FEATURES)
+  _cfg_serif_f=$(config_value SERIF_FREEZE_FEATURES)
+  _cfg_beng_f=$(config_value BENGALI_FREEZE_FEATURES)
+
+  case "$_cfg_colon" in
+    yes|YES|true|TRUE|1) _should_compile=1 ;;
+  esac
+  case "$_cfg_tabular_digits" in
+    yes|YES|true|TRUE|1) _should_compile=1 ;;
+  esac
+  case "$_cfg_metrics_mode" in
+    compact|preserve) _should_compile=1 ;;
+  esac
+  case "$_cfg_opt_tables" in
+    yes|YES|true|TRUE|1) _should_compile=1 ;;
+  esac
+  if [ -n "$_cfg_sans_f" ] || [ -n "$_cfg_mono_f" ] || [ -n "$_cfg_serif_f" ] || [ -n "$_cfg_beng_f" ]; then
+    _should_compile=1
+  fi
+
   if [ "$_should_compile" = "1" ]; then
     ui_print "- Dynamic compilation via MFFM Runtime..."
+    _extra_compile_args=""
+    case "$_cfg_colon" in
+      yes|YES|true|TRUE|1)
+        _extra_compile_args="$_extra_compile_args --enable-centered-colon"
+        ui_print "    [+] Centered colon injection requested"
+        [ -n "$_cfg_colon_align" ] && _extra_compile_args="$_extra_compile_args --colon-alignment $_cfg_colon_align"
+        [ -n "$_cfg_colon_offset" ] && _extra_compile_args="$_extra_compile_args --colon-offset $_cfg_colon_offset"
+        [ -n "$_cfg_colon_rule" ] && _extra_compile_args="$_extra_compile_args --colon-rule $_cfg_colon_rule"
+        ;;
+    esac
+    case "$_cfg_tabular_digits" in
+      yes|YES|true|TRUE|1)
+        _extra_compile_args="$_extra_compile_args --enable-tabular-digits"
+        ui_print "    [+] Tabular clock digits equalization requested"
+        ;;
+    esac
+    case "$_cfg_opt_tables" in
+      yes|YES|true|TRUE|1)
+        _extra_compile_args="$_extra_compile_args --optimize-tables"
+        ui_print "    [+] Zygote table optimization requested"
+        ;;
+    esac
+    [ -n "$_cfg_metrics_mode" ] && _extra_compile_args="$_extra_compile_args --metrics-mode $_cfg_metrics_mode"
+    [ -n "$_cfg_sans_f" ] && _extra_compile_args="$_extra_compile_args --freeze-sans $_cfg_sans_f" && ui_print "    [+] Freezing Sans features: $_cfg_sans_f"
+    [ -n "$_cfg_mono_f" ] && _extra_compile_args="$_extra_compile_args --freeze-mono $_cfg_mono_f" && ui_print "    [+] Freezing Mono features: $_cfg_mono_f"
+    [ -n "$_cfg_serif_f" ] && _extra_compile_args="$_extra_compile_args --freeze-serif $_cfg_serif_f" && ui_print "    [+] Freezing Serif features: $_cfg_serif_f"
+    [ -n "$_cfg_beng_f" ] && _extra_compile_args="$_extra_compile_args --freeze-bengali $_cfg_beng_f" && ui_print "    [+] Freezing Bengali features: $_cfg_beng_f"
+
     "$_helper" compile-bundle \
       --out-dir "$FONT_DIR" \
       --sans-dir "$FONT_DIR/Sans" --sans-dir "$MFFM_DIR/Sans" --sans-dir "$FONT_DIR" \
       --mono-dir "$FONT_DIR/Monospace" --mono-dir "$MFFM_DIR/Monospace" \
       --serif-dir "$FONT_DIR/Serif" --serif-dir "$MFFM_DIR/Serif" \
-      --bengali-dir "$FONT_DIR/Bengali" --bengali-dir "$MFFM_DIR/Bengali" >/dev/null 2>&1
-    if [ -f "$FONT_DIR/font-config.sh" ]; then
+      --bengali-dir "$FONT_DIR/Bengali" --bengali-dir "$MFFM_DIR/Bengali" \
+      $_extra_compile_args >> "$LOG_FILE" 2>&1
+    _compile_ret=$?
+    if [ "$_compile_ret" = "0" ] && [ -f "$FONT_DIR/font-config.sh" ]; then
       . "$FONT_DIR/font-config.sh"
       FONT_FILES="DroidSans.ttf"
+    elif [ "$_compile_ret" != "0" ]; then
+      status_warn "Dynamic compilation failed (exit $_compile_ret); see $LOG_FILE"
     fi
   fi
 fi
@@ -1388,14 +1665,14 @@ fi
 # the build was static and the user dropped VF fonts in /sdcard/MFFM/) or
 # carries stale weights and gets cleaned up by the post-process gate.
 if [ "$FONT_MODE" = "variable" ] || [ -n "$VF_UPRIGHT_AXIS_META" ] || [ -n "$VF_ITALIC_AXIS_META" ] || [ -n "$VF_MONO_AXIS_META" ] || [ -n "$VF_SERIF_UPRIGHT_AXIS_META" ] || [ -n "$VF_BENGALI_AXIS_META" ]; then
-  # Drop the build-time config so a stale file cannot shadow the runtime's
-  # axis metadata; ensure_variable_config_file will recreate it with the
-  # current VF_* variables.
-  if [ -n "$VF_CONFIG_FILE" ] && [ -f "$VF_CONFIG_FILE" ]; then
-    rm -f "$VF_CONFIG_FILE" 2>/dev/null
-  fi
+  # Re-evaluate variable-axis config with the runtime-discovered family and metadata
+  # without destroying existing user customizations (ensure_variable_config_file will retain them).
+  local _prev_vf_conf="$VF_CONFIG_FILE"
   VF_CONFIG_FILE=""
   prepare_variable_config
+  if [ -n "$_prev_vf_conf" ] && [ -f "$_prev_vf_conf" ] && [ "$_prev_vf_conf" != "$VF_CONFIG_FILE" ]; then
+    cp -f "$_prev_vf_conf" "$VF_CONFIG_FILE" 2>/dev/null && rm -f "$_prev_vf_conf" 2>/dev/null
+  fi
   ui_print "    Axis config (runtime): $VF_CONFIG_FILE"
 fi
 
@@ -1407,11 +1684,17 @@ if [ -f "$FONT_DIR/DroidSans.ttf" ]; then
 else
   _primary_src=$(find_first '*.ttf' "$FONT_DIR/Sans" "$FONT_DIR")
   [ -z "$_primary_src" ] && _primary_src=$(find_first '*.otf' "$FONT_DIR/Sans" "$FONT_DIR")
+  [ -z "$_primary_src" ] && _primary_src=$(find_first '*.ttc' "$FONT_DIR/Sans" "$FONT_DIR")
+  [ -z "$_primary_src" ] && _primary_src=$(find_first '*.otc' "$FONT_DIR/Sans" "$FONT_DIR")
   if [ -n "$_primary_src" ]; then
     cp -f "$_primary_src" "$SYS_FONT/DroidSans.ttf" || fail "Could not install ${_primary_src##*/}"
     status_ok "${_primary_src##*/} -> DroidSans.ttf"
   else
-    fail "No primary font payload found in $FONT_DIR"
+    if [ "$(find "$FONT_DIR" -type f \( -iname '*.woff' -o -iname '*.woff2' \) 2>/dev/null)" ]; then
+      fail "WOFF/WOFF2 web fonts require the MFFM Runtime module to compile on-device"
+    else
+      fail "No primary font payload found in $FONT_DIR"
+    fi
   fi
 fi
 
@@ -1584,6 +1867,9 @@ else
   [ -z "$ext_mono" ] && ext_mono=$(find_first 'DroidSansMono.ttf' "$FONT_DIR" $_mono_dirs)
   [ -z "$ext_mono" ] && ext_mono=$(find_first '*.ttf' $_mono_dirs)
   [ -z "$ext_mono" ] && ext_mono=$(find_first '*.otf' $_mono_dirs)
+  [ -z "$ext_mono" ] && ext_mono=$(find_first '*.ttc' $_mono_dirs)
+  [ -z "$ext_mono" ] && ext_mono=$(find_first '*.woff2' $_mono_dirs)
+  [ -z "$ext_mono" ] && ext_mono=$(find_first '*.woff' $_mono_dirs)
   if [ -n "$ext_mono" ]; then
     if is_variable_font "$ext_mono"; then
       cp -f "$ext_mono" "$SYS_FONT/CutiveMono.ttf"
@@ -1839,9 +2125,9 @@ else
   for _beng_dir in $_beng_dirs; do
     [ -d "$_beng_dir" ] || continue
     mkdir -p "$_beng_stage"
-    find "$_beng_dir" -type f \( -iname '*.ttf' -o -iname '*.otf' \) ! -iname 'DroidSans.ttf' ! -iname 'GoogleSansClock*.ttf' -exec cp -f {} "$_beng_stage"/ \; 2>/dev/null
+    find "$_beng_dir" -type f \( -iname '*.ttf' -o -iname '*.otf' -o -iname '*.ttc' -o -iname '*.woff' -o -iname '*.woff2' \) ! -iname 'DroidSans.ttf' ! -iname 'GoogleSansClock*.ttf' -exec cp -f {} "$_beng_stage"/ \; 2>/dev/null
   done
-  if [ -d "$_beng_stage" ] && find "$_beng_stage" -maxdepth 1 -type f \( -iname '*.ttf' -o -iname '*.otf' \) -print -quit | grep -q .; then
+  if [ -d "$_beng_stage" ] && find "$_beng_stage" -maxdepth 1 -type f \( -iname '*.ttf' -o -iname '*.otf' -o -iname '*.ttc' -o -iname '*.woff' -o -iname '*.woff2' \) -print -quit | grep -q .; then
     _beng_dirs="$_beng_stage $_beng_dirs"
   fi
   ext_beng=$(find_first 'Beng*.ttf' "$FONT_DIR" $_beng_dirs)
@@ -1850,6 +2136,9 @@ else
   [ -z "$ext_beng" ] && ext_beng=$(find_first 'NotoSerifBengali*.ttf' "$FONT_DIR" $_beng_dirs)
   [ -z "$ext_beng" ] && ext_beng=$(find_first '*.ttf' $_beng_dirs)
   [ -z "$ext_beng" ] && ext_beng=$(find_first '*.otf' $_beng_dirs)
+  [ -z "$ext_beng" ] && ext_beng=$(find_first '*.ttc' $_beng_dirs)
+  [ -z "$ext_beng" ] && ext_beng=$(find_first '*.woff2' $_beng_dirs)
+  [ -z "$ext_beng" ] && ext_beng=$(find_first '*.woff' $_beng_dirs)
   if [ -n "$ext_beng" ]; then
     if is_variable_font "$ext_beng"; then
       cp -f "$ext_beng" "$SYS_FONT/NotoSansBengali-VF.ttf"
@@ -2111,6 +2400,9 @@ else
   [ -z "$ext_s_reg" ] && ext_s_reg=$(find_best_face 400 normal $_serif_dirs)
   [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first '*.ttf' $_serif_dirs)
   [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first '*.otf' $_serif_dirs)
+  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first '*.ttc' $_serif_dirs)
+  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first '*.woff2' $_serif_dirs)
+  [ -z "$ext_s_reg" ] && ext_s_reg=$(find_first '*.woff' $_serif_dirs)
 
   if [ -n "$ext_s_reg" ]; then
     if is_variable_font "$ext_s_reg"; then
@@ -2124,6 +2416,9 @@ else
 
       ext_s_ital=$(find_first '*Italic*.ttf' $_serif_dirs)
       [ -z "$ext_s_ital" ] && ext_s_ital=$(find_first '*Italic*.otf' $_serif_dirs)
+      [ -z "$ext_s_ital" ] && ext_s_ital=$(find_first '*Italic*.ttc' $_serif_dirs)
+      [ -z "$ext_s_ital" ] && ext_s_ital=$(find_first '*Italic*.woff2' $_serif_dirs)
+      [ -z "$ext_s_ital" ] && ext_s_ital=$(find_first '*Italic*.woff' $_serif_dirs)
       [ -z "$ext_s_ital" ] && ext_s_ital=$(find_best_face 400 italic $_serif_dirs)
       if [ -n "$ext_s_ital" ] && is_variable_font "$ext_s_ital"; then
         cp -f "$ext_s_ital" "$SYS_FONT/NotoSerif-Italic.ttf"
@@ -2418,12 +2713,16 @@ if [ -n "$VF_CONFIG_FILE" ] && [ -f "$VF_CONFIG_FILE" ]; then
   fi
 fi
 
-# Clean leftover configuration files belonging to previous/other modules in /sdcard/MFFM
+# Clean leftover configuration files and old logs belonging to previous/other modules in /sdcard/MFFM
 if [ -d "$MFFM_DIR" ]; then
   for old_conf in "$MFFM_DIR"/*.conf "$MFFM_DIR"/MFFMv14_*.conf; do
     [ -f "$old_conf" ] || continue
     [ -n "$VF_CONFIG_FILE" ] && [ "$old_conf" = "$VF_CONFIG_FILE" ] && continue
     rm -f "$old_conf" 2>/dev/null
+  done
+  for old_log in "$MFFM_DIR"/mffmv14_debug_*.log "$MFFM_DIR"/mffmv14_runtime_*.log "$MFFM_DIR"/mffm_debug_*.log "$MFFM_DIR"/action.log "$MFFM_DIR"/action_*.log "$MFFM_DIR"/*.log; do
+    [ -f "$old_log" ] || continue
+    [ "$old_log" != "$LOG_FILE" ] && rm -f "$old_log" 2>/dev/null
   done
 fi
 

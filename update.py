@@ -18,7 +18,7 @@ from zipsigner_auto import ZipSignerError, sign_zip
 
 TEMPLATE_ITEMS = (
     "module.prop", "customize.sh", "service.sh", "action.sh", "uninstall.sh", "post-mount.sh",
-    "font-config.sh", "META-INF",
+    "META-INF",
 )
 OLD_PRIMARY_NAMES = (
     "DroidSans.ttc", "DroidSans.ttf", "DroidSans.otf", "RobotoStatic-Regular.ttf",

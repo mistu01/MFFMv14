@@ -163,7 +163,7 @@ def write_props(path: Path, props: dict[str, str]) -> None:
 
 TEMPLATE_COPY_ITEMS = (
     "module.prop", "customize.sh", "service.sh", "action.sh", "uninstall.sh", "post-mount.sh",
-    "font-config.sh", "META-INF",
+    "META-INF",
 )
 
 
@@ -1745,24 +1745,35 @@ def inject_centered_colon(font_path: Path) -> bool:
                 digit_y_maxes = []
                 for d in ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "0", "1", "2", "3"):
                     if d in glyph_order:
-                        d_coords, _, _ = glyf[d].getCoordinates(glyf)
-                        if d_coords:
-                            digit_y_maxes.append(max(y for _, y in d_coords))
+                        try:
+                            d_coords, _, _ = glyf[d].getCoordinates(glyf)
+                            if d_coords:
+                                digit_y_maxes.append(max(y for _, y in d_coords))
+                        except Exception:
+                            pass
 
                 cap_height = getattr(font.get("OS/2"), "sCapHeight", None) or 1400
                 target_center = (max(digit_y_maxes) / 2) if digit_y_maxes else (cap_height / 2)
                 dy = round(target_center - colon_center)
-                if dy > 30:
-                    pen = TTGlyphPen(font.getGlyphSet())
-                    tpen = TransformPen(pen, (1, 0, 0, 1, 0, dy))
-                    font.getGlyphSet()["colon"].draw(tpen)
+                dy = max(0, dy)
+                pen = TTGlyphPen(font.getGlyphSet())
+                tpen = TransformPen(pen, (1, 0, 0, 1, 0, dy))
+                font.getGlyphSet()["colon"].draw(tpen)
 
-                    centered_glyph = "colon.case"
-                    font.setGlyphOrder(glyph_order + [centered_glyph])
-                    glyf[centered_glyph] = pen.glyph()
-                    hmtx[centered_glyph] = hmtx["colon"]
-                    glyph_order = font.getGlyphOrder()
-                    log.info(f"Dynamically generated [{centered_glyph}] with vertical offset dy=+{dy} for {font_path.name}")
+                centered_glyph = "colon.case"
+                font.setGlyphOrder(glyph_order + [centered_glyph])
+                new_glyph = pen.glyph()
+                new_glyph.recalcBounds(glyf)
+                glyf[centered_glyph] = new_glyph
+                hmtx[centered_glyph] = hmtx["colon"]
+                if "vmtx" in font:
+                    vmtx = font["vmtx"]
+                    if "colon" in getattr(vmtx, "metrics", {}):
+                        vmtx[centered_glyph] = vmtx["colon"]
+                    else:
+                        vmtx[centered_glyph] = (0, 0)
+                glyph_order = font.getGlyphOrder()
+                log.info(f"Dynamically generated [{centered_glyph}] with vertical offset dy=+{dy} for {font_path.name}")
 
         if not centered_glyph:
             font.close()
@@ -2043,10 +2054,8 @@ def compile_fonts(
                 ("bengali", bengali_ttf_paths),
             )
         )
-        # Per-category centered colon decisions. None = unset (prompt in interactive mode);
-        # a global --centered-colon/--no-centered-colon flag applies to every category.
         colon_choice = {key: centered_colon for key, _paths, _label in category_paths}
-        should_prompt = interactive_features if interactive_features is not None else sys.stdin.isatty()
+        should_prompt = bool(interactive_features)
 
         if features is not None or mono_features is not None or serif_features is not None or bengali_features is not None:
             def parse_feat(val):

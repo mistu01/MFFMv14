@@ -9,17 +9,38 @@
 MODDIR=${0%/*}
 GMS="com.google.android.gms"
 LOG_FILE="$MODDIR/font_service.log"
-SD_LOG="/sdcard/MFFM/font_service.log"
+
+get_mffm_dir() {
+  for _sbase in /sdcard /storage/emulated/0 /data/media/0 /mnt/pass_through/0/emulated/0; do
+    if [ -d "$_sbase/MFFM" ]; then
+      echo "$_sbase/MFFM"
+      return 0
+    fi
+  done
+  for _sbase in /sdcard /storage/emulated/0 /data/media/0 /mnt/pass_through/0/emulated/0; do
+    if [ -d "$_sbase" ]; then
+      mkdir -p "$_sbase/MFFM" 2>/dev/null
+      if [ -d "$_sbase/MFFM" ]; then
+        echo "$_sbase/MFFM"
+        return 0
+      fi
+    fi
+  done
+  echo "/sdcard/MFFM"
+}
 
 ui_print() {
   echo "$1"
 }
 
 log_msg() {
-  local timestamp
+  local timestamp sd_dir
   timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "N/A")
   printf '[%s] [ACTION] %s\n' "$timestamp" "$1" >> "$LOG_FILE" 2>/dev/null
-  [ -d "/sdcard/MFFM" ] && printf '[%s] [ACTION] %s\n' "$timestamp" "$1" >> "$SD_LOG" 2>/dev/null
+  sd_dir=$(get_mffm_dir)
+  if [ -d "$sd_dir" ]; then
+    printf '[%s] [ACTION] %s\n' "$timestamp" "$1" >> "$sd_dir/font_service.log" 2>/dev/null
+  fi
 }
 
 ui_print "===================================================="

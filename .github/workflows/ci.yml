@@ -29,7 +29,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: POSIX syntax checks
         run: |
-          sh -n termux-build.sh
           sh -n template/customize.sh
           sh -n template/service.sh
           sh -n template/action.sh
@@ -45,7 +44,7 @@ jobs:
       # are reviewed manually rather than gating the build.
       - name: shellcheck (advisory)
         continue-on-error: true
-        run: shellcheck -s sh termux-build.sh template/customize.sh template/service.sh template/action.sh template/post-mount.sh template/uninstall.sh runtime-template/customize.sh runtime-template/service.sh runtime-template/post-mount.sh runtime-template/uninstall.sh
+        run: shellcheck -s sh template/customize.sh template/service.sh template/action.sh template/post-mount.sh template/uninstall.sh runtime-template/customize.sh runtime-template/service.sh runtime-template/post-mount.sh runtime-template/uninstall.sh
 
   package:
     name: Fixture build, template & runtime packaging

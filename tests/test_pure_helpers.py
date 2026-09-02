@@ -158,7 +158,6 @@ def test_shell_scripts_syntax():
         root / "runtime-template" / "service.sh",
         root / "runtime-template" / "uninstall.sh",
         root / "runtime-template" / "post-mount.sh",
-        root / "termux-build.sh",
     ]
     for script in scripts:
         if script.is_file():

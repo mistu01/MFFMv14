@@ -3,6 +3,86 @@
 All notable changes to MFFMv14 are documented here. Dates use the `YYYY.MM.DD`
 versioning scheme the modules themselves carry.
 
+## 2026.09.03
+
+### Added
+- **On-Device CFF/OTF Conversion (`otf2ttf`) & `cu2qu`**:
+  - Implemented pure-Python cubic-to-quadratic Bezier conversion on-device using `fontTools.pens.cu2quPen.Cu2QuPen`.
+  - Converts OpenType PostScript fonts (`.otf`, `.otc`, `sfntVersion == 'OTTO'`) to TrueType quadratic tables (`glyf`, `loca`, `maxp` v1.0).
+  - Automatically converts CFF/OTF fonts to TrueType before bundling into `/system/fonts/DroidSans.ttf`, preventing font engine crashes on OEM Android skins (Samsung OneUI, Xiaomi HyperOS) and enabling centered colon injection for OTF fonts.
+  - New standalone CLI command: `mffm-helper otf2ttf --in <font.otf> [--out <font.ttf>]`.
+- **Advanced Lockscreen Typography: Tabular Digits & Flexible Colon Controls**:
+  - **Tabular Digit Equalization (`equalize_clock_digits`)**: Dynamically equalizes horizontal advance widths across digits `0`–`9` and centers contours/composites. Eliminates lockscreen clock number jumping and horizontal wobble when ticking between digits.
+  - **Flexible Clock Colon Positioning**: Added `alignment` (`center` on digits, `cap_height` on caps, `x_height` on lowercase) and fine-tuned vertical `offset` (+/- font units).
+  - **Contextual Colon Rules**: Added `rule` options: `between_digits` (single-line clocks `12:30`), `after_digit` (for stacked 2-line clocks `12:` / `30`), and `always`.
+  - New standalone CLI command: `mffm-helper equalize-digits --in <font> [--out <out>] [--width <width>]`.
+- **Smart Metric Harmonization & Zero-Clipping Engine (`METRICS_MODE`)**:
+  - **Proportional FFIX3 Ratio Auto-Clamping (`safe` mode)**: Audits actual glyph bounding boxes (`actual_yMax`, `actual_yMin`) and calculates the expansion factor $k = \max(1.0, \, k_{\text{ascent}}, \, k_{\text{descent}})$. Expands ascent and descent proportionally, guaranteeing zero accent/diacritic clipping for multilingual scripts (Vietnamese `ế`, `Ậ`, Devanagari, Thai, Arabic, tall capitals `Å`, `Ŵ`) while strictly preserving the FFIX3 baseline ratio ($\approx 3.869$).
+  - Full multi-table synchronization across `hhea` (ascent/descent/lineGap), `OS/2` (sTypoAscender/Descender/LineGap, usWinAscent/Descent), and `head` (yMax/yMin).
+  - Selectable modes: `safe` (default, auto-clamp), `compact` (classic fixed FFIX3), and `preserve` (original font metrics).
+- **Table Optimization & Dead Table Pruning for Android Zygote (`optimize_font_tables`)**:
+  - Implemented automatic pruning of dead and bloat tables (`DSIG`, `VDMX`, `hdmx`, `LTSH`, `PCLT`, `EBDT`/`EBLC`, `FFTM`, Apple AAT tables, and Macintosh Roman duplicate name records).
+  - Eliminates `logcat` warnings on Android caused by dummy digital signatures (`DSIG`) and reduces TTC size by 10–30%, directly saving memory in Android's Zygote process across every running app.
+  - Normalizes `gasp` table for clean subpixel anti-aliasing across all point sizes.
+  - Fully configurable via `ENABLE_ZYGOTE_OPTIMIZATION=no` (default: false, preserving original font tables; set to `yes` for maximum size and RAM savings).
+  - New standalone CLI command: `mffm-helper optimize --in <font> [--out <out>] [--keep-hinting]`.
+- **Name Table Sanitization & Version Pinning**:
+  - Automatically inserts `Mistu` after the first word of the font family name: single-word families become `Word Mistu` (e.g. `Roboto` -> `Roboto Mistu`), while multi-word families become `Word Mistu Other` (e.g. `Amazon Ember` -> `Amazon Mistu Ember`, `Josefa Rounded Pro` -> `Josefa Mistu Rounded Pro`).
+  - Appends `;Mistu` to the font's version string in `nameID 5` (e.g. `Version 1.000;Mistu`).
+  - Synchronizes Full Name (`nameID 4`), PostScript Name (`nameID 6`), and sets Manufacturer (`nameID 8`) to `Mistu @ MFFM Inc.`.
+- **Comprehensive Configuration & Onboarding Guidance**:
+  - Re-architected `/sdcard/MFFM/*.conf` generation in `template/customize.sh` with beginner-friendly explanations, option breakdowns, and clear defaults.
+  - Added dedicated Configuration Options cheat sheet and guide in `USAGE_GUIDE.md`.
+
+## 2026.08.31
+
+### Added
+- **On-Device Centered Clock Colon Detection & Injection**:
+  - `mffm-helper` scans the Sans-serif font at install time. If missing, automatically adds an `ENABLE_CENTERED_COLON=no` block with instructions to `/sdcard/MFFM/*.conf`.
+  - When enabled by the user (`ENABLE_CENTERED_COLON=yes` or `true`), the installer dynamically generates a `colon.case` glyph contour and injects a contextual substitution rule (`[0-9] + colon + [0-9] -> [0-9] + colon.case + [0-9]`) into `calt` on-device.
+- **On-Device OpenType Feature Discovery, Reporting & Freezing**:
+  - `mffm-helper` scans all available fonts across Sans, Monospace, Serif, and Bengali (internal and `/sdcard/MFFM/`).
+  - Generates a categorized report (`[RECOMMENDED / SAFE TO FREEZE]`, `[CAUTION]`, `[SYSTEM / NOT RECOMMENDED]`) directly into `.conf` with `SANS_FREEZE_FEATURES=`, `MONO_FREEZE_FEATURES=`, `SERIF_FREEZE_FEATURES=`, `BENGALI_FREEZE_FEATURES=`.
+  - On reflash, executes pure-Python `fontTools` 1-to-1 `cmap` remapping (`SingleSubst`/`AlternateSubst`) and contextual lookup promotion (`calt`/`liga`) on-the-fly without requiring external binary tools.
+- **On-Device Name Table Sanitization**:
+  - `mffm-helper` automatically cleans brand noise, standardizes family names, sets Full Name (`nameID` 4), PostScript Name (`nameID` 6), Version (`nameID` 5), and Manufacturer (`nameID` 8) during compilation.
+- **New CLI Subcommands in `mffm-helper`**:
+  - `report-features`: Discovers and formats available OpenType layout features per category.
+  - `check-colon`: Inspects whether a font has a centered colon feature.
+  - `inject-colon`: Injects a centered colon into a standalone font file.
+  - `freeze-features`: Freezes specified feature tags into a standalone font file.
+  - `compile-bundle`: Added `--enable-centered-colon`, `--freeze-sans`, `--freeze-mono`, `--freeze-serif`, `--freeze-bengali`, `--no-sanitize-names`.
+- **Full WOFF & WOFF2 Web Font Support On-Device & in Builder**:
+  - `mffm-helper` and `template/customize.sh` now discover and compile `.woff` and `.woff2` files (in addition to `.ttf`, `.otf`, `.ttc`, `.otc`).
+  - Web font containers are automatically unflavored and decompressed into native TrueType tables when bundled into the unified `DroidSans.ttf` TTC.
+- **Static Multi-400 Face Preference Scoring (`face_preference_score`)**:
+  - Implemented `face_preference_score()` in `runtime_helper.py` to match `build.py`'s scoring hierarchy. When multiple 400 normal faces are present (e.g. `Regular`, `Book`, `Normal`), `Regular` is consistently prioritized as the primary face and the deduplicated slot choice.
+- **Pure Plug-and-Play Template Architecture**:
+  - Eliminated the separate `font-config.sh` placeholder requirement from the template — `customize.sh` now initializes dynamically and derives metadata from `module.prop` and font binaries on-the-fly.
+  - Users can create modules manually by simply dropping fonts into `Files/Sans/` and zipping the folder with any standard file manager.
+- **MFFM Runtime Check & Telegram Download Trigger**:
+  - Added install-time verification in `template/customize.sh` that checks for `mffm-runtime`. If missing, it outputs an informative warning banner and automatically opens the official Telegram channel (`https://t.me/MFFMMain`) to download the runtime.
+
+### Fixed
+- **Google Font Protection Boot Logging (`service.sh` & `action.sh`)**:
+  - Added dynamic storage path resolution (`get_mffm_dir()`) probing across `/storage/emulated/0`, `/data/media/0`, `/mnt/pass_through/0/emulated/0`, and `/sdcard`.
+  - Added a readiness wait loop for decrypted user storage at boot so `font_service.log` is reliably mirrored to `/sdcard/MFFM/font_service.log`.
+- **Debug & Action Log Cleanup**:
+  - Installer now automatically purges all stale historical debug and action logs (`mffmv14_debug_*.log`, `mffmv14_runtime_*.log`, `action.log`, etc.) from `/sdcard/MFFM`, keeping only the current run's log.
+- **Dynamic Centered Colon Glyph Bounds**:
+  - Fixed `KeyError: 'xMin'` during TTCollection saving by invoking `new_glyph.recalcBounds(glyf)` on dynamically generated `colon.case` glyph contours.
+- **Installer Compilation Error Logging**:
+  - Removed silent `>/dev/null 2>&1` suppression from `compile-bundle` in `template/customize.sh`, redirecting full output to `$LOG_FILE` with exit code verification.
+- **Output Target Exclusion in Scanner**:
+  - Excluded generated output targets (`DroidSans.ttf`, `DroidSans.ttc`, etc.) from input face collection in `runtime_helper.py` to prevent recursive re-ingestion of previously compiled TTC files.
+
+### Changed
+- **Streamlined Public Distribution**:
+  - Removed `termux-build.sh` in favor of zero-tool manual ZIP creation.
+  - `MFFMv14-Source-Template.zip` now distributes the clean, standalone template directly at root.
+- **Automated Test Suite**:
+  - Test suite covers centered colon detection/injection, name sanitization, feature reporting/freezing, WOFF/WOFF2 compilation, multi-400 deduplication, and POSIX shell syntax guards.
+
 ## 2026.08.27
 
 ### Fixed
