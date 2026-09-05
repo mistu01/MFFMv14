@@ -11,15 +11,11 @@ from pathlib import Path
 
 from build import ROOT, write_zip
 from font_module import (
-    FONT_EXTENSIONS, clean_family_name, compile_fonts, copy_template,
+    FONT_EXTENSIONS, classify_source_path, clean_family_name, compile_fonts, copy_template,
     display_name_for_mode, read_props, slugify, update_module_metadata,
 )
 from zipsigner_auto import ZipSignerError, sign_zip
 
-TEMPLATE_ITEMS = (
-    "module.prop", "customize.sh", "service.sh", "action.sh", "uninstall.sh", "post-mount.sh",
-    "META-INF",
-)
 OLD_PRIMARY_NAMES = (
     "DroidSans.ttc", "DroidSans.ttf", "DroidSans.otf", "RobotoStatic-Regular.ttf",
     "DroidSans-Italic.ttf", "DroidSans-Italic.otf", "DroidSans-Bold.ttf",
@@ -28,7 +24,13 @@ OLD_PRIMARY_NAMES = (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Update old MFFM module ZIPs to the MFFMv14 template")
-    parser.add_argument("--old-dir", type=Path, default=ROOT / "Old Modules")
+    parser.add_argument(
+        "--old-dir", "--input", "-i",
+        type=Path,
+        default=ROOT / "Old Modules",
+        dest="old_dir",
+        help="input directory containing old ZIP modules, or path to a single ZIP file",
+    )
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist")
     parser.add_argument("--mode", choices=("auto", "static", "variable"), default="auto")
     parser.add_argument("--name", help="override every output display name (best for one input ZIP)")
@@ -73,20 +75,14 @@ def find_categorized_sources(old_root: Path) -> dict[str, list[Path]]:
     categorized: dict[str, list[Path]] = {"sans": [], "mono": [], "serif": [], "bengali": []}
 
     if files_dir.is_dir():
-        for path in sorted(files_dir.iterdir()):
+        for path in sorted(files_dir.rglob("*")):
             if not path.is_file() or path.suffix.lower() not in FONT_EXTENSIONS:
                 continue
-            name_l = path.name.lower()
-            if name_l.startswith("mono") or "cutivemono" in name_l or "droidsansmono" in name_l:
-                categorized["mono"].append(path)
-            elif name_l.startswith("serif") or "notoserif" in name_l:
-                categorized["serif"].append(path)
-            elif name_l.startswith("beng") or "notosansbengali" in name_l:
-                categorized["bengali"].append(path)
-            else:
-                categorized["sans"].append(path)
+            rel_parts = [part.lower() for part in path.relative_to(files_dir).parts[:-1]]
+            category = classify_source_path(rel_parts, path.stem.lower())
+            categorized[category].append(path)
 
-    if not categorized["sans"]:
+    if not any(categorized.values()):
         for directory in (old_root / "system" / "fonts", old_root):
             if directory.is_dir():
                 for path in sorted(directory.iterdir()):
@@ -172,15 +168,19 @@ def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) ->
             name=display, version=args.version, version_code=args.version_code,
             applied_features=result.applied_features,
         )
+        if result.applied_features and not any(f in slugify(display) for f in result.applied_features):
+            file_slug = slugify(f"{display} {' '.join(result.applied_features)}")
+        else:
+            file_slug = slugify(display)
         args.output_dir.mkdir(parents=True, exist_ok=True)
         output = reserve_output(
             args.output_dir.resolve(),
-            f"mffm14-{slugify(display)}-{props['version']}",
+            f"mffm14-{file_slug}-{props['version']}",
             args.force,
             reserved,
         )
         if output is None:
-            existing = args.output_dir.resolve() / f"mffm14-{slugify(display)}-{props['version']}.zip"
+            existing = args.output_dir.resolve() / f"mffm14-{file_slug}-{props['version']}.zip"
             print(f"Skipping {zip_path.name}: output already exists (use --force to overwrite): {existing}")
             return None
         write_zip(module_dir, output)
@@ -204,11 +204,14 @@ def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) ->
 
 def main() -> int:
     args = parse_args()
-    if not args.old_dir.is_dir():
-        raise SystemExit(f"Old module directory does not exist: {args.old_dir}")
-    inputs = sorted(args.old_dir.glob("*.zip"))
-    if not inputs:
-        raise SystemExit(f"No ZIP modules found in {args.old_dir}")
+    if args.old_dir.is_file():
+        inputs = [args.old_dir]
+    elif args.old_dir.is_dir():
+        inputs = sorted(args.old_dir.glob("*.zip"))
+        if not inputs:
+            raise SystemExit(f"No ZIP modules found in {args.old_dir}")
+    else:
+        raise SystemExit(f"Old module directory or file does not exist: {args.old_dir}")
     reserved: set[Path] = set()
     updated = 0
     skipped = 0
