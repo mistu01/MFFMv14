@@ -476,9 +476,8 @@ def fix_font_metrics(font, target_upm: int = 2048, mode: str = "safe") -> None:
 
         k_ascent = (actual_y_max / base_ascent) if (actual_y_max is not None and base_ascent > 0) else 1.0
         k_descent = (abs(actual_y_min) / abs(base_descent)) if (actual_y_min is not None and base_descent < 0) else 1.0
-        k = max(1.0, k_ascent, k_descent)
-        ascent = int(round(k * base_ascent))
-        descent = int(round(k * base_descent))
+        ascent = int(round(max(1.0, k_ascent) * base_ascent))
+        descent = int(round(-max(1.0, k_descent) * abs(base_descent)))
     else:  # compact mode
         ascent = base_ascent
         descent = base_descent

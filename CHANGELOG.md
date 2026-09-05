@@ -30,9 +30,20 @@ versioning scheme the modules themselves carry.
   - Automatically inserts `Mistu` after the first word of the font family name: single-word families become `Word Mistu` (e.g. `Roboto` -> `Roboto Mistu`), while multi-word families become `Word Mistu Other` (e.g. `Amazon Ember` -> `Amazon Mistu Ember`, `Josefa Rounded Pro` -> `Josefa Mistu Rounded Pro`).
   - Appends `;Mistu` to the font's version string in `nameID 5` (e.g. `Version 1.000;Mistu`).
   - Synchronizes Full Name (`nameID 4`), PostScript Name (`nameID 6`), and sets Manufacturer (`nameID 8`) to `Mistu @ MFFM Inc.`.
+- **Enforced Fatal Abort When MFFM Runtime is Missing**:
+  - `template/customize.sh` now strictly enforces that the companion MFFM Runtime module is installed before allowing any font module to install.
+  - If `mffm-runtime` is missing, the installer immediately halts execution via `fail`, displays a prominent error banner directing the user to the Telegram download link (`https://t.me/MFFMMain`), and aborts the flash so no broken/unprocessed font files are installed into root.
+- **Decoupled Safe Metrics Engine (Ascender Bloat Prevention)**:
+  - Decoupled ascent and descent expansion in `safe` metrics mode: ascent only expands when tall accents exceed `base_ascent` (`1039` at 1000 UPM), and descent expands independently when descenders exceed `base_descent` (`-269`).
+  - Eliminates line height inflation on monospace and display fonts with deep descenders (like `SpotifyMixMono`), dropping line height from `1702` back down to `1389` and restoring standard terminal log text size and window proportions.
 - **Comprehensive Configuration & Onboarding Guidance**:
   - Re-architected `/sdcard/MFFM/*.conf` generation in `template/customize.sh` with beginner-friendly explanations, option breakdowns, and clear defaults.
   - Added dedicated Configuration Options cheat sheet and guide in `USAGE_GUIDE.md`.
+- **Variable Font Config Isolation, Clean Categorization & Automatic Section Ordering**:
+  - Variable font axis configuration is now strictly positioned at the top of `/sdcard/MFFM/*.conf` directly below the module header, beautifully categorized with distinct section headers (`# SANS-SERIF / UPRIGHT`, `# CONDENSED / UPRIGHT`, `# MONOSPACE / UPRIGHT`, etc.) and clean spacing.
+  - Implemented `reformat_config_file()` in `template/customize.sh`: dynamically reorders legacy or scrambled configs, sorting axes sections to the top and `# ADVANCED TYPOGRAPHY & LOCKSCREEN CLOCK SETTINGS` to the bottom while preserving 100% of user customization values.
+  - Exported variable font axis metadata (`VF_*_AXIS_META`, `VF_*_WEIGHTS`) into `font-config.sh` and packaged into module zips by `build.py`, eliminating pre-compilation axis discovery misses.
+  - Added early on-the-fly axis detection in `prepare_variable_config()` for manual modules, guaranteeing profile keys are generated with full categorization headers even before runtime bundle compilation.
 
 ## 2026.08.31
 

@@ -27,7 +27,7 @@ from zipsigner_auto import ZipSignerError, sign_zip
 ROOT = Path(__file__).resolve().parent
 TEMPLATE_DIR = ROOT / "template"
 PAYLOAD_NAMES = (
-    "module.prop", "customize.sh", "service.sh", "action.sh", "uninstall.sh", "post-mount.sh",
+    "module.prop", "customize.sh", "service.sh", "action.sh", "uninstall.sh", "post-mount.sh", "font-config.sh",
     "META-INF", "Files",
 )
 

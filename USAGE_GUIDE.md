@@ -8,6 +8,7 @@
 > Before flashing any MFFMv14 font module, you **MUST** first install the **`mffm-runtime-YYYY.MM.DD.zip`** module in your root manager (**Magisk**, **KernelSU**, or **APatch**).
 > - The runtime provides the on-device font compiler (`fontTools`, `brotli`, metric fixers, and TTC generator).
 > - You only need to install `mffm-runtime` **once**. After that, all MFFMv14 font modules will work seamlessly!
+> - **Fatal Requirement**: Font module installation will strictly abort with an error if the MFFM Runtime is not detected.
 > - Download official runtime releases from **[t.me/MFFMMain](https://t.me/MFFMMain)**.
 
 ---
@@ -108,7 +109,7 @@ When you flash any MFFMv14 font module, a configuration file is generated at:
 #### 3. 🛡️ Smart Metric Harmonization & Zero-Clipping (`METRICS_MODE`)
 - **The Problem**: In status bars, notification popups, and app buttons, tall accents (like Vietnamese `ế`, `Ậ`, Devanagari, Thai, Arabic, or display letters `Å`, `Ŵ`) can get sliced off if the font's line box is too tight.
 - **How to decide**:
-  - `METRICS_MODE=safe` (Recommended): Automatically scans all characters. If any tall accents exist, it gently expands the boundaries while strictly preserving the FFIX3 baseline ratio. Buttons, status bar icons, and widgets remain perfectly centered with **zero clipping**.
+  - `METRICS_MODE=safe` (Recommended): Audits actual glyph boundaries. If tall accents (Vietnamese, Devanagari, etc.) exist, it expands ascent without clipping; if deep descenders exist, it expands descent downward without artificially inflating the ascent or line height. UI elements, Magisk terminal logs, buttons, and status bar icons remain clean, compact, and centered with **zero clipping**.
   - `METRICS_MODE=compact`: Forces classic ultra-tight FFIX3 metrics ($2128 / -550$). Best for English-only users who want the absolute most compact notification padding.
   - `METRICS_MODE=preserve`: Keeps the font designer's original vertical metrics untouched.
 

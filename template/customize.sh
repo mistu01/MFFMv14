@@ -28,7 +28,21 @@ mffm_runtime_helper() {
   return 1
 }
 mffm_has_runtime() {
-  [ -x "$MFFM_RUNTIME_DEST/bin/python3" ] || [ -x "$MFFM_RUNTIME_DEST/bin/mffm-helper" ]
+  # 1. Check if the adb runtime folder exists with binaries or directory
+  if [ -d "$MFFM_RUNTIME_DEST" ]; then
+    chmod 755 "$MFFM_RUNTIME_DEST/bin"/* 2>/dev/null
+    if [ -x "$MFFM_RUNTIME_DEST/bin/python3" ] || [ -x "$MFFM_RUNTIME_DEST/bin/mffm-helper" ] || [ -x "$MFFM_RUNTIME_DEST/bin/python" ] || [ -d "$MFFM_RUNTIME_DEST/bin" ]; then
+      return 0
+    fi
+    return 0
+  fi
+  # 2. Check if the runtime module is installed in root managers (Magisk / KernelSU / APatch)
+  for _mod_dir in /data/adb/modules/mffm_runtime /data/adb/modules_update/mffm_runtime; do
+    if [ -d "$_mod_dir" ] && [ ! -f "$_mod_dir/remove" ]; then
+      return 0
+    fi
+  done
+  return 1
 }
 # Pre-export runtime lib to LD_LIBRARY_PATH if present (for brotli .so)
 if [ -d "$MFFM_RUNTIME_DEST/lib" ]; then
@@ -1049,7 +1063,7 @@ ensure_profile_keys() {
   local axis_record axis_tag remainder axis_min axis_default axis_max
   local config_key axis_key weight label wght_min wght_max
 
-  if [ "$VF_CONFIG_CREATED" = "1" ]; then
+  if ! grep -q "^[[:space:]]*${profile}_" "$VF_CONFIG_FILE" 2>/dev/null; then
     {
       printf '\n# ------------------------------------------------------------------------------\n'
       printf '# %s\n' "$title"
@@ -1098,6 +1112,140 @@ ensure_profile_keys() {
       } >> "$VF_CONFIG_FILE"
     fi
   done
+}
+
+reformat_config_file() {
+  local conf="$VF_CONFIG_FILE"
+  [ -n "$conf" ] && [ -f "$conf" ] || return 0
+
+  awk '
+  BEGIN {
+    profiles[1] = "SANS_UPRIGHT"; titles["SANS_UPRIGHT"] = "SANS-SERIF / UPRIGHT"
+    profiles[2] = "CONDENSED_UPRIGHT"; titles["CONDENSED_UPRIGHT"] = "CONDENSED / UPRIGHT"
+    profiles[3] = "SANS_ITALIC"; titles["SANS_ITALIC"] = "SANS-SERIF / ITALIC"
+    profiles[4] = "CONDENSED_ITALIC"; titles["CONDENSED_ITALIC"] = "CONDENSED / ITALIC"
+    profiles[5] = "MONOSPACE_UPRIGHT"; titles["MONOSPACE_UPRIGHT"] = "MONOSPACE / UPRIGHT"
+    profiles[6] = "SERIF_UPRIGHT"; titles["SERIF_UPRIGHT"] = "SERIF / UPRIGHT"
+    profiles[7] = "SERIF_ITALIC"; titles["SERIF_ITALIC"] = "SERIF / ITALIC"
+    profiles[8] = "BENGALI_UPRIGHT"; titles["BENGALI_UPRIGHT"] = "BENGALI / UPRIGHT"
+    num_profiles = 8
+
+    in_header = 1
+    in_typo = 0
+    seen_typo_banner = 0
+  }
+
+  function get_profile(line,   p, k) {
+    for (p = 1; p <= num_profiles; p++) {
+      k = profiles[p] "_"
+      if (index(line, k) == 1 || match(line, "^[ \t]*" k)) return profiles[p]
+    }
+    return ""
+  }
+
+  {
+    line = $0
+    sub(/\r$/, "", line)
+
+    # 1. Header (lines up to MODULE_IDENTITY=)
+    if (in_header) {
+      header[header_count++] = line
+      if (line ~ /^[ \t]*MODULE_IDENTITY[ \t]*=/) {
+        in_header = 0
+      }
+      next
+    }
+
+    # 2. Check if line starts ADVANCED TYPOGRAPHY section
+    if (line ~ /ADVANCED TYPOGRAPHY/ || line ~ /^#[ \t]*1\.[ \t]*CENTERED CLOCK COLON/) {
+      in_typo = 1
+    }
+
+    # Check if line is a profile key
+    prof = get_profile(line)
+    if (prof != "") {
+      if (buf_count > 0) {
+        for (b = 0; b < buf_count; b++) {
+          prof_lines[prof, prof_counts[prof]++] = buf[b]
+        }
+        buf_count = 0
+      }
+      prof_lines[prof, prof_counts[prof]++] = line
+      next
+    }
+
+    # Check if line is a comment for a profile key
+    if (line ~ /^#[ \t]*(Android[ \t]+[0-9]+|[a-zA-Z0-9_]+[ \t]+axis[ \t]+range)/) {
+      buf[buf_count++] = line
+      next
+    }
+
+    # If it is inside typo section
+    if (in_typo) {
+      if (line ~ /ADVANCED TYPOGRAPHY/) {
+        typo[typo_count++] = "# =============================================================================="
+        typo[typo_count++] = "# ADVANCED TYPOGRAPHY & LOCKSCREEN CLOCK SETTINGS"
+        typo[typo_count++] = "# =============================================================================="
+        seen_typo_banner = 1
+        next
+      }
+      if (seen_typo_banner && line ~ /^#[ \t]*={10,}[ \t]*$/) {
+        seen_typo_banner = 0
+        next
+      }
+      if (buf_count > 0) {
+        for (b = 0; b < buf_count; b++) typo[typo_count++] = buf[b]
+        buf_count = 0
+      }
+      typo[typo_count++] = line
+      next
+    }
+
+    # If before typo, ignore existing profile section separators so we recreate them cleanly
+    if (line ~ /^#[ \t]*-{10,}[ \t]*$/ || line ~ /^#[ \t]*={10,}[ \t]*$/) {
+      next
+    }
+    is_prof_title = 0
+    for (p = 1; p <= num_profiles; p++) {
+      if (line ~ titles[profiles[p]]) { is_prof_title = 1; break }
+    }
+    if (is_prof_title) next
+
+    if (line ~ /^#/) {
+      buf[buf_count++] = line
+    }
+  }
+
+  END {
+    # 1. Output Header
+    while (header_count > 0 && header[header_count - 1] ~ /^[ \t]*$/) header_count--
+    for (h = 0; h < header_count; h++) print header[h]
+
+    # 2. Output Profiles in standard order
+    for (p = 1; p <= num_profiles; p++) {
+      prof = profiles[p]
+      if (prof_counts[prof] > 0) {
+        print ""
+        print "# ------------------------------------------------------------------------------"
+        print "# " titles[prof]
+        print "# ------------------------------------------------------------------------------"
+        for (l = 0; l < prof_counts[prof]; l++) {
+          print prof_lines[prof, l]
+        }
+      }
+    }
+
+    # 3. Output Advanced Typography section
+    if (typo_count > 0) {
+      start_t = 0
+      while (start_t < typo_count && typo[start_t] ~ /^[ \t]*$/) start_t++
+      if (start_t < typo_count) {
+        print ""
+        for (t = start_t; t < typo_count; t++) print typo[t]
+      }
+    }
+  }
+  ' "$conf" > "$conf.tmp" && mv -f "$conf.tmp" "$conf"
 }
 
 reset_config_value() {
@@ -1342,6 +1490,7 @@ configure_variable_family_profile() {
 
   ensure_profile_keys "$profile" "$axes_meta" "$weights"
   apply_profile "$profile" "$xml_style" "$axes_meta" "$weights" $fragment_list
+  reformat_config_file
 }
 
 prune_obsolete_profile_keys() {
@@ -1357,6 +1506,19 @@ prune_obsolete_profile_keys() {
 
 prepare_variable_config() {
   ensure_variable_config_file
+
+  if [ -z "$VF_UPRIGHT_AXIS_META" ]; then
+    local _vf_candidate
+    _vf_candidate=$(find_first '*.ttf' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
+    [ -z "$_vf_candidate" ] && _vf_candidate=$(find_first '*.otf' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
+    [ -z "$_vf_candidate" ] && _vf_candidate=$(find_first '*.ttc' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
+    [ -z "$_vf_candidate" ] && _vf_candidate=$(find_first '*.woff2' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
+    [ -z "$_vf_candidate" ] && _vf_candidate=$(find_first '*.woff' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
+    if [ -n "$_vf_candidate" ] && is_variable_font "$_vf_candidate"; then
+      VF_UPRIGHT_AXIS_META=$(extract_fvar_axes "$_vf_candidate" | tr ' ' '\n' | awk -F: '{print $1 "|" $2 "|" $3 "|" $4}' | tr '\n' ' ')
+      [ -z "$VF_UPRIGHT_WEIGHTS" ] && VF_UPRIGHT_WEIGHTS="100 200 300 400 500 600 700 800 900"
+    fi
+  fi
 
   if [ -n "$VF_UPRIGHT_AXIS_META" ]; then
     ensure_profile_keys SANS_UPRIGHT "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS"
@@ -1525,6 +1687,7 @@ prepare_variable_config() {
       fi
     fi
   fi
+  reformat_config_file
 }
 
 ui_print ""
@@ -1541,18 +1704,28 @@ ui_print "    Font family  : $FONT_FAMILY"
 if ! mffm_has_runtime; then
   ui_print ""
   ui_print "  ************************************************"
-  ui_print "  *  [!] WARNING: MFFM RUNTIME NOT INSTALLED!   *"
+  ui_print "  *  [!] ERROR: MFFM RUNTIME NOT DETECTED!      *"
   ui_print "  ************************************************"
   ui_print "  * MFFMv14 requires the MFFM Runtime module to  *"
   ui_print "  * process fonts, bundle TTCs, freeze features, *"
   ui_print "  * and inject centered clock colons on-device.  *"
   ui_print "  *                                              *"
-  ui_print "  * Download & install mffm-runtime module from: *"
+  ui_print "  * Neither the runtime module (mffm_runtime)    *"
+  ui_print "  * nor /data/adb/mffm_runtime folder was found. *"
+  ui_print "  *                                              *"
+  ui_print "  * Installation aborted! Please install the     *"
+  ui_print "  * MFFM Runtime module first, then re-flash.    *"
+  ui_print "  *                                              *"
+  ui_print "  * Download mffm-runtime module from:           *"
   ui_print "  *   https://t.me/MFFMMain                      *"
+  ui_print "  *                                              *"
+  ui_print "  * Opening download link in 10 seconds...       *"
   ui_print "  ************************************************"
   ui_print ""
+  sleep 10
   am start -a android.intent.action.VIEW -d "https://t.me/MFFMMain" >/dev/null 2>&1 || \
     am start --user 0 -a android.intent.action.VIEW -d "https://t.me/MFFMMain" >/dev/null 2>&1
+  fail "Neither MFFM Runtime module nor /data/adb/mffm_runtime was found! Aborting installation."
 fi
 
 _helper_avail=$(mffm_runtime_helper 2>/dev/null)
@@ -1673,6 +1846,7 @@ if [ "$FONT_MODE" = "variable" ] || [ -n "$VF_UPRIGHT_AXIS_META" ] || [ -n "$VF_
   if [ -n "$_prev_vf_conf" ] && [ -f "$_prev_vf_conf" ] && [ "$_prev_vf_conf" != "$VF_CONFIG_FILE" ]; then
     cp -f "$_prev_vf_conf" "$VF_CONFIG_FILE" 2>/dev/null && rm -f "$_prev_vf_conf" 2>/dev/null
   fi
+  reformat_config_file
   ui_print "    Axis config (runtime): $VF_CONFIG_FILE"
 fi
 

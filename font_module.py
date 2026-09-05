@@ -2205,6 +2205,36 @@ def compile_fonts(
             f"FONT_PRIMARY={shell_quote(payload[0] if payload else 'Sans/DroidSans.ttf')}",
             "VF_CONFIG_SCHEMA='2'",
         ]
+        if mode == "variable":
+            upright = next((f for f in faces if f.style == "normal" and not f.condensed), faces[0] if faces else None)
+            italic = next((f for f in faces if f.style == "italic" and not f.condensed), None)
+            if upright and upright.axes and "wght" in upright.axes:
+                config.append(f'VF_UPRIGHT_AXIS_META="{_axis_metadata(upright, italic=False)}"')
+                config.append(f'VF_UPRIGHT_WEIGHTS="{_supported_weights(upright)}"')
+            if italic and italic.axes and "wght" in italic.axes and italic.path != getattr(upright, "path", None):
+                config.append(f'VF_ITALIC_AXIS_META="{_axis_metadata(italic, italic=True)}"')
+                config.append(f'VF_ITALIC_WEIGHTS="{_supported_weights(italic)}"')
+
+        mono_var = next((f for f in mono_faces if f.variable and "wght" in f.axes), None)
+        if mono_var:
+            config.append(f'VF_MONO_AXIS_META="{_axis_metadata(mono_var, italic=False)}"')
+            config.append(f'VF_MONO_WEIGHTS="{_supported_weights(mono_var)}"')
+
+        serif_var_upright = next((f for f in serif_faces if f.variable and f.style == "normal" and "wght" in f.axes), None)
+        if serif_var_upright:
+            config.append(f'VF_SERIF_UPRIGHT_AXIS_META="{_axis_metadata(serif_var_upright, italic=False)}"')
+            config.append(f'VF_SERIF_UPRIGHT_WEIGHTS="{_supported_weights(serif_var_upright)}"')
+
+        serif_var_italic = next((f for f in serif_faces if f.variable and f.style == "italic" and "wght" in f.axes), None)
+        if serif_var_italic:
+            config.append(f'VF_SERIF_ITALIC_AXIS_META="{_axis_metadata(serif_var_italic, italic=True)}"')
+            config.append(f'VF_SERIF_ITALIC_WEIGHTS="{_supported_weights(serif_var_italic)}"')
+
+        bengali_var = next((f for f in bengali_faces if f.variable and "wght" in f.axes), None)
+        if bengali_var:
+            config.append(f'VF_BENGALI_AXIS_META="{_axis_metadata(bengali_var, italic=False)}"')
+            config.append(f'VF_BENGALI_WEIGHTS="{_supported_weights(bengali_var)}"')
+
         (module_dir / "font-config.sh").write_text("\n".join(config) + "\n", encoding="utf-8", newline="\n")
 
         family_faces = {
