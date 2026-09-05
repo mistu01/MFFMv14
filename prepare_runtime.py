@@ -17,6 +17,7 @@ runtime falls back to the Termux pip bootstrap for those devices at flash time.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import hashlib
 import json
 import os
