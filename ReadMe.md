@@ -55,7 +55,7 @@ mffm-runtime-YYYY.MM.DD.zip
 
 - **What it is**: A standalone module providing embedded Python 3.12/3.14, `fontTools`, `brotli`, and the `mffm-helper` CLI at `/data/adb/mffm_runtime/`.
 - **Install Once**: You only flash the runtime once. After that, any MFFMv14 font module will execute instantly.
-- **Download**: Grab official runtime releases from **[t.me/MFFMMain](https://t.me/MFFMMain)**.
+- **Download**: Grab official runtime releases from **[GitHub Releases](https://github.com/mistu01/MFFMv14/releases)**.
 
 ---
 
@@ -165,7 +165,8 @@ MFFMv14/
 
 ## 💬 Community & Support
 
-- **Telegram Channel & Releases**: [t.me/MFFMMain](https://t.me/MFFMMain)
+- **Official Releases**: [GitHub Releases](https://github.com/mistu01/MFFMv14/releases)
+- **Telegram Community**: [t.me/MFFMMain](https://t.me/MFFMMain)
 - **Author**: Mistu (@MFFMMain)
 - **Issues & Contributions**: Pull requests and issue reports are welcome via GitHub!
 

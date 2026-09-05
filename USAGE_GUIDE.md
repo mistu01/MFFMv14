@@ -9,7 +9,7 @@
 > - **Why is it required?** The runtime supplies the on-device font transformation engine (`fontTools`, `brotli`, `cu2qu`, metrics fixers, and TTC generator).
 > - **Install Once**: You only install `mffm-runtime` once. All subsequent MFFMv14 font modules utilize this shared engine.
 > - **Fatal Requirement**: Font module installation will strictly abort with an alert if the MFFM Runtime is missing.
-> - **Download**: Official releases are available on Telegram at **[t.me/MFFMMain](https://t.me/MFFMMain)**.
+> - **Download**: Official releases are available on GitHub at **[github.com/mistu01/MFFMv14/releases](https://github.com/mistu01/MFFMv14/releases)**.
 
 ---
 
@@ -177,7 +177,7 @@ MFFMv14 provides automated dual-layer defense:
 ## ❓ Frequently Asked Questions & Troubleshooting
 
 ### Q: Why did the module installation fail with an MFFM Runtime error?
-**A:** MFFMv14 modules require the standalone **`mffm-runtime`** module to be installed first. Download `mffm-runtime-YYYY.MM.DD.zip` from [t.me/MFFMMain](https://t.me/MFFMMain), flash it in Magisk/KernelSU/APatch, and then install your font module.
+**A:** MFFMv14 modules require the standalone **`mffm-runtime`** module to be installed first. Download `mffm-runtime-YYYY.MM.DD.zip` from [GitHub Releases](https://github.com/mistu01/MFFMv14/releases), flash it in Magisk/KernelSU/APatch, and then install your font module.
 
 ### Q: How do I apply my changes after editing `/sdcard/MFFM/*.conf`?
 **A:** Simply flash your font module ZIP again in Magisk, KernelSU, or APatch. You do not need to uninstall it first; flashing over the existing module reads the updated configuration file and regenerates the fonts.

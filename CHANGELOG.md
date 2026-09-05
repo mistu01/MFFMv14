@@ -12,6 +12,9 @@ versioning scheme the modules themselves carry.
   - Authored `docs/DEVELOPER.md` delivering in-depth technical documentation covering the Decoupled Safe Metrics engine mathematics, OpenType GSUB Format 6 contextual colon lookup assembly, tabular digit equalization, Zygote table pruning, dual runtime detection mechanics, and complete developer CLI tool reference.
 
 ### Improved
+- **Official Runtime Download & Installer Redirect**:
+  - Shifted official runtime releases and installer fallback redirect from Telegram to [GitHub Releases](https://github.com/mistu01/MFFMv14/releases).
+  - Updated `template/customize.sh` missing-runtime error banner and `am start` browser intent to automatically launch the GitHub Releases page.
 - **Module Migration Utility (`update.py`) Modernization**:
   - Upgraded font discovery (`find_categorized_sources`) to use recursive `rglob` and `classify_source_path()`, providing native support for both legacy flat modules and modern structured subdirectories (`Files/Sans/`, `Files/Monospace/`, etc.).
   - Added single-file input support (`--input` / `-i`), allowing direct migration of individual module ZIPs.

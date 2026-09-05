@@ -1716,15 +1716,15 @@ if ! mffm_has_runtime; then
   ui_print "  * Installation aborted! Please install the     *"
   ui_print "  * MFFM Runtime module first, then re-flash.    *"
   ui_print "  *                                              *"
-  ui_print "  * Download mffm-runtime module from:           *"
-  ui_print "  *   https://t.me/MFFMMain                      *"
+  ui_print "  * Download mffm-runtime module from GitHub:    *"
+  ui_print "  * https://github.com/mistu01/MFFMv14/releases  *"
   ui_print "  *                                              *"
   ui_print "  * Opening download link in 10 seconds...       *"
   ui_print "  ************************************************"
   ui_print ""
   sleep 10
-  am start -a android.intent.action.VIEW -d "https://t.me/MFFMMain" >/dev/null 2>&1 || \
-    am start --user 0 -a android.intent.action.VIEW -d "https://t.me/MFFMMain" >/dev/null 2>&1
+  am start -a android.intent.action.VIEW -d "https://github.com/mistu01/MFFMv14/releases" >/dev/null 2>&1 || \
+    am start --user 0 -a android.intent.action.VIEW -d "https://github.com/mistu01/MFFMv14/releases" >/dev/null 2>&1
   fail "Neither MFFM Runtime module nor /data/adb/mffm_runtime was found! Aborting installation."
 fi
 
