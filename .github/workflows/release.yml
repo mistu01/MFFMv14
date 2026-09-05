@@ -1,0 +1,144 @@
+name: Auto Release Template & Runtime
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'template/**'
+      - 'runtime-template/**'
+      - 'runtime_helper.py'
+      - 'build_runtime.py'
+      - 'prepare_runtime.py'
+      - 'package_template.py'
+      - 'build.py'
+      - 'font_module.py'
+      - 'zipsigner_auto.py'
+      - 'CHANGELOG.md'
+      - 'USAGE_GUIDE.md'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Override release version (leave blank to read from CHANGELOG.md)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-release:
+    name: Compile & Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Build Tools & Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils-aarch64-linux-gnu llvm
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt zstandard
+
+      - name: Prepare MFFM Runtime Payloads (aarch64 & x64)
+        run: |
+          python prepare_runtime.py
+
+      - name: Build MFFM Runtime Module ZIP
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python build_runtime.py --output-dir dist/
+
+      - name: Package MFFMv14 Source Template ZIP
+        run: |
+          python package_template.py
+
+      - name: Generate SHA256 Checksums
+        run: |
+          cd dist
+          sha256sum *.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          cd ..
+
+      - name: Extract Changelog & Metadata
+        id: release_meta
+        run: |
+          python - << 'EOF'
+          import re, os, textwrap
+          from pathlib import Path
+
+          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          match = re.search(r'##\s+([0-9.]+)\s*\n(.*?)(?=\n##\s+[0-9.]|\Z)', changelog, re.DOTALL)
+          
+          # Check for manual input override
+          override = "${{ inputs.version }}"
+          if override.strip():
+              version = override.strip()
+          elif match:
+              version = match.group(1).strip()
+          else:
+              version = "2026.09.06"
+
+          notes = match.group(2).strip() if match else "Automated compilation of MFFMv14 Template and Runtime Module."
+
+          # Discover exact runtime zip filename
+          dist = Path("dist")
+          runtime_zips = sorted(dist.glob("mffm-runtime-*.zip"))
+          runtime_name = runtime_zips[-1].name if runtime_zips else f"mffm-runtime-{version}.zip"
+
+          body = textwrap.dedent(f"""\
+          ## 🚀 MFFMv14 Release v{version}
+
+          ### 📦 Release Assets
+          - **`MFFMv14-Source-Template.zip`**: Complete flashable template for creating custom font modules directly on Android (via file managers) or PC.
+          - **`{runtime_name}`**: Standalone MFFM Runtime module (portable Python + fontTools). Flash once in Magisk / KernelSU / APatch.
+          - **`SHA256SUMS.txt`**: Cryptographic verification checksums for all release packages.
+
+          ---
+
+          ### 📜 Changelog (v{version})
+          {notes}
+
+          ---
+          *Automated release compiled and published by GitHub Actions.*
+          """)
+
+          Path("release_body.md").write_text(body + "\n", encoding="utf-8")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"version={version}\n")
+              out.write(f"tag=v{version}\n")
+              out.write(f"title=MFFMv14 Release v{version}\n")
+          EOF
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_meta.outputs.tag }}
+          name: ${{ steps.release_meta.outputs.title }}
+          body_path: release_body.md
+          files: |
+            dist/MFFMv14-Source-Template.zip
+            dist/mffm-runtime-*.zip
+            dist/SHA256SUMS.txt
+          draft: false
+          prerelease: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

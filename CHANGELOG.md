@@ -3,6 +3,21 @@
 All notable changes to MFFMv14 are documented here. Dates use the `YYYY.MM.DD`
 versioning scheme the modules themselves carry.
 
+## 2026.09.06
+
+### Documentation & Public Release Architecture
+- **Three-Tier Documentation Separation**:
+  - Redesigned `ReadMe.md` into a modern GitHub repository frontpage and project showcase featuring compatibility badges, feature highlight summaries, architecture overview, quickstarts, and community links.
+  - Refactored `USAGE_GUIDE.md` into an exhaustive end-user and theme-maker manual (step-by-step module packaging for Android file managers and PC, comprehensive `/sdcard/MFFM/*.conf` parameter guide, troubleshooting & FAQ). Packaged inside `MFFMv14-Source-Template.zip`.
+  - Authored `docs/DEVELOPER.md` delivering in-depth technical documentation covering the Decoupled Safe Metrics engine mathematics, OpenType GSUB Format 6 contextual colon lookup assembly, tabular digit equalization, Zygote table pruning, dual runtime detection mechanics, and complete developer CLI tool reference.
+
+### Improved
+- **Module Migration Utility (`update.py`) Modernization**:
+  - Upgraded font discovery (`find_categorized_sources`) to use recursive `rglob` and `classify_source_path()`, providing native support for both legacy flat modules and modern structured subdirectories (`Files/Sans/`, `Files/Monospace/`, etc.).
+  - Added single-file input support (`--input` / `-i`), allowing direct migration of individual module ZIPs.
+  - Synchronized output ZIP filename slug generation with `build.py` to include applied OpenType features.
+  - Pruned obsolete, unused `TEMPLATE_ITEMS` constant.
+
 ## 2026.09.03
 
 ### Added

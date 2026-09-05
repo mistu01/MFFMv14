@@ -1,4 +1,10 @@
-# Font files
+# ==============================================================================
+# MFFMv14 .gitignore
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Fonts (All formats: TTF, OTF, TTC, OTC, WOFF, WOFF2, etc.)
+# ------------------------------------------------------------------------------
 *.ttf
 *.otf
 *.ttc
@@ -6,8 +12,16 @@
 *.woff
 *.woff2
 *.ttx
+*.eot
+*.dfont
+*.pfb
+*.pfm
+*.afm
+*.suit
 
-# Archives & Binaries
+# ------------------------------------------------------------------------------
+# 2. Archives & Compressed Packages (All formats: ZIP, 7Z, TAR, XZ, etc.)
+# ------------------------------------------------------------------------------
 *.zip
 *.7z
 *.rar
@@ -16,48 +30,111 @@
 *.tgz
 *.xz
 *.zst
+*.bz2
+*.lz
+*.lzma
 *.deb
-.runtime-cache/
+*.apk
+*.iso
 
-# OS files
-.DS_Store
-Thumbs.db
-desktop.ini
-*.lnk
-
-# Python
+# ------------------------------------------------------------------------------
+# 3. Python Artifacts & Virtual Environments
+# ------------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
 .venv/
 venv/
 ENV/
 env/
+env.bak/
+venv.bak/
+
+# Testing & coverage artifacts
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
-*.egg-info/
+.nox/
+.tox/
+.hypothesis/
 
-# IDEs
+# ------------------------------------------------------------------------------
+# 4. Operating System Files
+# ------------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
+*.lnk
+$RECYCLE.BIN/
+
+# ------------------------------------------------------------------------------
+# 5. IDEs & Editors
+# ------------------------------------------------------------------------------
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+.project
+.pydevproject
+.settings/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
-*.swp
 
-# Module specifics
+# ------------------------------------------------------------------------------
+# 6. MFFM Workspace, Build & Packaging Outputs
+# ------------------------------------------------------------------------------
 dist/
 Updated Modules/
 .mffm-signer/
+.mffm-build.json
 .temp_ttf_fonts/
+.runtime-cache/
+mffm-runtime-*/
 
-# Ignore contents of Fonts and Files but keep the folders via .gitkeep
+# Logs & scratch files
+*.log
+scratch/
+release_body.md
+release_notes.md
+release_version.txt
+
+# Keep folder skeletons via .gitkeep
 Fonts/*
 !Fonts/.gitkeep
+!Fonts/**/.gitkeep
 Files/*
 !Files/.gitkeep
-
-# Local build config (build.py --save-config)
-.mffm-build.json
+Old Modules/*
+!Old Modules/.gitkeep

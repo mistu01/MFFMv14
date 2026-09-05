@@ -50,7 +50,11 @@ def _asset_name() -> str:
 
 
 def _request(url: str) -> urllib.request.Request:
-    return urllib.request.Request(url, headers={"User-Agent": "MFFMv14-builder", "Accept": "application/vnd.github+json"})
+    headers = {"User-Agent": "MFFMv14-builder", "Accept": "application/vnd.github+json"}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return urllib.request.Request(url, headers=headers)
 
 
 def _sha256_file(path: Path) -> str:
