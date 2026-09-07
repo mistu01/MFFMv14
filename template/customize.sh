@@ -1564,7 +1564,15 @@ prepare_variable_config() {
   if [ -n "$_helper" ] && [ -x "$_helper" ] && [ -n "$VF_CONFIG_FILE" ] && [ -f "$VF_CONFIG_FILE" ]; then
     # 1. Centered Colon Check
     local _primary_sans
-    _primary_sans=$(find_first '*.ttf' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
+    if [ -n "$FONT_PRIMARY" ] && [ -f "$FONT_DIR/$FONT_PRIMARY" ]; then
+      _primary_sans="$FONT_DIR/$FONT_PRIMARY"
+    elif [ -n "$FONT_PRIMARY" ] && [ -f "$MFFM_DIR/$FONT_PRIMARY" ]; then
+      _primary_sans="$MFFM_DIR/$FONT_PRIMARY"
+    elif [ -n "$FONT_PRIMARY" ] && [ -f "$FONT_PRIMARY" ]; then
+      _primary_sans="$FONT_PRIMARY"
+    fi
+    [ -z "$_primary_sans" ] && _primary_sans=$(find_first '*Regular*.ttf' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
+    [ -z "$_primary_sans" ] && _primary_sans=$(find_first '*.ttf' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
     [ -z "$_primary_sans" ] && _primary_sans=$(find_first '*.otf' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
     [ -z "$_primary_sans" ] && _primary_sans=$(find_first '*.ttc' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
     [ -z "$_primary_sans" ] && _primary_sans=$(find_first '*.woff2' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")

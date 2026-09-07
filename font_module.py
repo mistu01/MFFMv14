@@ -1909,6 +1909,48 @@ def inject_centered_colon(font_path: Path) -> bool:
         st6.SubstLookupRecord = [srec]
 
         c_lookup.SubTable = [st6]
+
+        space_glyphs = [g for g in ("space", "uni0020", "u0020", "thinspace", "uni2009", "u2009") if g in glyph_order]
+        if space_glyphs:
+            scov = Coverage()
+            scov.glyphs = sorted(space_glyphs, key=lambda g: font.getGlyphID(g))
+
+            # digit + space + colon + space + digit ("12 : 30")
+            st_space = ChainContextSubst()
+            st_space.Format = 3
+            st_space.BacktrackGlyphCount = 2
+            st_space.BacktrackCoverage = [scov, bcov]
+            st_space.InputGlyphCount = 1
+            st_space.InputCoverage = [icov]
+            st_space.LookAheadGlyphCount = 2
+            st_space.LookAheadCoverage = [scov, lcov]
+            st_space.SubstLookupRecord = [srec]
+            c_lookup.SubTable.append(st_space)
+
+            # digit + colon + space + digit ("12: 30")
+            st_lead = ChainContextSubst()
+            st_lead.Format = 3
+            st_lead.BacktrackGlyphCount = 1
+            st_lead.BacktrackCoverage = [bcov]
+            st_lead.InputGlyphCount = 1
+            st_lead.InputCoverage = [icov]
+            st_lead.LookAheadGlyphCount = 2
+            st_lead.LookAheadCoverage = [scov, lcov]
+            st_lead.SubstLookupRecord = [srec]
+            c_lookup.SubTable.append(st_lead)
+
+            # digit + space + colon + digit ("12 :30")
+            st_trail = ChainContextSubst()
+            st_trail.Format = 3
+            st_trail.BacktrackGlyphCount = 2
+            st_trail.BacktrackCoverage = [scov, bcov]
+            st_trail.InputGlyphCount = 1
+            st_trail.InputCoverage = [icov]
+            st_trail.LookAheadGlyphCount = 1
+            st_trail.LookAheadCoverage = [lcov]
+            st_trail.SubstLookupRecord = [srec]
+            c_lookup.SubTable.append(st_trail)
+
         gsub.LookupList.Lookup.append(c_lookup)
         c_lidx = len(gsub.LookupList.Lookup) - 1
 
@@ -2198,11 +2240,25 @@ def compile_fonts(
                     if pf.is_file():
                         payload.append(str(pf.relative_to(files_dir).as_posix()))
 
+        primary_file = None
+        if faces:
+            candidates_400 = [f for f in faces if f.style == "normal" and not f.condensed and f.weight == 400]
+            if candidates_400:
+                best = max(candidates_400, key=lambda f: (f.variable, -len(f.path.name)))
+            else:
+                normal_c = [f for f in faces if f.style == "normal" and not f.condensed]
+                best = normal_c[0] if normal_c else faces[0]
+            primary_rel = f"Sans/{best.path.name}"
+            if primary_rel in payload:
+                primary_file = primary_rel
+        if not primary_file:
+            primary_file = payload[0] if payload else "Sans/DroidSans.ttf"
+
         config = [
             f"FONT_MODE={shell_quote(mode)}",
             f"FONT_FAMILY={shell_quote(family)}",
             f"FONT_FILES={shell_quote(' '.join(payload))}",
-            f"FONT_PRIMARY={shell_quote(payload[0] if payload else 'Sans/DroidSans.ttf')}",
+            f"FONT_PRIMARY={shell_quote(primary_file)}",
             "VF_CONFIG_SCHEMA='2'",
         ]
         if mode == "variable":

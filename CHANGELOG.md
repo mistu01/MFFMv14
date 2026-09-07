@@ -3,6 +3,20 @@
 All notable changes to MFFMv14 are documented here. Dates use the `YYYY.MM.DD`
 versioning scheme the modules themselves carry.
 
+## 2026.09.07
+
+### Fixed
+- **Centered Colon Preservation with Table Optimization (`optimize_font_tables`)**:
+  - Removed `fontTools.subset.Subsetter` pass from `optimize_font_tables()`. The Subsetter re-indexing pass corrupted dynamically chained `calt` lookups with out-of-bounds indices and converted the `post` table to format 3.0, causing Android's HarfBuzz text shaper to discard the centered clock colon substitution.
+  - Safely pruned Zygote bloat tables (`DSIG`, `VDMX`, `hdmx`, `LTSH`, `PCLT`, etc.), stripped hint tables (`cvt `, `fpgm`, `prep`), normalized `gasp` to `0x000F`, and pruned Macintosh Roman name records without touching GSUB tables or `post` glyph names.
+  - Reordered font compilation pipeline in `compile_bundle` and `process-font` (`runtime_helper.py`): table optimization now runs before typography feature injection and feature freezing.
+- **Asymmetric Whitespace Matching for Clock Colons**:
+  - Expanded OpenType GSUB Format 6 contextual rules in `inject_centered_colon` to match asymmetric spacing patterns (`12: 30`, `12 :30`) in addition to standard `12:30` and `12 : 30`.
+  - Added whitespace support for `after_digit` colon rules (`12 :`).
+- **Primary Face Determination (`FONT_PRIMARY`)**:
+  - Fixed `FONT_PRIMARY` inadvertently selecting the Italic face when sorted alphabetically (e.g. `SchibstedGrotesk-Italic...` before `SchibstedGrotesk-Variable...`).
+  - Updated `font_module.py` and `template/customize.sh` to prioritize upright normal Regular faces.
+
 ## 2026.09.06
 
 ### Documentation & Public Release Architecture

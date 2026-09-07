@@ -298,26 +298,6 @@ def optimize_font_tables(font, keep_hinting: bool = False) -> bool:
             if len(font["name"].names) != initial_count:
                 modified = True
 
-    # 5. Subsetter pass to prune unreferenced components/dead glyphs and canonicalize ordering
-    try:
-        import fontTools.subset as ft_subset
-        options = ft_subset.Options()
-        options.drop_tables = list(set(options.drop_tables + list(ZYGOTE_BLOAT_TABLES)))
-        options.name_IDs = ["*"]
-        options.name_legacy = False
-        options.hinting = keep_hinting
-        options.notdef_outline = True
-        options.recalc_bounds = True
-        options.recalc_maxp = True
-        options.canonical_order = True
-
-        subsetter = ft_subset.Subsetter(options=options)
-        subsetter.populate(glyphs=font.getGlyphOrder())
-        subsetter.subset(font)
-        modified = True
-    except Exception:
-        pass
-
     return modified
 
 
@@ -760,10 +740,23 @@ def inject_centered_colon(
             st6.SubstLookupRecord = [srec]
             c_lookup.SubTable = [st6]
 
-            if rule_lower == "between_digits":
-                space_glyphs = [g for g in ("space", "uni0020", "u0020", "thinspace", "uni2009", "u2009") if g in glyph_order]
-                if space_glyphs:
-                    scov = Coverage(); scov.glyphs = sorted(space_glyphs, key=lambda g: font.getGlyphID(g))
+            space_glyphs = [g for g in ("space", "uni0020", "u0020", "thinspace", "uni2009", "u2009") if g in glyph_order]
+            if space_glyphs:
+                scov = Coverage(); scov.glyphs = sorted(space_glyphs, key=lambda g: font.getGlyphID(g))
+                if rule_lower in ("after_digit", "trailing", "after"):
+                    # digit + space + colon ("12 :")
+                    st_after_space = ChainContextSubst()
+                    st_after_space.Format = 3
+                    st_after_space.BacktrackGlyphCount = 2
+                    st_after_space.BacktrackCoverage = [scov, bcov]
+                    st_after_space.InputGlyphCount = 1
+                    st_after_space.InputCoverage = [icov]
+                    st_after_space.LookAheadGlyphCount = 0
+                    st_after_space.LookAheadCoverage = []
+                    st_after_space.SubstLookupRecord = [srec]
+                    c_lookup.SubTable.append(st_after_space)
+                else:
+                    # 1. digit + space + colon + space + digit ("12 : 30")
                     st_space = ChainContextSubst()
                     st_space.Format = 3
                     st_space.BacktrackGlyphCount = 2
@@ -774,6 +767,30 @@ def inject_centered_colon(
                     st_space.LookAheadCoverage = [scov, lcov]
                     st_space.SubstLookupRecord = [srec]
                     c_lookup.SubTable.append(st_space)
+
+                    # 2. digit + colon + space + digit ("12: 30")
+                    st_lead = ChainContextSubst()
+                    st_lead.Format = 3
+                    st_lead.BacktrackGlyphCount = 1
+                    st_lead.BacktrackCoverage = [bcov]
+                    st_lead.InputGlyphCount = 1
+                    st_lead.InputCoverage = [icov]
+                    st_lead.LookAheadGlyphCount = 2
+                    st_lead.LookAheadCoverage = [scov, lcov]
+                    st_lead.SubstLookupRecord = [srec]
+                    c_lookup.SubTable.append(st_lead)
+
+                    # 3. digit + space + colon + digit ("12 :30")
+                    st_trail = ChainContextSubst()
+                    st_trail.Format = 3
+                    st_trail.BacktrackGlyphCount = 2
+                    st_trail.BacktrackCoverage = [scov, bcov]
+                    st_trail.InputGlyphCount = 1
+                    st_trail.InputCoverage = [icov]
+                    st_trail.LookAheadGlyphCount = 1
+                    st_trail.LookAheadCoverage = [lcov]
+                    st_trail.SubstLookupRecord = [srec]
+                    c_lookup.SubTable.append(st_trail)
 
             gsub.LookupList.Lookup.append(c_lookup)
             c_lidx = len(gsub.LookupList.Lookup) - 1
@@ -1290,7 +1307,17 @@ def compile_bundle(
         if convert_otf and ("CFF " in font or "CFF2" in font or getattr(font, "sfntVersion", None) == "OTTO"):
             otf_to_ttf(font)
 
-        # 1. Feature freezing
+        # 1. Table optimization / Hinting stripping (clean font tables first)
+        if optimize_tables:
+            optimize_font_tables(font, keep_hinting=keep_hinting)
+        elif not keep_hinting:
+            remove_font_hinting(font)
+
+        # 2. Equalize clock digits (0-9)
+        if enable_tabular_digits:
+            equalize_clock_digits(font)
+
+        # 3. Feature freezing
         feat_target = None
         if category == "sans": feat_target = freeze_sans
         elif category == "mono": feat_target = freeze_mono
@@ -1299,11 +1326,7 @@ def compile_bundle(
         if feat_target:
             freeze_font_features(font, feat_target)
 
-        # 2. Equalize clock digits (0-9)
-        if enable_tabular_digits:
-            equalize_clock_digits(font)
-
-        # 3. Centered colon (Sans only)
+        # 4. Centered colon (Sans only)
         if category == "sans" and enable_centered_colon:
             inject_centered_colon(
                 font,
@@ -1312,15 +1335,9 @@ def compile_bundle(
                 rule=colon_rule,
             )
 
-        # 4. Name table sanitization
+        # 5. Name table sanitization
         if sanitize_names:
             sanitize_name_table(font)
-
-        # 5. Table optimization / Hinting stripping
-        if optimize_tables:
-            optimize_font_tables(font, keep_hinting=keep_hinting)
-        elif not keep_hinting:
-            remove_font_hinting(font)
 
         # 6. Metrics normalization
         if fix_metrics:
@@ -1588,10 +1605,14 @@ def main():
             font.flavor = None
         if not args.no_convert_otf and (args.convert_otf or args.inject_colon or "CFF " in font or "CFF2" in font or getattr(font, "sfntVersion", None) == "OTTO"):
             otf_to_ttf(font)
-        if args.freeze_features:
-            freeze_font_features(font, args.freeze_features)
+        if args.optimize_tables:
+            optimize_font_tables(font, keep_hinting=not args.no_hinting)
+        elif args.no_hinting:
+            remove_font_hinting(font)
         if args.equalize_digits:
             equalize_clock_digits(font, target_width=args.digit_width)
+        if args.freeze_features:
+            freeze_font_features(font, args.freeze_features)
         if args.inject_colon:
             inject_centered_colon(
                 font,
@@ -1601,10 +1622,6 @@ def main():
             )
         if args.sanitize_names:
             sanitize_name_table(font)
-        if args.optimize_tables:
-            optimize_font_tables(font, keep_hinting=not args.no_hinting)
-        elif args.no_hinting:
-            remove_font_hinting(font)
         if not args.no_fix_metrics:
             fix_font_metrics(font, mode=args.metrics_mode)
         font.save(out_f)
