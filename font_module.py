@@ -2244,10 +2244,13 @@ def compile_fonts(
         if faces:
             candidates_400 = [f for f in faces if f.style == "normal" and not f.condensed and f.weight == 400]
             if candidates_400:
-                best = max(candidates_400, key=lambda f: (f.variable, -len(f.path.name)))
+                best = max(candidates_400, key=lambda f: (f.variable, _face_preference_score(f)))
             else:
                 normal_c = [f for f in faces if f.style == "normal" and not f.condensed]
-                best = normal_c[0] if normal_c else faces[0]
+                if normal_c:
+                    best = max(normal_c, key=lambda f: (f.variable, _face_preference_score(f)))
+                else:
+                    best = max(faces, key=lambda f: (f.variable, _face_preference_score(f)))
             primary_rel = f"Sans/{best.path.name}"
             if primary_rel in payload:
                 primary_file = primary_rel

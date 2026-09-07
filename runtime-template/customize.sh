@@ -1935,7 +1935,6 @@ def main():
             enable_centered_colon=args.enable_centered_colon,
             convert_otf=not args.no_convert_otf,
             enable_tabular_digits=args.enable_tabular_digits,
-            optimize_tables=args.optimize_tables,
             colon_alignment=args.colon_alignment,
             colon_offset=args.colon_offset,
             colon_rule=args.colon_rule,
