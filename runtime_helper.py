@@ -246,59 +246,6 @@ def remove_font_hinting(font) -> None:
                 glyph.removeHinting()
 
 
-ZYGOTE_BLOAT_TABLES = (
-    "DSIG", "LTSH", "VDMX", "hdmx", "PCLT", "EBDT", "EBLC", "EBSC",
-    "bdat", "bloc", "bhed", "JSTF", "Feat", "Glat", "Gloc", "Silf",
-    "Sill", "FFTM", "TSI0", "TSI1", "TSI2", "TSI3", "TSI5", "prop",
-    "opbd", "kerx", "morx", "mort", "meta",
-)
-
-
-def optimize_font_tables(font, keep_hinting: bool = False) -> bool:
-    """Optimize font tables for Android Zygote memory footprint and rendering speed."""
-    modified = False
-
-    # 1. Drop bloat tables
-    for tag in ZYGOTE_BLOAT_TABLES:
-        if tag in font:
-            del font[tag]
-            modified = True
-
-    # 2. Hinting removal (if not keep_hinting)
-    if not keep_hinting:
-        hint_tables = ("cvt ", "fpgm", "prep", "hdmx", "LTSH", "VDMX")
-        for tag in hint_tables:
-            if tag in font:
-                del font[tag]
-                modified = True
-        if "glyf" in font:
-            for glyph in font["glyf"].glyphs.values():
-                if hasattr(glyph, "removeHinting"):
-                    glyph.removeHinting()
-                    modified = True
-
-    # 3. Clean and normalize gasp table for smooth subpixel anti-aliasing (0x000F)
-    if "gasp" in font:
-        try:
-            gasp_table = font["gasp"]
-            gasp_table.gaspRange = {0xFFFF: 0x000F}
-            modified = True
-        except Exception:
-            pass
-
-    # 4. Prune obsolete Macintosh Roman (platformID 1) duplicate name records if Windows Unicode (platformID 3) exists
-    if "name" in font and hasattr(font["name"], "names"):
-        has_win_records = any(rec.platformID == 3 for rec in font["name"].names)
-        if has_win_records:
-            initial_count = len(font["name"].names)
-            font["name"].names = [
-                rec for rec in font["name"].names
-                if rec.platformID != 1
-            ]
-            if len(font["name"].names) != initial_count:
-                modified = True
-
-    return modified
 
 
 def glyphs_to_quadratic(glyphs, max_err: float = 1.0, reverse_direction: bool = True) -> dict:
@@ -1228,7 +1175,6 @@ def compile_bundle(
     colon_offset: int = 0,
     colon_rule: str = "between_digits",
     metrics_mode: str = "safe",
-    optimize_tables: bool = False,
     freeze_sans: list[str] | str | None = None,
     freeze_mono: list[str] | str | None = None,
     freeze_serif: list[str] | str | None = None,
@@ -1307,10 +1253,8 @@ def compile_bundle(
         if convert_otf and ("CFF " in font or "CFF2" in font or getattr(font, "sfntVersion", None) == "OTTO"):
             otf_to_ttf(font)
 
-        # 1. Table optimization / Hinting stripping (clean font tables first)
-        if optimize_tables:
-            optimize_font_tables(font, keep_hinting=keep_hinting)
-        elif not keep_hinting:
+        # 1. Hinting stripping
+        if not keep_hinting:
             remove_font_hinting(font)
 
         # 2. Equalize clock digits (0-9)
@@ -1527,7 +1471,6 @@ def main():
     s_proc.add_argument("--freeze-features")
     s_proc.add_argument("--convert-otf", action="store_true", help="Convert CFF/OTF outlines to TrueType")
     s_proc.add_argument("--no-convert-otf", action="store_true", help="Skip OTF to TTF conversion")
-    s_proc.add_argument("--optimize-tables", action="store_true", help="Optimize tables and prune bloat for Zygote")
 
     s_comp = sub.add_parser("compile-bundle", help="Compile multiple font directories into unified indexed TTC")
     s_comp.add_argument("--out-dir", required=True)
@@ -1545,16 +1488,10 @@ def main():
     s_comp.add_argument("--colon-rule", choices=["between_digits", "after_digit", "always"], default="between_digits")
     s_comp.add_argument("--enable-tabular-digits", action="store_true", help="Equalize digit advance widths for wobble-free clock")
     s_comp.add_argument("--no-convert-otf", action="store_true", help="Do not convert CFF/OTF outlines to TrueType")
-    s_comp.add_argument("--optimize-tables", action="store_true", help="Optimize tables and prune bloat for Zygote")
     s_comp.add_argument("--freeze-sans")
     s_comp.add_argument("--freeze-mono")
     s_comp.add_argument("--freeze-serif")
     s_comp.add_argument("--freeze-bengali")
-
-    s_opt = sub.add_parser("optimize", help="Optimize font tables and prune bloat for Android Zygote")
-    s_opt.add_argument("--in", dest="input_file", required=True, help="Input font file")
-    s_opt.add_argument("--out", dest="output_file", help="Output font file (default overwrites input)")
-    s_opt.add_argument("--keep-hinting", action="store_true", help="Preserve TrueType bytecode hinting")
 
     s_otf2ttf = sub.add_parser("otf2ttf", help="Convert CFF/OTF font to TrueType font using cu2qu")
     s_otf2ttf.add_argument("--in", dest="input_file", required=True, help="Input OTF font")
@@ -1605,9 +1542,7 @@ def main():
             font.flavor = None
         if not args.no_convert_otf and (args.convert_otf or args.inject_colon or "CFF " in font or "CFF2" in font or getattr(font, "sfntVersion", None) == "OTTO"):
             otf_to_ttf(font)
-        if args.optimize_tables:
-            optimize_font_tables(font, keep_hinting=not args.no_hinting)
-        elif args.no_hinting:
+        if args.no_hinting:
             remove_font_hinting(font)
         if args.equalize_digits:
             equalize_clock_digits(font, target_width=args.digit_width)
@@ -1627,19 +1562,6 @@ def main():
         font.save(out_f)
         font.close()
         print(f"Processed {args.input_file} -> {out_f}")
-    elif args.cmd == "optimize":
-        from fontTools.ttLib import TTFont
-        out_f = args.output_file or args.input_file
-        font = TTFont(args.input_file)
-        if getattr(font, "flavor", None) is not None:
-            font.flavor = None
-        ok = optimize_font_tables(font, keep_hinting=args.keep_hinting)
-        font.save(out_f)
-        font.close()
-        if ok:
-            print(f"Optimized font tables: {args.input_file} -> {out_f}")
-        else:
-            print(f"No bloat tables found in {args.input_file}")
     elif args.cmd == "otf2ttf":
         from fontTools.ttLib import TTFont
         in_path = Path(args.input_file)

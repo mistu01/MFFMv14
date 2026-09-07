@@ -1648,19 +1648,7 @@ prepare_variable_config() {
           printf '#   - compact  : Forces classic ultra-tight FFIX3 metrics (2128/-550). Best for\n'
           printf '#                minimalist English-only setups. May clip tall foreign accents.\n'
           printf '#   - preserve : Retains the font designer original vertical metrics untouched.\n'
-          printf 'METRICS_MODE=safe\n\n'
-          printf '# ------------------------------------------------------------------------------\n'
-          printf '# 4. TABLE OPTIMIZATION & ZYGOTE RAM SAVER\n'
-          printf '# ------------------------------------------------------------------------------\n'
-          printf '# WHAT IT DOES:\n'
-          printf '#   Prunes dead, obsolete desktop tables (DSIG, VDMX, hdmx, LTSH, PCLT, EBDT/EBLC,\n'
-          printf '#   Mac Roman duplicates) to shrink font file size by 10-30%% and reduce RAM\n'
-          printf '#   usage in Android'\''s Zygote process for every running app.\n'
-          printf '#\n'
-          printf '# OPTIONS:\n'
-          printf '#   - no  : Keep all original font tables untouched. [Default]\n'
-          printf '#   - yes : Prune obsolete tables for smaller file size and RAM savings.\n'
-          printf 'ENABLE_ZYGOTE_OPTIMIZATION=no\n'
+          printf 'METRICS_MODE=safe\n'
         } >> "$VF_CONFIG_FILE"
       fi
     fi
@@ -1770,7 +1758,6 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
   _cfg_colon_rule=$(config_value COLON_RULE)
   _cfg_tabular_digits=$(config_value ENABLE_TABULAR_CLOCK_DIGITS)
   _cfg_metrics_mode=$(config_value METRICS_MODE)
-  _cfg_opt_tables=$(config_value ENABLE_ZYGOTE_OPTIMIZATION)
   _cfg_sans_f=$(config_value SANS_FREEZE_FEATURES)
   _cfg_mono_f=$(config_value MONO_FREEZE_FEATURES)
   _cfg_serif_f=$(config_value SERIF_FREEZE_FEATURES)
@@ -1784,9 +1771,6 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
   esac
   case "$_cfg_metrics_mode" in
     compact|preserve) _should_compile=1 ;;
-  esac
-  case "$_cfg_opt_tables" in
-    yes|YES|true|TRUE|1) _should_compile=1 ;;
   esac
   if [ -n "$_cfg_sans_f" ] || [ -n "$_cfg_mono_f" ] || [ -n "$_cfg_serif_f" ] || [ -n "$_cfg_beng_f" ]; then
     _should_compile=1
@@ -1808,12 +1792,6 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
       yes|YES|true|TRUE|1)
         _extra_compile_args="$_extra_compile_args --enable-tabular-digits"
         ui_print "    [+] Tabular clock digits equalization requested"
-        ;;
-    esac
-    case "$_cfg_opt_tables" in
-      yes|YES|true|TRUE|1)
-        _extra_compile_args="$_extra_compile_args --optimize-tables"
-        ui_print "    [+] Zygote table optimization requested"
         ;;
     esac
     [ -n "$_cfg_metrics_mode" ] && _extra_compile_args="$_extra_compile_args --metrics-mode $_cfg_metrics_mode"

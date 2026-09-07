@@ -129,26 +129,6 @@ Proportional number designs assign different advance widths to different numeral
 
 ---
 
-### 2.4 Zygote Table Optimization & Bloat Pruning
-
-#### The Problem
-`/system/fonts/DroidSans.ttf` is memory-mapped (`mmap`) into the **Zygote** root process and inherited by every running app and service. Many desktop fonts carry legacy tables from the 1990s that Android's font stack ignores:
-- `DSIG` (Digital Signature): Invalidated upon any modification; causes Minikin warnings.
-- `VDMX` and `hdmx`: Obsolete Windows CRT device metrics tables.
-- `LTSH`: Windows 3.1 linear threshold table.
-- `PCLT`: HP printer control language table.
-- `EBDT`, `EBLC`, `EBSC`: Embedded bitmap strikes adding megabytes of unneeded pixel data.
-- Duplicate Macintosh Roman (Platform ID 1) name records when Windows Unicode (Platform ID 3) records exist.
-
-#### Optimization Implementation
-When `ENABLE_ZYGOTE_OPTIMIZATION=yes` is specified, `runtime_helper.py` calls `optimize_font_tables()`:
-- Drops dead tables: `DSIG`, `LTSH`, `VDMX`, `hdmx`, `PCLT`, `EBDT`, `EBLC`, `EBSC`, `bdat`, `bloc`, `bhed`, `JSTF`, `Feat`, `Glat`, `Gloc`, `Silf`, `Sill`, `FFTM`, `TSI0`–`TSI5`, `prop`, `opbd`, `kerx`, `morx`, `mort`.
-- Strips Platform ID 1 (Macintosh) name records.
-- Standardizes anti-aliasing via `gasp` table flags (`0x000F`).
-- Canonicalizes TrueType table ordering using `fontTools.subset.Subsetter`.
-
----
-
 ## 3. Developer & Build Tooling Reference
 
 ### 3.1 `build.py` (PC Module Compiler)
@@ -218,7 +198,6 @@ mffm-helper <subcommand> [options]
 - **`equalize-digits --in <font> [--out <out>] ...`**: Equalizes numeral advance widths for lockscreen clocks.
 - **`freeze-features --in <font> --features <tags>`**: Bakes OpenType layout features into default glyphs.
 - **`otf2ttf --in <font.otf> [--out <font.ttf>]`**: Converts cubic PostScript (CFF) outlines to TrueType quadratic curves using `cu2qu`.
-- **`optimize --in <font> [--out <out>]`**: Prunes bloat tables for Zygote RAM performance.
 - **`process-font --in <font> ...`**: All-in-one font normalization pipeline.
 
 ---

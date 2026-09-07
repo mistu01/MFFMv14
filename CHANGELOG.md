@@ -5,6 +5,13 @@ versioning scheme the modules themselves carry.
 
 ## 2026.09.07
 
+### Removed
+- **Completely Dropped Zygote RAM & Table Optimizer**:
+  - Removed `optimize_font_tables()`, `ZYGOTE_BLOAT_TABLES`, and the `optimize` CLI command from `runtime_helper.py`.
+  - Removed `--optimize-tables` CLI flag and logic from `compile_bundle` and `process-font`.
+  - Removed `ENABLE_ZYGOTE_OPTIMIZATION` from configuration generator and runtime compiler forwarding in `template/customize.sh`.
+  - Standard bytecode hinting removal (`remove_font_hinting` / `--no-hinting`) remains fully supported and intact.
+
 ### Fixed
 - **Centered Colon Preservation with Table Optimization (`optimize_font_tables`)**:
   - Removed `fontTools.subset.Subsetter` pass from `optimize_font_tables()`. The Subsetter re-indexing pass corrupted dynamically chained `calt` lookups with out-of-bounds indices and converted the `post` table to format 3.0, causing Android's HarfBuzz text shaper to discard the centered clock colon substitution.

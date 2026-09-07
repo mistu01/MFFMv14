@@ -90,7 +90,6 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
 | `COLON_RULE` | `between_digits` | `between_digits` | Rule condition: `between_digits` (`12:30`), `after_digit` (for stacked 2-line clocks `12:` / `30`), or `always`. |
 | `ENABLE_TABULAR_CLOCK_DIGITS` | `no` | `yes` (if clock wobbles) | Equalizes digit widths (0–9) so lockscreen clocks never jump horizontally as minutes or seconds change. |
 | `METRICS_MODE` | `safe` | `safe` | Vertical metrics: `safe` prevents accent clipping with zero monospace inflation; `compact` forces tight FFIX3; `preserve` leaves original metrics untouched. |
-| `ENABLE_ZYGOTE_OPTIMIZATION` | `no` | `yes` (for size/RAM) | Prunes obsolete tables (`DSIG`, `VDMX`, `hdmx`, `LTSH`, `PCLT`, `EBDT`, Mac duplicates) to shrink font size by 10–30% and save Zygote RAM. |
 | `*_FREEZE_FEATURES` | *(empty)* | `ss01,zero` (user choice) | Freezes OpenType layout features (like slashed zero `0` or stylistic sets) permanently into default characters. |
 | `SANS_WGHT` / `SANS_WDTH` | *(auto)* | Leave unless custom | Explicit numeric weights (100–900) mapped to Android system font weight slots. |
 
@@ -120,13 +119,7 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
   - `METRICS_MODE=compact`: Forces classic ultra-tight FFIX3 metrics ($2128 / -550$). Best for English-only setups desiring maximum notification compactness.
   - `METRICS_MODE=preserve`: Leaves the font designer's original metric tables unaltered.
 
-#### 4. ⚡ Table Optimization & Zygote RAM Saver (`ENABLE_ZYGOTE_OPTIMIZATION`)
-- **The Problem**: Android memory-maps `/system/fonts/DroidSans.ttf` directly into the root **Zygote** process, where it is shared across every running app and system service. Desktop fonts often bundle dead tables from the 1990s (`DSIG`, `VDMX`, `hdmx`, `LTSH`, `PCLT`, `EBDT` bitmap strikes) and duplicate Macintosh Roman name records that waste RAM and cause Minikin logcat warnings.
-- **How to Use**:
-  - `ENABLE_ZYGOTE_OPTIMIZATION=no` (Default): Leaves all tables byte-for-byte untouched.
-  - `ENABLE_ZYGOTE_OPTIMIZATION=yes`: Strips obsolete tables, eliminates duplicate Mac Roman name records, normalizes subpixel rendering in `gasp`, and canonicalizes table ordering. Reduces font file size by 10–30% and saves memory in Zygote.
-
-#### 5. 🎨 OpenType Feature Freezing (`*_FREEZE_FEATURES`)
+#### 4. 🎨 OpenType Feature Freezing (`*_FREEZE_FEATURES`)
 - **The Problem**: Many professional fonts feature alternate characters (slashed zeros, curved lowercase `l`, single-story `a` and `g`, or geometric glyphs) hidden behind OpenType tags (`zero`, `ss01`–`ss20`, `cv01`–`cv99`). Android apps lack menus to activate these.
 - **How to Use**:
   - Check the discovered features list commented directly in your `.conf` file.
@@ -137,7 +130,7 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
     ```
   - Re-flash the font module ZIP to bake these alternates into the default glyphs system-wide!
 
-#### 6. ⚖️ Variable Font Weight Tuning
+#### 5. ⚖️ Variable Font Weight Tuning
 - For variable fonts, fine-tune the exact numeric weight mapped to each of Android's system weight tiers (100–900):
   ```sh
   SANS_WGHT="100 200 300 400 500 600 700 800 900"

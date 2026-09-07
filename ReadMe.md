@@ -32,8 +32,6 @@ Unlike legacy font modules that merely swap static TTF files, MFFMv14 introduces
   Injects an OpenType Chaining Contextual Substitution rule so clock times (`12:30`) display a vertically centered colon, without distorting normal text punctuation.
 - ⏱️ **Tabular Lockscreen Clock Digits**  
   Equalizes numeral advance widths (0–9) to stop lockscreen clocks from wobbling horizontally when minutes or seconds tick.
-- ⚡ **Zygote RAM & Table Optimizer**  
-  Prunes obsolete tables (`DSIG`, `VDMX`, `hdmx`, `LTSH`, `PCLT`, `EBDT`) and removes duplicate Macintosh Roman name records, shrinking font sizes by 10–30% and reducing memory usage in Android's root Zygote process.
 - 🎨 **OpenType Feature Freezing**  
   Bakes stylistic sets (`ss01`–`ss20`), slashed zero (`zero`), and character variants permanently into default glyphs system-wide.
 - 🛑 **Anti-Google Font Update Shield**  
@@ -105,9 +103,6 @@ ENABLE_TABULAR_CLOCK_DIGITS=yes
 # Zero-clipping safe vertical metrics
 METRICS_MODE=safe
 
-# Zygote RAM saver and table optimizer
-ENABLE_ZYGOTE_OPTIMIZATION=yes
-
 # OpenType feature freezing (slashed zero, stylistic sets)
 SANS_FREEZE_FEATURES=ss01,zero
 MONO_FREEZE_FEATURES=zero
@@ -123,7 +118,7 @@ For detailed documentation, refer to the specialized guides:
 | Document | Purpose & Contents |
 | :--- | :--- |
 | 📖 **[User & Configuration Guide](USAGE_GUIDE.md)** | Step-by-step module creation, full `/sdcard/MFFM/*.conf` parameter guide, on-device font additions, Google font update defense, and FAQ. |
-| 🛠️ **[Developer & Architecture Guide](docs/DEVELOPER.md)** | Internal architecture, typography mathematics (Decoupled Safe Metrics, GSUB Format 6 colon, tabular digits, Zygote pruning), and full CLI tool reference. |
+| 🛠️ **[Developer & Architecture Guide](docs/DEVELOPER.md)** | Internal architecture, typography mathematics (Decoupled Safe Metrics, GSUB Format 6 colon, tabular digits), and full CLI tool reference. |
 | 📜 **[Changelog](CHANGELOG.md)** | Complete version history, release notes, and milestone tracking. |
 
 ---
