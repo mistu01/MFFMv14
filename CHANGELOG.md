@@ -3,7 +3,7 @@
 All notable changes to MFFMv14 are documented here. Dates use the `YYYY.MM.DD`
 versioning scheme the modules themselves carry.
 
-## 2026.09.07
+## 2026.09.08
 
 ### Added
 - **Exhaustive Centered Colon Detection Engine**:
