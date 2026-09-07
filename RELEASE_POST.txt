@@ -1,5 +1,5 @@
 # MFFMv14 — Universal Android Font Module Builder
-Version: 2026.08.27
+Version: 2026.09.07
 
 Turn any font into a flashable module for Magisk, KernelSU, and APatch — on your PC or directly on your phone using Termux!
 
@@ -7,22 +7,22 @@ Turn any font into a flashable module for Magisk, KernelSU, and APatch — on yo
 ✨ What's New
 ━━━━━━━━━━━━━━━━━━━━━━
 
-📦 Standalone MFFM Runtime Module
-• No need to install Termux or set up pip just to flash fonts with extra languages/weights! Flash the `mffm-runtime` module once, and your phone will handle all on-device font scanning, metrics fixing, and TTC weight bundling automatically during module installation.
+🕒 Smarter Centered Clock Colon
+• Deeply inspects your font to detect any existing centered colon features automatically.
+• If your font already has one, MFFM leaves it intact and keeps your config file clean without redundant settings.
 
-🛡️ Google Font Update Blocker
-• Stops Google Play System updates from silently reverting your custom fonts.
-• Runs quietly in the background at boot.
-• Includes a handy one-tap "Action" button in KernelSU / APatch / MMRL to immediately restore your fonts without rebooting.
+📊 Clearer On-Screen Installation Progress
+• No more vague installer messages! The screen now clearly shows each feature as it processes, with straightforward success ([OK]) or warning ([!]) status indicators.
 
-🎨 Better Font & Multi-Language Support
-• Smarter weight detection: reads actual font weights directly from the font binary, so any filename works (even hashed cache names).
-• Fixed monospace and serif font priority so your code and text fonts don't clash.
-• Full variable font tuning: customize weights and widths in /sdcard/MFFM/*.conf.
-• Centered clock colons (12:30) and OpenType feature freezing (slashed zeros, custom alternates).
+🏷️ Live Active Feature Badges
+• Your root manager (Magisk, KernelSU, APatch, MMRL) now lists active features directly in the module description (e.g. `[Active: Centered Colon, Tabular Digits, Metrics: compact]`).
 
-🧹 Automatic Storage Cleanup
-• Runtime installer automatically cleans up its heavy package files after extraction, saving internal phone storage.
+📏 Compact Metrics by Default
+• Font vertical metrics now default to `compact` (classic tight FFIX3), keeping status bars and notifications neat and compact without unnecessary vertical padding.
+
+🔤 Better Font Selection & Layout Rules
+• Always prefers upright regular font faces over italics.
+• Contextual clock colon matching now seamlessly handles asymmetric spaces (`12: 30` and `12 :30`).
 
 ━━━━━━━━━━━━━━━━━━━━━━
 🚀 How to Build & Use
