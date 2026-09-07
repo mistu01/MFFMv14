@@ -167,6 +167,7 @@ def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) ->
             module_dir, result.family, result.mode,
             name=display, version=args.version, version_code=args.version_code,
             applied_features=result.applied_features,
+            injected_colon=result.injected_colon,
         )
         if result.applied_features and not any(f in slugify(display) for f in result.applied_features):
             file_slug = slugify(f"{display} {' '.join(result.applied_features)}")

@@ -244,6 +244,7 @@ def build_module(args: argparse.Namespace) -> Path | None:
             version=args.version,
             version_code=args.version_code,
             applied_features=result.applied_features,
+            injected_colon=result.injected_colon,
         )
         print("=" * 60)
         print("MFFMv14 module compiled")

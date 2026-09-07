@@ -5,6 +5,16 @@ versioning scheme the modules themselves carry.
 
 ## 2026.09.07
 
+### Added
+- **Exhaustive Centered Colon Detection Engine**:
+  - Implemented deep inspection across glyph names, Unicode codepoints (including Android lockscreen clock colon PUA `U+EE01`, `U+2236`, `U+2982`, etc.), OpenType GSUB lookups (Types 1, 3, 4, 5, 6, and 7 extension subtables), OpenType GPOS vertical placement shifts (`case`/`calt`), and glyph outline geometry (detecting native elevated colons aligned to digit centers).
+  - When the primary sans-serif font already includes a centered colon feature, all centered colon configuration settings are completely omitted from the generated `/sdcard/MFFM/*.conf` file, any obsolete colon settings are pruned, and subsequent typography sections are dynamically renumbered.
+- **Granular On-Screen Installation Progress & Status Feedback**:
+  - Replaced generic compilation messages during dynamic on-device compilation with minimal, per-feature progress indicators (`[*] Generating & injecting centered clock colon...`, `[*] Equalizing clock digits...`, `[*] Freezing OpenType features...`).
+  - Added explicit per-feature success (`[OK]`) and failure (`[!]`) status indicators along with exact cause diagnostics extracted from the compilation log.
+- **Dynamic Module Description Feature Reflection**:
+  - Automatically updates `module.prop`'s `description` during installation (and at build time) to clearly reflect all active features (e.g. `[Active: Centered Colon, Tabular Digits, Frozen: ss03, ss04, zero]`) cleanly and idempotently across re-flashes.
+
 ### Removed
 - **Completely Dropped Zygote RAM & Table Optimizer**:
   - Removed `optimize_font_tables()`, `ZYGOTE_BLOAT_TABLES`, and the `optimize` CLI command from `runtime_helper.py`.

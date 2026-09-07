@@ -1118,7 +1118,12 @@ reformat_config_file() {
   local conf="$VF_CONFIG_FILE"
   [ -n "$conf" ] && [ -f "$conf" ] || return 0
 
-  awk '
+  local _strip_colon=0
+  if [ "$_has_col" = "true" ]; then
+    _strip_colon=1
+  fi
+
+  awk -v strip_colon="$_strip_colon" '
   BEGIN {
     profiles[1] = "SANS_UPRIGHT"; titles["SANS_UPRIGHT"] = "SANS-SERIF / UPRIGHT"
     profiles[2] = "CONDENSED_UPRIGHT"; titles["CONDENSED_UPRIGHT"] = "CONDENSED / UPRIGHT"
@@ -1133,6 +1138,7 @@ reformat_config_file() {
     in_header = 1
     in_typo = 0
     seen_typo_banner = 0
+    in_colon_block = 0
   }
 
   function get_profile(line,   p, k) {
@@ -1157,7 +1163,7 @@ reformat_config_file() {
     }
 
     # 2. Check if line starts ADVANCED TYPOGRAPHY section
-    if (line ~ /ADVANCED TYPOGRAPHY/ || line ~ /^#[ \t]*1\.[ \t]*CENTERED CLOCK COLON/) {
+    if (line ~ /ADVANCED TYPOGRAPHY/ || line ~ /^#[ \t]*1\.[ \t]*(CENTERED CLOCK COLON|TABULAR CLOCK DIGITS)/) {
       in_typo = 1
     }
 
@@ -1182,6 +1188,26 @@ reformat_config_file() {
 
     # If it is inside typo section
     if (in_typo) {
+      if (strip_colon == 1) {
+        if (line ~ /^#[ \t]*1\.[ \t]*CENTERED CLOCK COLON/) {
+          in_colon_block = 1
+          next
+        }
+        if (in_colon_block) {
+          if (line ~ /^#[ \t]*[12]\.[ \t]*TABULAR CLOCK DIGITS/) {
+            in_colon_block = 0
+          } else {
+            next
+          }
+        }
+        if (line ~ /^[ \t]*(ENABLE_CENTERED_COLON|COLON_ALIGNMENT|COLON_OFFSET|COLON_RULE)[ \t]*=/) {
+          next
+        }
+        if (line ~ /^#[ \t]*2\.[ \t]*TABULAR CLOCK DIGITS/) sub(/2\./, "1.", line)
+        if (line ~ /^#[ \t]*3\.[ \t]*SMART METRIC/) sub(/3\./, "2.", line)
+        if (line ~ /^#[ \t]*4\.[ \t]*OPENTYPE FEATURE/) sub(/4\./, "3.", line)
+      }
+
       if (line ~ /ADVANCED TYPOGRAPHY/) {
         typo[typo_count++] = "# =============================================================================="
         typo[typo_count++] = "# ADVANCED TYPOGRAPHY & LOCKSCREEN CLOCK SETTINGS"
@@ -1246,6 +1272,52 @@ reformat_config_file() {
     }
   }
   ' "$conf" > "$conf.tmp" && mv -f "$conf.tmp" "$conf"
+}
+
+update_installed_module_description() {
+  local prop_file="$MODPATH/module.prop"
+  [ -f "$prop_file" ] || return 0
+
+  local current_desc
+  current_desc=$(grep '^description=' "$prop_file" 2>/dev/null | cut -d= -f2-)
+  [ -z "$current_desc" ] && return 0
+
+  # Strip any previous active tag to stay idempotent across reflashes
+  local base_desc
+  base_desc=$(printf '%s' "$current_desc" | sed -E 's/[[:space:]]*\[Active:.*\]//; s/[[:space:]]*\[Features:.*\]//; s/[[:space:]]*\|[[:space:]]*Features:.*//')
+
+  local active_feats=""
+  if [ "$_applied_colon" = "1" ]; then
+    active_feats="Centered Colon"
+  elif [ "$_has_col" = "true" ]; then
+    active_feats="Centered Colon (native)"
+  fi
+
+  if [ "$_applied_tabular" = "1" ]; then
+    active_feats="${active_feats:+$active_feats, }Tabular Digits"
+  fi
+
+  local frozen_summary=""
+  [ -n "$_cfg_sans_f" ] && frozen_summary="Sans: $_cfg_sans_f"
+  [ -n "$_cfg_mono_f" ] && frozen_summary="${frozen_summary:+$frozen_summary, }Mono: $_cfg_mono_f"
+  [ -n "$_cfg_serif_f" ] && frozen_summary="${frozen_summary:+$frozen_summary, }Serif: $_cfg_serif_f"
+  [ -n "$_cfg_beng_f" ] && frozen_summary="${frozen_summary:+$frozen_summary, }Bengali: $_cfg_beng_f"
+  if [ -n "$frozen_summary" ] && [ "$_applied_freeze" = "1" ]; then
+    active_feats="${active_feats:+$active_feats, }Frozen: $frozen_summary"
+  fi
+
+  if [ -n "$_cfg_metrics_mode" ] && [ "$_cfg_metrics_mode" != "preserve" ]; then
+    active_feats="${active_feats:+$active_feats, }Metrics: $_cfg_metrics_mode"
+  fi
+
+  if [ -n "$active_feats" ]; then
+    local new_desc="$base_desc [Active: $active_feats]"
+    awk -v nd="$new_desc" '
+      /^description=/ { print "description=" nd; next }
+      { print }
+    ' "$prop_file" > "$prop_file.tmp" && mv -f "$prop_file.tmp" "$prop_file"
+    ui_print "    Active features : $active_feats"
+  fi
 }
 
 reset_config_value() {
@@ -1579,8 +1651,10 @@ prepare_variable_config() {
     [ -z "$_primary_sans" ] && _primary_sans=$(find_first '*.woff' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
     if [ -n "$_primary_sans" ]; then
       local _has_col
-      _has_col=$("$_helper" check-colon "$_primary_sans" 2>/dev/null)
-      if ! grep -q "^[[:space:]]*ENABLE_CENTERED_COLON[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+      _has_col=$("$_helper" check-colon "$_primary_sans" "$FONT_DIR/Sans" "$MFFM_DIR/Sans" 2>/dev/null)
+      export _has_col
+
+      if ! grep -q "ADVANCED TYPOGRAPHY" "$VF_CONFIG_FILE" 2>/dev/null; then
         {
           printf '\n# ==============================================================================\n'
           printf '# ADVANCED TYPOGRAPHY & LOCKSCREEN CLOCK SETTINGS\n'
@@ -1588,41 +1662,59 @@ prepare_variable_config() {
           printf '# NOTE: All options below are optional! If you are unsure, leave them at defaults.\n'
           printf '# After modifying any value, simply re-flash this module in your root manager.\n'
           printf '# ==============================================================================\n\n'
+        } >> "$VF_CONFIG_FILE"
+      fi
+
+      if [ "$_has_col" = "true" ]; then
+        sed -i -E '/^[[:space:]]*(ENABLE_CENTERED_COLON|COLON_ALIGNMENT|COLON_OFFSET|COLON_RULE)[[:space:]]*=/d' "$VF_CONFIG_FILE" 2>/dev/null
+      else
+        if ! grep -q "^[[:space:]]*ENABLE_CENTERED_COLON[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+          {
+            printf '# ------------------------------------------------------------------------------\n'
+            printf '# 1. CENTERED CLOCK COLON (for Lockscreen & Status Bar)\n'
+            printf '# ------------------------------------------------------------------------------\n'
+            printf '# WHAT IT DOES:\n'
+            printf '#   Standard text fonts position the colon (:) low on the baseline for punctuation.\n'
+            printf '#   On lockscreen clocks (e.g. 12:30), this makes the colon look sunken and awkward.\n'
+            printf '#   Enabling this dynamically generates and injects a centered clock colon.\n'
+            printf '#\n'
+            printf '# WHEN TO CHOOSE:\n'
+            printf '#   - yes : If your clock colon sits too low or looks uneven between digits.\n'
+            printf '#   - no  : Keep the native font colon, or if the font already has one. [Default]\n'
+            printf 'ENABLE_CENTERED_COLON=no\n\n'
+            printf '# COLON ALIGNMENT:\n'
+            printf '#   Vertical reference point for the colon center:\n'
+            printf '#   - center     : Centers against clock digits (0-9). [Recommended]\n'
+            printf '#   - cap_height : Centers against capital letters (A-Z).\n'
+            printf '#   - x_height   : Centers against lowercase letters (a-z).\n'
+            printf 'COLON_ALIGNMENT=center\n\n'
+            printf '# COLON VERTICAL OFFSET:\n'
+            printf '#   Fine-tune vertical height (+/- in font units) if needed by your OEM ROM:\n'
+            printf '#   - 0          : Automatic optical center. [Recommended]\n'
+            printf '#   - +20, +40   : Shift colon higher.\n'
+            printf '#   - -20, -40   : Shift colon lower.\n'
+            printf 'COLON_OFFSET=0\n\n'
+            printf '# COLON TRIGGER RULE:\n'
+            printf '#   Controls when the centered colon appears so normal sentences stay untouched:\n'
+            printf '#   - between_digits : Only triggers between numbers (e.g. 12:30). [Recommended]\n'
+            printf '#   - after_digit    : Triggers after any number (e.g. 12:). Best for 2-line stacked clocks!\n'
+            printf '#   - always         : Replaces all colons system-wide.\n'
+            printf 'COLON_RULE=between_digits\n\n'
+          } >> "$VF_CONFIG_FILE"
+        fi
+      fi
+
+      local _tab_sec=2 _met_sec=3 _feat_sec=4
+      if [ "$_has_col" = "true" ]; then
+        _tab_sec=1
+        _met_sec=2
+        _feat_sec=3
+      fi
+
+      if ! grep -q "^[[:space:]]*ENABLE_TABULAR_CLOCK_DIGITS[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+        {
           printf '# ------------------------------------------------------------------------------\n'
-          printf '# 1. CENTERED CLOCK COLON (for Lockscreen & Status Bar)\n'
-          printf '# ------------------------------------------------------------------------------\n'
-          printf '# WHAT IT DOES:\n'
-          printf '#   Standard text fonts position the colon (:) low on the baseline for punctuation.\n'
-          printf '#   On lockscreen clocks (e.g. 12:30), this makes the colon look sunken and awkward.\n'
-          printf '#   Enabling this dynamically generates and injects a centered clock colon.\n'
-          printf '#\n'
-          printf '# WHEN TO CHOOSE:\n'
-          printf '#   - yes : If your clock colon sits too low or looks uneven between digits.\n'
-          printf '#   - no  : Keep the native font colon, or if the font already has one. [Default]\n'
-          if [ "$_has_col" = "true" ]; then
-            printf '# (Note: This font already appears to have a centered colon.)\n'
-          fi
-          printf 'ENABLE_CENTERED_COLON=no\n\n'
-          printf '# COLON ALIGNMENT:\n'
-          printf '#   Vertical reference point for the colon center:\n'
-          printf '#   - center     : Centers against clock digits (0-9). [Recommended]\n'
-          printf '#   - cap_height : Centers against capital letters (A-Z).\n'
-          printf '#   - x_height   : Centers against lowercase letters (a-z).\n'
-          printf 'COLON_ALIGNMENT=center\n\n'
-          printf '# COLON VERTICAL OFFSET:\n'
-          printf '#   Fine-tune vertical height (+/- in font units) if needed by your OEM ROM:\n'
-          printf '#   - 0          : Automatic optical center. [Recommended]\n'
-          printf '#   - +20, +40   : Shift colon higher.\n'
-          printf '#   - -20, -40   : Shift colon lower.\n'
-          printf 'COLON_OFFSET=0\n\n'
-          printf '# COLON TRIGGER RULE:\n'
-          printf '#   Controls when the centered colon appears so normal sentences stay untouched:\n'
-          printf '#   - between_digits : Only triggers between numbers (e.g. 12:30). [Recommended]\n'
-          printf '#   - after_digit    : Triggers after any number (e.g. 12:). Best for 2-line stacked clocks!\n'
-          printf '#   - always         : Replaces all colons system-wide.\n'
-          printf 'COLON_RULE=between_digits\n\n'
-          printf '# ------------------------------------------------------------------------------\n'
-          printf '# 2. TABULAR CLOCK DIGITS (Eliminates Clock Number Wobble / Jitter)\n'
+          printf '# %s. TABULAR CLOCK DIGITS (Eliminates Clock Number Wobble / Jitter)\n' "$_tab_sec"
           printf '# ------------------------------------------------------------------------------\n'
           printf '# WHAT IT DOES:\n'
           printf '#   In standard proportional fonts, "1" is narrower than "0" or "8". When the\n'
@@ -1633,8 +1725,13 @@ prepare_variable_config() {
           printf '#   - yes : If your lockscreen clock numbers jitter, shift, or wobble horizontally.\n'
           printf '#   - no  : If you prefer natural proportional digit spacing in apps. [Default]\n'
           printf 'ENABLE_TABULAR_CLOCK_DIGITS=no\n\n'
+        } >> "$VF_CONFIG_FILE"
+      fi
+
+      if ! grep -q "^[[:space:]]*METRICS_MODE[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+        {
           printf '# ------------------------------------------------------------------------------\n'
-          printf '# 3. SMART METRIC HARMONIZATION (Zero Accent / Diacritic Clipping)\n'
+          printf '# %s. SMART METRIC HARMONIZATION (Zero Accent / Diacritic Clipping)\n' "$_met_sec"
           printf '# ------------------------------------------------------------------------------\n'
           printf '# WHAT IT DOES:\n'
           printf '#   Controls vertical font spacing, line height, and status bar padding.\n'
@@ -1662,9 +1759,11 @@ prepare_variable_config() {
         --serif-dir "$FONT_DIR/Serif" --serif-dir "$MFFM_DIR/Serif" \
         --bengali-dir "$FONT_DIR/Bengali" --bengali-dir "$MFFM_DIR/Bengali" 2>/dev/null)
       if [ -n "$_feat_report" ]; then
+        local _fr_num=4
+        [ "$_has_col" = "true" ] && _fr_num=3
         {
           printf '\n# ------------------------------------------------------------------------------\n'
-          printf '# 4. OPENTYPE FEATURE FREEZING (Stylistic Alternates)\n'
+          printf '# %s. OPENTYPE FEATURE FREEZING (Stylistic Alternates)\n' "$_fr_num"
           printf '# ------------------------------------------------------------------------------\n'
           printf '# WHAT IT DOES:\n'
           printf '#   Bakes special character designs (like slashed zero, curved "l", single-story\n'
@@ -1776,13 +1875,20 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
     _should_compile=1
   fi
 
+  local _applied_colon=0
+  local _applied_tabular=0
+  local _applied_freeze=0
+  local _applied_metrics=0
+
   if [ "$_should_compile" = "1" ]; then
     ui_print "- Dynamic compilation via MFFM Runtime..."
     _extra_compile_args=""
+    local _req_colon=0 _req_tabular=0 _req_freeze=0 _req_metrics=0
     case "$_cfg_colon" in
       yes|YES|true|TRUE|1)
+        _req_colon=1
         _extra_compile_args="$_extra_compile_args --enable-centered-colon"
-        ui_print "    [+] Centered colon injection requested"
+        ui_print "    [*] Generating & injecting centered clock colon..."
         [ -n "$_cfg_colon_align" ] && _extra_compile_args="$_extra_compile_args --colon-alignment $_cfg_colon_align"
         [ -n "$_cfg_colon_offset" ] && _extra_compile_args="$_extra_compile_args --colon-offset $_cfg_colon_offset"
         [ -n "$_cfg_colon_rule" ] && _extra_compile_args="$_extra_compile_args --colon-rule $_cfg_colon_rule"
@@ -1790,30 +1896,71 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
     esac
     case "$_cfg_tabular_digits" in
       yes|YES|true|TRUE|1)
+        _req_tabular=1
         _extra_compile_args="$_extra_compile_args --enable-tabular-digits"
-        ui_print "    [+] Tabular clock digits equalization requested"
+        ui_print "    [*] Equalizing clock digits for tabular spacing..."
         ;;
     esac
-    [ -n "$_cfg_metrics_mode" ] && _extra_compile_args="$_extra_compile_args --metrics-mode $_cfg_metrics_mode"
-    [ -n "$_cfg_sans_f" ] && _extra_compile_args="$_extra_compile_args --freeze-sans $_cfg_sans_f" && ui_print "    [+] Freezing Sans features: $_cfg_sans_f"
-    [ -n "$_cfg_mono_f" ] && _extra_compile_args="$_extra_compile_args --freeze-mono $_cfg_mono_f" && ui_print "    [+] Freezing Mono features: $_cfg_mono_f"
-    [ -n "$_cfg_serif_f" ] && _extra_compile_args="$_extra_compile_args --freeze-serif $_cfg_serif_f" && ui_print "    [+] Freezing Serif features: $_cfg_serif_f"
-    [ -n "$_cfg_beng_f" ] && _extra_compile_args="$_extra_compile_args --freeze-bengali $_cfg_beng_f" && ui_print "    [+] Freezing Bengali features: $_cfg_beng_f"
+    if [ -n "$_cfg_metrics_mode" ] && [ "$_cfg_metrics_mode" != "preserve" ]; then
+      _req_metrics=1
+      _extra_compile_args="$_extra_compile_args --metrics-mode $_cfg_metrics_mode"
+      ui_print "    [*] Harmonizing font metrics (mode: $_cfg_metrics_mode)..."
+    elif [ -n "$_cfg_metrics_mode" ]; then
+      _extra_compile_args="$_extra_compile_args --metrics-mode $_cfg_metrics_mode"
+    fi
+    if [ -n "$_cfg_sans_f" ]; then _req_freeze=1; _extra_compile_args="$_extra_compile_args --freeze-sans $_cfg_sans_f"; ui_print "    [*] Freezing Sans features: $_cfg_sans_f..."; fi
+    if [ -n "$_cfg_mono_f" ]; then _req_freeze=1; _extra_compile_args="$_extra_compile_args --freeze-mono $_cfg_mono_f"; ui_print "    [*] Freezing Mono features: $_cfg_mono_f..."; fi
+    if [ -n "$_cfg_serif_f" ]; then _req_freeze=1; _extra_compile_args="$_extra_compile_args --freeze-serif $_cfg_serif_f"; ui_print "    [*] Freezing Serif features: $_cfg_serif_f..."; fi
+    if [ -n "$_cfg_beng_f" ]; then _req_freeze=1; _extra_compile_args="$_extra_compile_args --freeze-bengali $_cfg_beng_f"; ui_print "    [*] Freezing Bengali features: $_cfg_beng_f..."; fi
 
+    local _comp_log="/dev/.mffm_compile_output.log"
+    rm -f "$_comp_log" 2>/dev/null
     "$_helper" compile-bundle \
       --out-dir "$FONT_DIR" \
       --sans-dir "$FONT_DIR/Sans" --sans-dir "$MFFM_DIR/Sans" --sans-dir "$FONT_DIR" \
       --mono-dir "$FONT_DIR/Monospace" --mono-dir "$MFFM_DIR/Monospace" \
       --serif-dir "$FONT_DIR/Serif" --serif-dir "$MFFM_DIR/Serif" \
       --bengali-dir "$FONT_DIR/Bengali" --bengali-dir "$MFFM_DIR/Bengali" \
-      $_extra_compile_args >> "$LOG_FILE" 2>&1
+      $_extra_compile_args > "$_comp_log" 2>&1
     _compile_ret=$?
+    cat "$_comp_log" >> "$LOG_FILE" 2>/dev/null
     if [ "$_compile_ret" = "0" ] && [ -f "$FONT_DIR/font-config.sh" ]; then
       . "$FONT_DIR/font-config.sh"
       FONT_FILES="DroidSans.ttf"
-    elif [ "$_compile_ret" != "0" ]; then
+      if [ "$_req_colon" = "1" ]; then
+        _applied_colon=1
+        ui_print "    [OK] Centered clock colon injected"
+      fi
+      if [ "$_req_tabular" = "1" ]; then
+        _applied_tabular=1
+        ui_print "    [OK] Tabular clock digits equalized"
+      fi
+      if [ "$_req_freeze" = "1" ]; then
+        _applied_freeze=1
+        local _fr_summary=""
+        [ -n "$_cfg_sans_f" ] && _fr_summary="Sans: $_cfg_sans_f"
+        [ -n "$_cfg_mono_f" ] && _fr_summary="${_fr_summary:+$_fr_summary, }Mono: $_cfg_mono_f"
+        [ -n "$_cfg_serif_f" ] && _fr_summary="${_fr_summary:+$_fr_summary, }Serif: $_cfg_serif_f"
+        [ -n "$_cfg_beng_f" ] && _fr_summary="${_fr_summary:+$_fr_summary, }Bengali: $_cfg_beng_f"
+        ui_print "    [OK] OpenType features frozen ($_fr_summary)"
+      fi
+      if [ "$_req_metrics" = "1" ]; then
+        _applied_metrics=1
+        ui_print "    [OK] Font metrics harmonized (mode: $_cfg_metrics_mode)"
+      fi
+      ui_print "    [OK] Dynamic compilation completed successfully"
+    else
+      [ "$_req_colon" = "1" ] && ui_print "    [!] Centered colon injection failed"
+      [ "$_req_tabular" = "1" ] && ui_print "    [!] Tabular clock digits equalization failed"
+      [ "$_req_freeze" = "1" ] && ui_print "    [!] OpenType feature freezing failed"
+      [ "$_req_metrics" = "1" ] && ui_print "    [!] Font metrics harmonization failed"
       status_warn "Dynamic compilation failed (exit $_compile_ret); see $LOG_FILE"
+      local _err_snippet
+      _err_snippet=$(grep -iE 'error|exception|traceback' "$_comp_log" 2>/dev/null | tail -n 1)
+      [ -n "$_err_snippet" ] && ui_print "    [!] Cause: $_err_snippet"
+      ui_print "    [!] Reverting to bundled fonts without dynamic modifications"
     fi
+    rm -f "$_comp_log" 2>/dev/null
   fi
 fi
 
@@ -2853,6 +3000,8 @@ fi
 section "5/5" "Running custom local scripts"
 
 run_custom_scripts
+
+update_installed_module_description
 
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 for script in service.sh uninstall.sh post-mount.sh action.sh; do

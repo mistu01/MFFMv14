@@ -329,38 +329,230 @@ def otf_to_ttf(tt_font, post_format: float = 2.0, max_err: float = 1.0, reverse_
     return True
 
 
+COLON_GLYPH_PATTERNS = re.compile(
+    r"^(colon[._-](case|cent|cap|mid|vert|uc|up|alt|tab|tf|tnum|cv|ss)|(case|cent|cap|mid|vert)[._-]colon|uniEE01|glyphEE01|uEE01|ratio$)",
+    re.IGNORECASE,
+)
+
+COLON_UNICODES = (
+    0xEE01,  # Android clock colon PUA (Google Sans / Roboto / system clock)
+    0x2236,  # RATIO (∶)
+    0x2982,  # Z NOTATION TYPE COLON (⦂)
+    0xA789,  # MODIFIER LETTER COLON (꞉)
+    0xFE30,  # PRESENTATION FORM FOR VERTICAL TWO DOT LEADER (︰)
+)
+
+
+def _unwrap_subtables(subtables):
+    unwrapped = []
+    for st in subtables:
+        if st is None:
+            continue
+        if hasattr(st, "ExtSubTable") and st.ExtSubTable is not None:
+            unwrapped.append(st.ExtSubTable)
+        else:
+            unwrapped.append(st)
+    return unwrapped
+
+
 def font_has_centered_colon(font_or_path) -> bool:
+    """Exhaustively inspect whether a font or font collection implements a centered or clock colon."""
     from fontTools.ttLib import TTFont
-    should_close = False
+    from fontTools.pens.boundsPen import BoundsPen
+
     if isinstance(font_or_path, (str, Path)):
+        p = Path(font_or_path)
+        if p.is_dir():
+            for child in sorted(p.iterdir()):
+                if child.is_file() and child.suffix.lower() in SUPPORTED_EXTENSIONS:
+                    if font_has_centered_colon(child):
+                        return True
+            return False
+        if not p.is_file():
+            return False
         try:
-            font = TTFont(str(font_or_path), lazy=True)
+            font = TTFont(str(p), lazy=True)
             should_close = True
         except Exception:
-            return True
+            try:
+                from fontTools.ttLib import TTCollection
+                ttc = TTCollection(str(p))
+                for f in ttc.fonts:
+                    if font_has_centered_colon(f):
+                        return True
+                return False
+            except Exception:
+                return False
     else:
         font = font_or_path
+        should_close = False
 
     try:
-        glyph_order = font.getGlyphOrder()
-        for name in ("colon.case", "colon.centered", "colon.cap", "colon.case.tf", "colon.centered.tf"):
-            if name in glyph_order:
+        glyph_order = set(font.getGlyphOrder())
+        cmap = font.getBestCmap() if hasattr(font, "getBestCmap") else {}
+        if not cmap and "cmap" in font:
+            cmap = font["cmap"].getBestCmap() or {}
+
+        colon_glyph = cmap.get(0x003A, "colon")
+        target_colons = {colon_glyph, "colon", "colon.tf", "colon.tab"}
+
+        # 1. Direct glyph names for centered/case/clock colon variants
+        for name in glyph_order:
+            if name in target_colons:
+                continue
+            if COLON_GLYPH_PATTERNS.search(name):
                 return True
+
+        # 2. Unicode codepoints (PUA clock colon, ratio)
+        if cmap:
+            glyph_set = font.getGlyphSet() if hasattr(font, "getGlyphSet") else None
+            for cp in COLON_UNICODES:
+                mapped_glyph = cmap.get(cp)
+                if mapped_glyph and mapped_glyph in glyph_order:
+                    if glyph_set is not None and mapped_glyph in glyph_set:
+                        try:
+                            pen = BoundsPen(glyph_set)
+                            glyph_set[mapped_glyph].draw(pen)
+                            if pen.bounds:
+                                return True
+                        except Exception:
+                            return True
+                    else:
+                        return True
+
+        # 3. OpenType GSUB table substitutions
         if "GSUB" in font and font["GSUB"].table is not None:
             gsub = font["GSUB"].table
-            if gsub.FeatureList and gsub.FeatureList.FeatureRecord:
-                records = {rec.FeatureTag: rec.Feature for rec in gsub.FeatureList.FeatureRecord if rec.FeatureTag}
-                if "case" in records:
-                    lookups = getattr(gsub.LookupList, "Lookup", [])
-                    for lidx in records["case"].LookupListIndex:
-                        if lidx < len(lookups):
-                            for st in getattr(lookups[lidx], "SubTable", []):
-                                mapping = getattr(st, "mapping", {})
-                                if "colon" in mapping:
+            feature_list = getattr(gsub, "FeatureList", None)
+            lookup_list = getattr(gsub, "LookupList", None)
+            if feature_list and lookup_list and feature_list.FeatureRecord:
+                features_to_check = {
+                    rec.FeatureTag: rec.Feature
+                    for rec in feature_list.FeatureRecord
+                    if rec.FeatureTag
+                }
+                lookups = getattr(lookup_list, "Lookup", [])
+
+                for tag, feat in features_to_check.items():
+                    is_candidate = bool(
+                        tag in ("case", "calt", "clig", "liga", "tnum", "locl")
+                        or tag.startswith(("ss", "cv"))
+                    )
+                    if not is_candidate:
+                        continue
+
+                    for lidx in feat.LookupListIndex:
+                        if lidx >= len(lookups):
+                            continue
+                        lookup = lookups[lidx]
+                        subtables = _unwrap_subtables(getattr(lookup, "SubTable", []))
+
+                        for st in subtables:
+                            # SingleSubst
+                            mapping = getattr(st, "mapping", {})
+                            for src_g, dst_g in mapping.items():
+                                if src_g in target_colons:
+                                    if tag in ("case", "calt", "tnum") or COLON_GLYPH_PATTERNS.search(dst_g):
+                                        return True
+
+                            # AlternateSubst
+                            alternates = getattr(st, "alternates", {})
+                            for src_g, alts in alternates.items():
+                                if src_g in target_colons:
+                                    if tag in ("case", "calt") or any(COLON_GLYPH_PATTERNS.search(a) for a in alts):
+                                        return True
+
+                            # LigatureSubst
+                            ligatures = getattr(st, "ligatures", {})
+                            for first_g, lig_list in ligatures.items():
+                                for lig in lig_list:
+                                    comps = [first_g] + list(getattr(lig, "Component", []))
+                                    if any(c in target_colons for c in comps):
+                                        if any(c.isdigit() or "zero" in c or "one" in c for c in comps):
+                                            return True
+
+                            # ContextSubst / ChainContextSubst (Format 3 coverage)
+                            input_coverages = getattr(st, "InputCoverage", [])
+                            for icov in input_coverages:
+                                cov_glyphs = getattr(icov, "glyphs", [])
+                                if any(c in target_colons for c in cov_glyphs):
                                     return True
+
+                            coverage = getattr(st, "Coverage", None)
+                            if coverage:
+                                cov_glyphs = getattr(coverage, "glyphs", [])
+                                if tag in ("case", "calt") and any(c in target_colons for c in cov_glyphs):
+                                    return True
+
+        # 4. OpenType GPOS vertical positioning shifts
+        if "GPOS" in font and font["GPOS"].table is not None:
+            gpos = font["GPOS"].table
+            feature_list = getattr(gpos, "FeatureList", None)
+            lookup_list = getattr(gpos, "LookupList", None)
+            if feature_list and lookup_list and feature_list.FeatureRecord:
+                gpos_records = {
+                    rec.FeatureTag: rec.Feature
+                    for rec in feature_list.FeatureRecord
+                    if rec.FeatureTag in ("case", "calt")
+                }
+                gpos_lookups = getattr(lookup_list, "Lookup", [])
+                for tag, feat in gpos_records.items():
+                    for lidx in feat.LookupListIndex:
+                        if lidx >= len(gpos_lookups):
+                            continue
+                        lookup = gpos_lookups[lidx]
+                        subtables = _unwrap_subtables(getattr(lookup, "SubTable", []))
+                        for st in subtables:
+                            coverage = getattr(st, "Coverage", None)
+                            if not coverage:
+                                continue
+                            cov_glyphs = getattr(coverage, "glyphs", [])
+                            if not any(c in target_colons for c in cov_glyphs):
+                                continue
+
+                            # SinglePos
+                            val = getattr(st, "Value", None)
+                            if val and getattr(val, "YPlacement", 0) != 0:
+                                return True
+                            val_list = getattr(st, "Value", [])
+                            if isinstance(val_list, list):
+                                for v in val_list:
+                                    if getattr(v, "YPlacement", 0) != 0:
+                                        return True
+
+        # 5. Glyph Outline Geometry (Native Centered Colon Detection)
+        glyph_set = font.getGlyphSet() if hasattr(font, "getGlyphSet") else None
+        if glyph_set and colon_glyph in glyph_set:
+            try:
+                c_pen = BoundsPen(glyph_set)
+                glyph_set[colon_glyph].draw(c_pen)
+                if c_pen.bounds:
+                    col_ymin, col_ymax = c_pen.bounds[1], c_pen.bounds[3]
+                    digit_bounds = []
+                    for d in "0123456789":
+                        dg = cmap.get(ord(d))
+                        if dg and dg in glyph_set:
+                            dpen = BoundsPen(glyph_set)
+                            glyph_set[dg].draw(dpen)
+                            if dpen.bounds:
+                                digit_bounds.append(dpen.bounds)
+
+                    if digit_bounds:
+                        avg_ymin = sum(b[1] for b in digit_bounds) / len(digit_bounds)
+                        avg_ymax = sum(b[3] for b in digit_bounds) / len(digit_bounds)
+                        digit_h = avg_ymax - avg_ymin
+                        digit_center = (avg_ymin + avg_ymax) / 2.0
+                        colon_center = (col_ymin + col_ymax) / 2.0
+
+                        if digit_h > 0:
+                            if col_ymin >= (0.12 * digit_h) and abs(colon_center - digit_center) <= (0.12 * digit_h):
+                                return True
+            except Exception:
+                pass
     finally:
         if should_close:
             font.close()
+
     return False
 
 
@@ -1504,8 +1696,8 @@ def main():
     s_eq_digits.add_argument("--out", dest="output_file", help="Output font file (default overwrites input)")
     s_eq_digits.add_argument("--width", type=int, help="Target advance width for digits (default: max digit advance)")
 
-    s_colon = sub.add_parser("check-colon", help="Check if font has centered colon")
-    s_colon.add_argument("file", help="Path to font file")
+    s_colon = sub.add_parser("check-colon", help="Check if font or directory contains centered colon")
+    s_colon.add_argument("paths", nargs="+", help="Path(s) to font file(s) or director(ies)")
 
     s_inj_col = sub.add_parser("inject-colon", help="Inject centered colon into font")
     s_inj_col.add_argument("--in", dest="input_file", required=True)
@@ -1589,7 +1781,7 @@ def main():
         else:
             print(f"Clock digits already tabular or not modified in {args.input_file}")
     elif args.cmd == "check-colon":
-        has_col = font_has_centered_colon(args.file)
+        has_col = any(font_has_centered_colon(p) for p in args.paths)
         print("true" if has_col else "false")
     elif args.cmd == "inject-colon":
         from fontTools.ttLib import TTFont

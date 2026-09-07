@@ -129,6 +129,7 @@ class CompileResult:
     # ("sans", "mono", "serif", "bengali"). Populated by compile_fonts so the
     # build summary can report every provided family, not just Sans.
     family_faces: dict[str, tuple[SourceFace, ...]] = field(default_factory=dict)
+    injected_colon: bool = False
 
 
 def require_fonttools():
@@ -1476,31 +1477,207 @@ def extract_features_from_fonts(font_paths: Iterable[Path]) -> dict[str, str]:
     return dict(sorted(aggregated.items()))
 
 
+COLON_GLYPH_PATTERNS = re.compile(
+    r"^(colon[._-](case|cent|cap|mid|vert|uc|up|alt|tab|tf|tnum|cv|ss)|(case|cent|cap|mid|vert)[._-]colon|uniEE01|glyphEE01|uEE01|ratio$)",
+    re.IGNORECASE,
+)
+
+COLON_UNICODES = (
+    0xEE01,  # Android clock colon PUA (Google Sans / Roboto / system clock)
+    0x2236,  # RATIO (∶)
+    0x2982,  # Z NOTATION TYPE COLON (⦂)
+    0xA789,  # MODIFIER LETTER COLON (꞉)
+    0xFE30,  # PRESENTATION FORM FOR VERTICAL TWO DOT LEADER (︰)
+)
+
+
+def _unwrap_subtables(subtables):
+    unwrapped = []
+    for st in subtables:
+        if st is None:
+            continue
+        if hasattr(st, "ExtSubTable") and st.ExtSubTable is not None:
+            unwrapped.append(st.ExtSubTable)
+        else:
+            unwrapped.append(st)
+    return unwrapped
+
+
 def font_has_centered_colon(font_path: Path) -> bool:
-    """Check if font has a built-in centered colon feature (colon.case, colon.centered, or GSUB case/calt colon rules)."""
+    """Exhaustively check if font has a built-in or contextual centered colon feature."""
     _collection, TTFont = require_fonttools()
+    from fontTools.pens.boundsPen import BoundsPen
+
     try:
         font = TTFont(str(font_path), lazy=True)
     except Exception:
-        return True
+        try:
+            from fontTools.ttLib import TTCollection
+            ttc = TTCollection(str(font_path))
+            for f in ttc.fonts:
+                if font_has_centered_colon(f):
+                    return True
+            return False
+        except Exception:
+            return False
 
     try:
-        glyph_order = font.getGlyphOrder()
-        for name in ("colon.case", "colon.centered", "colon.cap", "colon.case.tf", "colon.centered.tf"):
-            if name in glyph_order:
+        glyph_order = set(font.getGlyphOrder())
+        cmap = font.getBestCmap() if hasattr(font, "getBestCmap") else {}
+        if not cmap and "cmap" in font:
+            cmap = font["cmap"].getBestCmap() or {}
+
+        colon_glyph = cmap.get(0x003A, "colon")
+        target_colons = {colon_glyph, "colon", "colon.tf", "colon.tab"}
+
+        # 1. Direct glyph names
+        for name in glyph_order:
+            if name in target_colons:
+                continue
+            if COLON_GLYPH_PATTERNS.search(name):
                 return True
+
+        # 2. Unicode codepoints (PUA clock colon, ratio)
+        if cmap:
+            glyph_set = font.getGlyphSet() if hasattr(font, "getGlyphSet") else None
+            for cp in COLON_UNICODES:
+                mapped_glyph = cmap.get(cp)
+                if mapped_glyph and mapped_glyph in glyph_order:
+                    if glyph_set is not None and mapped_glyph in glyph_set:
+                        try:
+                            pen = BoundsPen(glyph_set)
+                            glyph_set[mapped_glyph].draw(pen)
+                            if pen.bounds:
+                                return True
+                        except Exception:
+                            return True
+                    else:
+                        return True
+
+        # 3. OpenType GSUB substitutions
         if "GSUB" in font and font["GSUB"].table is not None:
             gsub = font["GSUB"].table
-            if gsub.FeatureList and gsub.FeatureList.FeatureRecord:
-                records = {rec.FeatureTag: rec.Feature for rec in gsub.FeatureList.FeatureRecord if rec.FeatureTag}
-                if "case" in records:
-                    lookups = gsub.LookupList.Lookup
-                    for lidx in records["case"].LookupListIndex:
-                        if lidx < len(lookups):
-                            for st in getattr(lookups[lidx], "SubTable", []):
-                                mapping = getattr(st, "mapping", {})
-                                if "colon" in mapping:
+            feature_list = getattr(gsub, "FeatureList", None)
+            lookup_list = getattr(gsub, "LookupList", None)
+            if feature_list and lookup_list and feature_list.FeatureRecord:
+                features_to_check = {
+                    rec.FeatureTag: rec.Feature
+                    for rec in feature_list.FeatureRecord
+                    if rec.FeatureTag
+                }
+                lookups = getattr(lookup_list, "Lookup", [])
+
+                for tag, feat in features_to_check.items():
+                    is_candidate = bool(
+                        tag in ("case", "calt", "clig", "liga", "tnum", "locl")
+                        or tag.startswith(("ss", "cv"))
+                    )
+                    if not is_candidate:
+                        continue
+
+                    for lidx in feat.LookupListIndex:
+                        if lidx >= len(lookups):
+                            continue
+                        lookup = lookups[lidx]
+                        subtables = _unwrap_subtables(getattr(lookup, "SubTable", []))
+
+                        for st in subtables:
+                            mapping = getattr(st, "mapping", {})
+                            for src_g, dst_g in mapping.items():
+                                if src_g in target_colons:
+                                    if tag in ("case", "calt", "tnum") or COLON_GLYPH_PATTERNS.search(dst_g):
+                                        return True
+
+                            alternates = getattr(st, "alternates", {})
+                            for src_g, alts in alternates.items():
+                                if src_g in target_colons:
+                                    if tag in ("case", "calt") or any(COLON_GLYPH_PATTERNS.search(a) for a in alts):
+                                        return True
+
+                            ligatures = getattr(st, "ligatures", {})
+                            for first_g, lig_list in ligatures.items():
+                                for lig in lig_list:
+                                    comps = [first_g] + list(getattr(lig, "Component", []))
+                                    if any(c in target_colons for c in comps):
+                                        if any(c.isdigit() or "zero" in c or "one" in c for c in comps):
+                                            return True
+
+                            input_coverages = getattr(st, "InputCoverage", [])
+                            for icov in input_coverages:
+                                cov_glyphs = getattr(icov, "glyphs", [])
+                                if any(c in target_colons for c in cov_glyphs):
                                     return True
+
+                            coverage = getattr(st, "Coverage", None)
+                            if coverage:
+                                cov_glyphs = getattr(coverage, "glyphs", [])
+                                if tag in ("case", "calt") and any(c in target_colons for c in cov_glyphs):
+                                    return True
+
+        # 4. OpenType GPOS vertical positioning shifts
+        if "GPOS" in font and font["GPOS"].table is not None:
+            gpos = font["GPOS"].table
+            feature_list = getattr(gpos, "FeatureList", None)
+            lookup_list = getattr(gpos, "LookupList", None)
+            if feature_list and lookup_list and feature_list.FeatureRecord:
+                gpos_records = {
+                    rec.FeatureTag: rec.Feature
+                    for rec in feature_list.FeatureRecord
+                    if rec.FeatureTag in ("case", "calt")
+                }
+                gpos_lookups = getattr(lookup_list, "Lookup", [])
+                for tag, feat in gpos_records.items():
+                    for lidx in feat.LookupListIndex:
+                        if lidx >= len(gpos_lookups):
+                            continue
+                        lookup = gpos_lookups[lidx]
+                        subtables = _unwrap_subtables(getattr(lookup, "SubTable", []))
+                        for st in subtables:
+                            coverage = getattr(st, "Coverage", None)
+                            if not coverage:
+                                continue
+                            cov_glyphs = getattr(coverage, "glyphs", [])
+                            if not any(c in target_colons for c in cov_glyphs):
+                                continue
+
+                            val = getattr(st, "Value", None)
+                            if val and getattr(val, "YPlacement", 0) != 0:
+                                return True
+                            val_list = getattr(st, "Value", [])
+                            if isinstance(val_list, list):
+                                for v in val_list:
+                                    if getattr(v, "YPlacement", 0) != 0:
+                                        return True
+
+        # 5. Glyph Outline Geometry (Native Centered Colon Detection)
+        glyph_set = font.getGlyphSet() if hasattr(font, "getGlyphSet") else None
+        if glyph_set and colon_glyph in glyph_set:
+            try:
+                c_pen = BoundsPen(glyph_set)
+                glyph_set[colon_glyph].draw(c_pen)
+                if c_pen.bounds:
+                    col_ymin, col_ymax = c_pen.bounds[1], c_pen.bounds[3]
+                    digit_bounds = []
+                    for d in "0123456789":
+                        dg = cmap.get(ord(d))
+                        if dg and dg in glyph_set:
+                            dpen = BoundsPen(glyph_set)
+                            glyph_set[dg].draw(dpen)
+                            if dpen.bounds:
+                                digit_bounds.append(dpen.bounds)
+
+                    if digit_bounds:
+                        avg_ymin = sum(b[1] for b in digit_bounds) / len(digit_bounds)
+                        avg_ymax = sum(b[3] for b in digit_bounds) / len(digit_bounds)
+                        digit_h = avg_ymax - avg_ymin
+                        digit_center = (avg_ymin + avg_ymax) / 2.0
+                        colon_center = (col_ymin + col_ymax) / 2.0
+
+                        if digit_h > 0:
+                            if col_ymin >= (0.12 * digit_h) and abs(colon_center - digit_center) <= (0.12 * digit_h):
+                                return True
+            except Exception:
+                pass
     finally:
         font.close()
 
@@ -2165,10 +2342,12 @@ def compile_fonts(
                             freeze_font_features(p, feat_beng)
                         applied_features.extend(feat_beng)
 
+        colon_injected = False
         for colon_key, colon_paths, _colon_label in category_paths:
             if colon_choice[colon_key] and colon_paths:
                 for font_path in colon_paths:
                     inject_centered_colon(font_path)
+                    colon_injected = True
 
         all_faces = discover_faces(temp_fonts_dir)
         separated = _separate_faces_by_category(all_faces)
@@ -2309,6 +2488,7 @@ def compile_fonts(
             tuple(payload),
             tuple(applied_features),
             family_faces,
+            injected_colon=colon_injected,
         )
     finally:
         shutil.rmtree(temp_fonts_dir, ignore_errors=True)
@@ -2323,6 +2503,8 @@ def update_module_metadata(
     version: str | None = None,
     version_code: str | None = None,
     applied_features: Iterable[str] | None = None,
+    injected_colon: bool = False,
+    active_features: Iterable[str] | None = None,
 ) -> dict[str, str]:
     path = module_dir / "module.prop"
     props = read_props(path)
@@ -2340,7 +2522,21 @@ def update_module_metadata(
     props["version"] = version
     props["versionCode"] = version_code
     props.setdefault("author", "MFFM")
-    props["description"] = f"MFFMv14 font module: {display} ({mode})"
+
+    desc = f"MFFMv14 font module: {display} ({mode})"
+    active_items: list[str] = []
+    if injected_colon:
+        active_items.append("Centered Colon")
+    if applied_features:
+        active_items.append(f"Frozen: {', '.join(applied_features)}")
+    if active_features:
+        for it in active_features:
+            if it not in active_items:
+                active_items.append(it)
+    if active_items:
+        desc = f"{desc} [Active: {', '.join(active_items)}]"
+    props["description"] = desc
+
     props.setdefault("minMagisk", "20400")
     props.setdefault("minKernelSU", "10940")
     props.setdefault("minAPatch", "11000")
