@@ -100,8 +100,8 @@ COLON_RULE=between_digits
 # Wobble-free lockscreen clock digits
 ENABLE_TABULAR_CLOCK_DIGITS=yes
 
-# Zero-clipping safe vertical metrics
-METRICS_MODE=safe
+# Compact vertical metrics (tight FFIX3, zero unnecessary line padding)
+METRICS_MODE=compact
 
 # OpenType feature freezing (slashed zero, stylistic sets)
 SANS_FREEZE_FEATURES=ss01,zero

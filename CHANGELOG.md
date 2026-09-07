@@ -22,6 +22,11 @@ versioning scheme the modules themselves carry.
   - Removed `ENABLE_ZYGOTE_OPTIMIZATION` from configuration generator and runtime compiler forwarding in `template/customize.sh`.
   - Standard bytecode hinting removal (`remove_font_hinting` / `--no-hinting`) remains fully supported and intact.
 
+### Changed
+- **Compact Metric Optimization Default**:
+  - Switched default `METRICS_MODE` from `safe` to `compact` across the runtime compiler, configuration generator, and CLI tools for maximum UI compactness and classic tight FFIX3 vertical spacing.
+  - Safe metrics auto-clamping (`METRICS_MODE=safe`) and raw metrics retention (`METRICS_MODE=preserve`) remain fully selectable options in `/sdcard/MFFM/*.conf`.
+
 ### Fixed
 - **Centered Colon Preservation with Table Optimization (`optimize_font_tables`)**:
   - Removed `fontTools.subset.Subsetter` pass from `optimize_font_tables()`. The Subsetter re-indexing pass corrupted dynamically chained `calt` lookups with out-of-bounds indices and converted the `post` table to format 3.0, causing Android's HarfBuzz text shaper to discard the centered clock colon substitution.

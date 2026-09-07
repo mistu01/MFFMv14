@@ -89,7 +89,7 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
 | `COLON_OFFSET` | `0` | `0` | Fine vertical offset in font units (+/-) for OEM lockscreens. |
 | `COLON_RULE` | `between_digits` | `between_digits` | Rule condition: `between_digits` (`12:30`), `after_digit` (for stacked 2-line clocks `12:` / `30`), or `always`. |
 | `ENABLE_TABULAR_CLOCK_DIGITS` | `no` | `yes` (if clock wobbles) | Equalizes digit widths (0–9) so lockscreen clocks never jump horizontally as minutes or seconds change. |
-| `METRICS_MODE` | `safe` | `safe` | Vertical metrics: `safe` prevents accent clipping with zero monospace inflation; `compact` forces tight FFIX3; `preserve` leaves original metrics untouched. |
+| `METRICS_MODE` | `compact` | `compact` | Vertical metrics: `compact` forces tight FFIX3; `safe` prevents accent clipping with zero monospace inflation; `preserve` leaves original metrics untouched. |
 | `*_FREEZE_FEATURES` | *(empty)* | `ss01,zero` (user choice) | Freezes OpenType layout features (like slashed zero `0` or stylistic sets) permanently into default characters. |
 | `SANS_WGHT` / `SANS_WDTH` | *(auto)* | Leave unless custom | Explicit numeric weights (100–900) mapped to Android system font weight slots. |
 
@@ -115,8 +115,8 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
 #### 3. 🛡️ Decoupled Safe Metrics (`METRICS_MODE`)
 - **The Problem**: In status bars, app toolbars, and notification headers, tall diacritics (Vietnamese `ế`, `Ậ`, Devanagari, Thai, Arabic, or display letters `Å`, `Ŵ`) can get clipped if vertical metrics are too tight. Conversely, older scripts that blindly expanded line heights caused code editors and terminal emulators to experience severe (+41%) vertical line-height ballooning.
 - **Options**:
-  - `METRICS_MODE=safe` (Default & Recommended): Decoupled safe metrics. Ascent and descent expand independently based on actual glyph boundaries. Tall accents never clip, descenders remain clear, and UI elements stay centered and compact.
-  - `METRICS_MODE=compact`: Forces classic ultra-tight FFIX3 metrics ($2128 / -550$). Best for English-only setups desiring maximum notification compactness.
+  - `METRICS_MODE=compact` (Default & Recommended): Forces classic ultra-tight FFIX3 metrics ($2128 / -550$). Delivers maximum notification and UI compactness.
+  - `METRICS_MODE=safe`: Decoupled safe metrics. Ascent and descent expand independently based on actual glyph boundaries. Tall accents never clip, descenders remain clear, and UI elements stay centered and compact.
   - `METRICS_MODE=preserve`: Leaves the font designer's original metric tables unaltered.
 
 #### 4. 🎨 OpenType Feature Freezing (`*_FREEZE_FEATURES`)

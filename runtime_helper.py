@@ -151,14 +151,14 @@ def sanitize_name_table(font, prefix: str = "") -> None:
     _set_name(font, 8, "Mistu @ MFFM Inc.")
 
 
-def fix_font_metrics(font, target_upm: int = 2048, mode: str = "safe") -> None:
+def fix_font_metrics(font, target_upm: int = 2048, mode: str = "compact") -> None:
     head = font.get("head")
     os2 = font.get("OS/2")
     hhea = font.get("hhea")
     if head is None:
         return
     upm = int(getattr(head, "unitsPerEm", target_upm))
-    mode_lower = (mode or "safe").strip().lower()
+    mode_lower = (mode or "compact").strip().lower()
 
     if mode_lower == "preserve":
         if os2 is not None:
@@ -1366,7 +1366,7 @@ def compile_bundle(
     colon_alignment: str = "center",
     colon_offset: int = 0,
     colon_rule: str = "between_digits",
-    metrics_mode: str = "safe",
+    metrics_mode: str = "compact",
     freeze_sans: list[str] | str | None = None,
     freeze_mono: list[str] | str | None = None,
     freeze_serif: list[str] | str | None = None,
@@ -1652,7 +1652,7 @@ def main():
     s_proc.add_argument("--out", dest="output_file")
     s_proc.add_argument("--no-hinting", action="store_true")
     s_proc.add_argument("--no-fix-metrics", action="store_true")
-    s_proc.add_argument("--metrics-mode", choices=["safe", "compact", "preserve"], default="safe", help="Metrics mode (safe=auto-clamp FFIX3 ratio, compact=fixed FFIX3, preserve=keep original)")
+    s_proc.add_argument("--metrics-mode", choices=["safe", "compact", "preserve"], default="compact", help="Metrics mode (safe=auto-clamp FFIX3 ratio, compact=fixed FFIX3, preserve=keep original)")
     s_proc.add_argument("--sanitize-names", action="store_true")
     s_proc.add_argument("--inject-colon", action="store_true")
     s_proc.add_argument("--colon-alignment", choices=["center", "cap_height", "x_height"], default="center")
@@ -1672,7 +1672,7 @@ def main():
     s_comp.add_argument("--bengali-dir", action="append", default=[])
     s_comp.add_argument("--keep-hinting", action="store_true")
     s_comp.add_argument("--no-fix-metrics", action="store_true")
-    s_comp.add_argument("--metrics-mode", choices=["safe", "compact", "preserve"], default="safe", help="Metrics mode (safe=auto-clamp FFIX3 ratio, compact=fixed FFIX3, preserve=keep original)")
+    s_comp.add_argument("--metrics-mode", choices=["safe", "compact", "preserve"], default="compact", help="Metrics mode (safe=auto-clamp FFIX3 ratio, compact=fixed FFIX3, preserve=keep original)")
     s_comp.add_argument("--no-sanitize-names", action="store_true")
     s_comp.add_argument("--enable-centered-colon", action="store_true")
     s_comp.add_argument("--colon-alignment", choices=["center", "cap_height", "x_height"], default="center")

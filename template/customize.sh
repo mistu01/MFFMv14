@@ -1739,13 +1739,13 @@ prepare_variable_config() {
           printf '#   from getting cut off at the top or bottom in notifications and app buttons.\n'
           printf '#\n'
           printf '# OPTIONS:\n'
+          printf '#   - compact  : Forces classic ultra-tight FFIX3 metrics (2128/-550). Best for\n'
+          printf '#                compact UI and minimalist setups. [Default & Recommended]\n'
           printf '#   - safe     : Audits all glyphs and automatically expands boundaries to eliminate\n'
           printf '#                any clipping while strictly preserving the FFIX3 baseline ratio.\n'
-          printf '#                Buttons and status bar icons stay perfectly centered! [Recommended]\n'
-          printf '#   - compact  : Forces classic ultra-tight FFIX3 metrics (2128/-550). Best for\n'
-          printf '#                minimalist English-only setups. May clip tall foreign accents.\n'
+          printf '#                Buttons and status bar icons stay perfectly centered!\n'
           printf '#   - preserve : Retains the font designer original vertical metrics untouched.\n'
-          printf 'METRICS_MODE=safe\n'
+          printf 'METRICS_MODE=compact\n'
         } >> "$VF_CONFIG_FILE"
       fi
     fi
@@ -1857,6 +1857,7 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
   _cfg_colon_rule=$(config_value COLON_RULE)
   _cfg_tabular_digits=$(config_value ENABLE_TABULAR_CLOCK_DIGITS)
   _cfg_metrics_mode=$(config_value METRICS_MODE)
+  _cfg_metrics_mode=${_cfg_metrics_mode:-compact}
   _cfg_sans_f=$(config_value SANS_FREEZE_FEATURES)
   _cfg_mono_f=$(config_value MONO_FREEZE_FEATURES)
   _cfg_serif_f=$(config_value SERIF_FREEZE_FEATURES)
@@ -1869,7 +1870,7 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
     yes|YES|true|TRUE|1) _should_compile=1 ;;
   esac
   case "$_cfg_metrics_mode" in
-    compact|preserve) _should_compile=1 ;;
+    safe|preserve) _should_compile=1 ;;
   esac
   if [ -n "$_cfg_sans_f" ] || [ -n "$_cfg_mono_f" ] || [ -n "$_cfg_serif_f" ] || [ -n "$_cfg_beng_f" ]; then
     _should_compile=1
