@@ -51,6 +51,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-centered-colon", action="store_false", dest="centered_colon", help="disable centered colon injection")
     parser.add_argument("--pua-colon", action="store_true", default=None, help="force mapping colon to Android lockscreen clock PUA (U+EE01, U+2236, U+2982)")
     parser.add_argument("--no-pua-colon", action="store_false", dest="pua_colon", help="disable Android lockscreen clock PUA mapping")
+    parser.add_argument("--synthetic-italic", action="store_true", default=None, help="synthesize Sans-serif italic companion faces if missing")
+    parser.add_argument("--no-synthetic-italic", action="store_false", dest="synthetic_italic", help="disable synthetic italic generation")
+    parser.add_argument("--synthetic-italic-angle", type=float, default=-12.0, help="slant angle in degrees for synthetic italic (default: -12.0)")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--keep-temp", action="store_true")
     return parser.parse_args()
@@ -170,6 +173,8 @@ def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) ->
             interactive_features=args.interactive,
             centered_colon=args.centered_colon,
             pua_colon=args.pua_colon,
+            synthetic_italic=args.synthetic_italic,
+            synthetic_italic_angle=args.synthetic_italic_angle,
         )
         display = display_name_for_mode(
             args.name or old_display_name(old_root) or result.family,
@@ -180,6 +185,7 @@ def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) ->
             name=display, version=args.version, version_code=args.version_code,
             applied_features=result.applied_features,
             injected_colon=result.injected_colon,
+            synthesized_italic=result.synthesized_italic,
         )
         if result.applied_features and not any(f in slugify(display) for f in result.applied_features):
             file_slug = slugify(f"{display} {' '.join(result.applied_features)}")

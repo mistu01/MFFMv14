@@ -89,6 +89,8 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
 | `COLON_OFFSET` | `0` | `0` | Fine vertical offset in font units (+/-) for OEM lockscreens. |
 | `COLON_RULE` | `between_digits` | `between_digits` | Rule condition: `between_digits` (`12:30`), `after_digit` (for stacked 2-line clocks `12:` / `30`), or `always`. |
 | `ENABLE_LOCKSCREEN_COLON_PUA` | `false` | `false` (or `true` if lockscreen shows `[?]`) | Maps the colon / centered colon glyph to Android lockscreen clock PUA codepoints (`U+EE01`, `U+2236`, `U+2982`) to resolve missing glyph boxes on OEM lockscreens. *(Omitted if font already has them).* |
+| `ENABLE_SYNTHETIC_ITALIC` | `false` | `true` (if font lacks italics) | Algorithmically synthesizes and bundles slanted italic companion faces for Sans-serif if the supplied font has no native italic faces or slant axes. *(Omitted if font already has italics).* |
+| `SYNTHETIC_ITALIC_ANGLE` | `-12` | `-12` | Slant angle in degrees for synthetic italic (negative slants forward to the right). |
 | `ENABLE_TABULAR_CLOCK_DIGITS` | `no` | `yes` (if clock wobbles) | Equalizes digit widths (0–9) so lockscreen clocks never jump horizontally as minutes or seconds change. |
 | `METRICS_MODE` | `compact` | `compact` | Vertical metrics: `compact` forces tight FFIX3; `safe` prevents accent clipping with zero monospace inflation; `preserve` leaves original metrics untouched. |
 | `*_FREEZE_FEATURES` | *(empty)* | `ss01,zero` (user choice) | Freezes OpenType layout features (like slashed zero `0` or stylistic sets) permanently into default characters. |
@@ -115,20 +117,29 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
   - Set `ENABLE_LOCKSCREEN_COLON_PUA=true` in your `.conf`.
   - The runtime maps the font's colon (or newly injected centered colon) directly to `U+EE01`, `U+2236`, and `U+2982` across all Unicode cmap tables, guaranteeing flawless lockscreen clock rendering with zero broken glyphs.
 
-#### 3. ⏱️ Tabular Clock Digits (`ENABLE_TABULAR_CLOCK_DIGITS`)
+#### 3. 📐 Synthetic Italic / Oblique (`ENABLE_SYNTHETIC_ITALIC`)
+- **The Problem**: Many custom display and web fonts (e.g. Readex Pro, Outfit, Google Sans) only supply upright faces and lack native italic styles or variable slant (`slnt`/`ital`) axes. On Android, when an app or browser requests italic text, the system cannot find an italic face in the font family.
+- **Intelligent Auto-Detection**: The installer scans your Sans-serif font family. If native italic styles or `slnt`/`ital` axes already exist, MFFM automatically omits this category from your `.conf`. It only populates when no native italic support is present!
+- **How to Use**:
+  - Set `ENABLE_SYNTHETIC_ITALIC=true` in your `.conf`.
+  - `SYNTHETIC_ITALIC_ANGLE=-12`: Slant angle in degrees (default `-12°`).
+  - Re-flash the module: The runtime algorithmically shears outlines (`glyf`, `gvar`, `CFF`/`CFF2`), recalculates metrics, updates `post.italicAngle`, `head.macStyle`, `OS/2.fsSelection`, and builds companion italic faces into the unified `DroidSans.ttf` collection and XML mappings.
+  - *Constraint*: Strictly dedicated to Sans-serif; other families remain untouched.
+
+#### 4. ⏱️ Tabular Clock Digits (`ENABLE_TABULAR_CLOCK_DIGITS`)
 - **The Problem**: Proportional fonts assign different widths to different numbers (e.g., `1` is much narrower than `0` or `8`). When your lockscreen clock changes from `11:59` to `12:00`, or if you have a ticking seconds display, the digits jump horizontally and create visible jitter.
 - **How to Use**:
   - Set `ENABLE_TABULAR_CLOCK_DIGITS=yes`.
   - The runtime equalizes the horizontal advance width across all digits `0` through `9` and centers their contours within the standardized bounding box.
 
-#### 4. 🛡️ Decoupled Safe Metrics (`METRICS_MODE`)
+#### 5. 🛡️ Decoupled Safe Metrics (`METRICS_MODE`)
 - **The Problem**: In status bars, app toolbars, and notification headers, tall diacritics (Vietnamese `ế`, `Ậ`, Devanagari, Thai, Arabic, or display letters `Å`, `Ŵ`) can get clipped if vertical metrics are too tight. Conversely, older scripts that blindly expanded line heights caused code editors and terminal emulators to experience severe (+41%) vertical line-height ballooning.
 - **Options**:
   - `METRICS_MODE=compact` (Default & Recommended): Forces classic ultra-tight FFIX3 metrics ($2128 / -550$). Delivers maximum notification and UI compactness.
   - `METRICS_MODE=safe`: Decoupled safe metrics. Ascent and descent expand independently based on actual glyph boundaries. Tall accents never clip, descenders remain clear, and UI elements stay centered and compact.
   - `METRICS_MODE=preserve`: Leaves the font designer's original metric tables unaltered.
 
-#### 5. 🎨 OpenType Feature Freezing (`*_FREEZE_FEATURES`)
+#### 6. 🎨 OpenType Feature Freezing (`*_FREEZE_FEATURES`)
 - **The Problem**: Many professional fonts feature alternate characters (slashed zeros, curved lowercase `l`, single-story `a` and `g`, or geometric glyphs) hidden behind OpenType tags (`zero`, `ss01`–`ss20`, `cv01`–`cv99`). Android apps lack menus to activate these.
 - **How to Use**:
   - Check the discovered features list commented directly in your `.conf` file.
@@ -139,14 +150,14 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
     ```
   - Re-flash the font module ZIP to bake these alternates into the default glyphs system-wide!
 
-#### 6. ⚖️ Variable Font Weight Tuning
+#### 7. ⚖️ Variable Font Weight Tuning
 - For variable fonts, fine-tune the exact numeric weight mapped to each of Android's system weight tiers (100–900):
   ```sh
   SANS_WGHT="100 200 300 400 500 600 700 800 900"
   SANS_WDTH="100 100 100 100 100 100 100 100 100"
   ```
 
-#### 7. 🌐 Adding Extra Fonts Directly on Your Phone
+#### 8. 🌐 Adding Extra Fonts Directly on Your Phone
 - You can augment an installed module with additional language or style families without repacking the ZIP on PC:
   - Place extra fonts into `/sdcard/MFFM/<FontFamily>/`:
     - `/sdcard/MFFM/<FontFamily>/Bengali/`
@@ -154,10 +165,10 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
     - `/sdcard/MFFM/<FontFamily>/Serif/`
   - Re-flash your font module — it will scan the directory, optimize the fonts, and package them into the system collection automatically!
 
-#### 7. 🏷️ Active Feature Badges in Module Description
+#### 9. 🏷️ Active Feature Badges in Module Description
 - Whenever you activate typography enhancements in your `.conf` file, the installer automatically updates the module description visible in Magisk, KernelSU, APatch, or MMRL:
   ```
-  [MFFMv14] Inter Variable VF [Active: Centered Colon, Tabular Digits, Metrics: compact, Frozen: ss01, zero]
+  [MFFMv14] Readex Pro VF [Active: Synthetic Italic (-12°), Metrics: compact]
   ```
   This lets you verify at a glance which features are active without digging into config files.
 

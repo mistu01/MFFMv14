@@ -128,6 +128,7 @@ class CompileResult:
     # build summary can report every provided family, not just Sans.
     family_faces: dict[str, tuple[SourceFace, ...]] = field(default_factory=dict)
     injected_colon: bool = False
+    synthesized_italic: bool = False
 
 
 def require_fonttools():
@@ -1603,6 +1604,8 @@ def compile_fonts(
     interactive_features: bool | None = None,
     centered_colon: bool | None = None,
     pua_colon: bool | None = None,
+    synthetic_italic: bool | None = None,
+    synthetic_italic_angle: float = -12.0,
 ) -> CompileResult:
     files_dir = module_dir / "Files"
     files_dir.mkdir(parents=True, exist_ok=True)
@@ -1720,6 +1723,16 @@ def compile_fonts(
             for font_path in sans_ttf_paths:
                 copy_colon_to_pua(font_path)
 
+        italic_synthesized = False
+        if synthetic_italic:
+            from runtime_helper import font_has_italic_support, synthesize_italic_font
+            has_ital = any(font_has_italic_support(p) for p in sans_ttf_paths)
+            if not has_ital and sans_ttf_paths:
+                for font_path in list(sans_ttf_paths):
+                    out_ital_path = font_path.parent / f"{font_path.stem}-Italic{font_path.suffix}"
+                    synthesize_italic_font(font_path, out_ital_path, angle=synthetic_italic_angle or -12.0)
+                    italic_synthesized = True
+
         all_faces = discover_faces(temp_fonts_dir)
         separated = _separate_faces_by_category(all_faces)
         faces, mono_faces, serif_faces, bengali_faces = (separated[key] for key in CATEGORY_ORDER)
@@ -1804,6 +1817,7 @@ def compile_fonts(
             tuple(applied_features),
             family_faces,
             injected_colon=colon_injected,
+            synthesized_italic=italic_synthesized,
         )
     finally:
         shutil.rmtree(temp_fonts_dir, ignore_errors=True)
@@ -1819,6 +1833,7 @@ def update_module_metadata(
     version_code: str | None = None,
     applied_features: Iterable[str] | None = None,
     injected_colon: bool = False,
+    synthesized_italic: bool = False,
     active_features: Iterable[str] | None = None,
 ) -> dict[str, str]:
     path = module_dir / "module.prop"
@@ -1842,6 +1857,8 @@ def update_module_metadata(
     active_items: list[str] = []
     if injected_colon:
         active_items.append("Centered Colon")
+    if synthesized_italic:
+        active_items.append("Synthetic Italic")
     if applied_features:
         active_items.append(f"Frozen: {', '.join(applied_features)}")
     if active_features:

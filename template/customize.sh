@@ -1173,7 +1173,12 @@ reformat_config_file() {
     _strip_pua=1
   fi
 
-  awk -v strip_colon="$_strip_colon" -v strip_pua="$_strip_pua" '
+  local _strip_italic=0
+  if [ "$_has_ital" = "true" ]; then
+    _strip_italic=1
+  fi
+
+  awk -v strip_colon="$_strip_colon" -v strip_pua="$_strip_pua" -v strip_italic="$_strip_italic" '
   BEGIN {
     profiles[1] = "SANS_UPRIGHT"; titles["SANS_UPRIGHT"] = "SANS-SERIF / UPRIGHT"
     profiles[2] = "CONDENSED_UPRIGHT"; titles["CONDENSED_UPRIGHT"] = "CONDENSED / UPRIGHT"
@@ -1190,6 +1195,7 @@ reformat_config_file() {
     seen_typo_banner = 0
     in_colon_block = 0
     in_pua_block = 0
+    in_italic_block = 0
     typo_sec_num = 0
     header_count = 0
     typo_count = 0
@@ -1285,12 +1291,12 @@ reformat_config_file() {
     # If inside typo section
     if (in_typo) {
       if (strip_colon == 1) {
-        if (line ~ /^#[ \t]*[1-5]\.[ \t]*CENTERED CLOCK COLON/) {
+        if (line ~ /^#[ \t]*[1-6]\.[ \t]*CENTERED CLOCK COLON/) {
           in_colon_block = 1
           next
         }
         if (in_colon_block) {
-          if (line ~ /^#[ \t]*[1-5]\.[ \t]*(ANDROID LOCKSCREEN CLOCK COLON|TABULAR CLOCK DIGITS|SMART METRIC|OPENTYPE FEATURE)/) {
+          if (line ~ /^#[ \t]*[1-6]\.[ \t]*(ANDROID LOCKSCREEN CLOCK COLON|SYNTHETIC ITALIC|TABULAR CLOCK DIGITS|SMART METRIC|OPENTYPE FEATURE)/) {
             in_colon_block = 0
           } else {
             next
@@ -1302,12 +1308,12 @@ reformat_config_file() {
       }
 
       if (strip_pua == 1) {
-        if (line ~ /^#[ \t]*[1-5]\.[ \t]*ANDROID LOCKSCREEN CLOCK COLON/) {
+        if (line ~ /^#[ \t]*[1-6]\.[ \t]*ANDROID LOCKSCREEN CLOCK COLON/) {
           in_pua_block = 1
           next
         }
         if (in_pua_block) {
-          if (line ~ /^#[ \t]*[1-5]\.[ \t]*(TABULAR CLOCK DIGITS|SMART METRIC|OPENTYPE FEATURE)/) {
+          if (line ~ /^#[ \t]*[1-6]\.[ \t]*(SYNTHETIC ITALIC|TABULAR CLOCK DIGITS|SMART METRIC|OPENTYPE FEATURE)/) {
             in_pua_block = 0
           } else {
             next
@@ -1318,10 +1324,27 @@ reformat_config_file() {
         }
       }
 
+      if (strip_italic == 1) {
+        if (line ~ /^#[ \t]*[1-6]\.[ \t]*SYNTHETIC ITALIC/) {
+          in_italic_block = 1
+          next
+        }
+        if (in_italic_block) {
+          if (line ~ /^#[ \t]*[1-6]\.[ \t]*(TABULAR CLOCK DIGITS|SMART METRIC|OPENTYPE FEATURE)/) {
+            in_italic_block = 0
+          } else {
+            next
+          }
+        }
+        if (line ~ /^[ \t]*(ENABLE_SYNTHETIC_ITALIC|SYNTHETIC_ITALIC_ANGLE)[ \t]*=/) {
+          next
+        }
+      }
+
       # If this line is a numbered typography section header, wrap with clean dividers and renumber
-      if (line ~ /^#[ \t]*[1-5]\.[ \t]*(CENTERED CLOCK COLON|ANDROID LOCKSCREEN CLOCK COLON|TABULAR CLOCK DIGITS|SMART METRIC|OPENTYPE FEATURE)/) {
+      if (line ~ /^#[ \t]*[1-6]\.[ \t]*(CENTERED CLOCK COLON|ANDROID LOCKSCREEN CLOCK COLON|SYNTHETIC ITALIC|TABULAR CLOCK DIGITS|SMART METRIC|OPENTYPE FEATURE)/) {
         typo_sec_num++
-        sub(/^#[ \t]*[1-5]\./, "# " typo_sec_num ".", line)
+        sub(/^#[ \t]*[1-6]\./, "# " typo_sec_num ".", line)
         while (typo_count > 0 && typo[typo_count - 1] ~ /^[ \t]*$/) typo_count--
         typo[typo_count++] = ""
         typo[typo_count++] = "# ------------------------------------------------------------------------------"
@@ -1403,6 +1426,10 @@ update_installed_module_description() {
 
   if [ "$_applied_pua_colon" = "1" ]; then
     active_feats="${active_feats:+$active_feats, }Clock Colon PUA"
+  fi
+
+  if [ "$_applied_synthetic_italic" = "1" ]; then
+    active_feats="${active_feats:+$active_feats, }Synthetic Italic (${_cfg_italic_angle}°)"
   fi
 
   if [ "$_applied_tabular" = "1" ]; then
@@ -1808,6 +1835,10 @@ prepare_variable_config() {
       _has_pua_col=$("$_helper" check-pua-colon "$_primary_sans" "$FONT_DIR/Sans" "$MFFM_DIR/Sans" 2>/dev/null)
       export _has_pua_col
 
+      local _has_ital
+      _has_ital=$("$_helper" check-italic "$_primary_sans" "$FONT_DIR/Sans" "$MFFM_DIR/Sans" 2>/dev/null)
+      export _has_ital
+
       if ! grep -q "ADVANCED TYPOGRAPHY" "$VF_CONFIG_FILE" 2>/dev/null; then
         {
           printf '\n# ==============================================================================\n'
@@ -1880,9 +1911,40 @@ prepare_variable_config() {
         fi
       fi
 
+      if [ "$_has_ital" = "true" ]; then
+        sed -i -E '/^[[:space:]]*(ENABLE_SYNTHETIC_ITALIC|SYNTHETIC_ITALIC_ANGLE)[[:space:]]*=/d' "$VF_CONFIG_FILE" 2>/dev/null
+      else
+        if ! grep -q "^[[:space:]]*ENABLE_SYNTHETIC_ITALIC[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+          local _synth_sec=1
+          [ "$_has_col" != "true" ] && _synth_sec=$((_synth_sec + 1))
+          [ "$_has_pua_col" != "true" ] && _synth_sec=$((_synth_sec + 1))
+          {
+            printf '# ------------------------------------------------------------------------------\n'
+            printf '# %s. SYNTHETIC ITALIC / OBLIQUE (for Sans-serif)\n' "$_synth_sec"
+            printf '# ------------------------------------------------------------------------------\n'
+            printf '# WHAT IT DOES:\n'
+            printf '#   The supplied Sans-serif font does not include native italic faces or\n'
+            printf '#   variable slant/italic axes.\n'
+            printf '#   Enabling this algorithmically synthesizes high-quality italic outlines\n'
+            printf '#   (slanted glyphs, variable deltas, and typography metrics) on-the-fly.\n'
+            printf '#\n'
+            printf '# WHEN TO CHOOSE:\n'
+            printf '#   - true  : Generate synthetic italic faces so italic text renders slanted.\n'
+            printf '#   - false : Keep upright glyphs for italic text. [Default]\n'
+            printf 'ENABLE_SYNTHETIC_ITALIC=false\n\n'
+            printf '# ITALIC SLANT ANGLE:\n'
+            printf '#   Slant angle in degrees (negative values lean right):\n'
+            printf '#   - -12 : Standard typography italic angle. [Recommended]\n'
+            printf '#   - -9 to -14 : Subtle to pronounced slant.\n'
+            printf 'SYNTHETIC_ITALIC_ANGLE=-12\n\n'
+          } >> "$VF_CONFIG_FILE"
+        fi
+      fi
+
       local _sec_idx=1
       [ "$_has_col" != "true" ] && _sec_idx=$((_sec_idx + 1))
       [ "$_has_pua_col" != "true" ] && _sec_idx=$((_sec_idx + 1))
+      [ "$_has_ital" != "true" ] && _sec_idx=$((_sec_idx + 1))
       local _tab_sec=$_sec_idx
       _sec_idx=$((_sec_idx + 1))
       local _met_sec=$_sec_idx
@@ -1938,6 +2000,7 @@ prepare_variable_config() {
         local _fr_num_calc=1
         [ "$_has_col" != "true" ] && _fr_num_calc=$((_fr_num_calc + 1))
         [ "$_has_pua_col" != "true" ] && _fr_num_calc=$((_fr_num_calc + 1))
+        [ "$_has_ital" != "true" ] && _fr_num_calc=$((_fr_num_calc + 1))
         _fr_num_calc=$((_fr_num_calc + 2))
         {
           printf '\n# ------------------------------------------------------------------------------\n'
@@ -2025,12 +2088,15 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
     done
   fi
 
-  # Check if user requested centered colon, tabular digits, metrics mode, or feature freezing in .conf
+  # Check if user requested centered colon, tabular digits, metrics mode, feature freezing, or synthetic italic in .conf
   _cfg_colon=$(config_value ENABLE_CENTERED_COLON)
   _cfg_colon_align=$(config_value COLON_ALIGNMENT)
   _cfg_colon_offset=$(config_value COLON_OFFSET)
   _cfg_colon_rule=$(config_value COLON_RULE)
   _cfg_pua_colon=$(config_value ENABLE_LOCKSCREEN_COLON_PUA)
+  _cfg_synthetic_italic=$(config_value ENABLE_SYNTHETIC_ITALIC)
+  _cfg_italic_angle=$(config_value SYNTHETIC_ITALIC_ANGLE)
+  _cfg_italic_angle=${_cfg_italic_angle:--12}
   _cfg_tabular_digits=$(config_value ENABLE_TABULAR_CLOCK_DIGITS)
   _cfg_metrics_mode=$(config_value METRICS_MODE)
   _cfg_metrics_mode=${_cfg_metrics_mode:-compact}
@@ -2045,6 +2111,9 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
   case "$_cfg_pua_colon" in
     yes|YES|true|TRUE|1) _should_compile=1 ;;
   esac
+  case "$_cfg_synthetic_italic" in
+    yes|YES|true|TRUE|1) _should_compile=1 ;;
+  esac
   case "$_cfg_tabular_digits" in
     yes|YES|true|TRUE|1) _should_compile=1 ;;
   esac
@@ -2057,6 +2126,7 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
 
   _applied_colon=0
   _applied_pua_colon=0
+  _applied_synthetic_italic=0
   _applied_tabular=0
   _applied_freeze=0
   _applied_metrics=0
@@ -2064,7 +2134,7 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
   if [ "$_should_compile" = "1" ]; then
     ui_print "- Dynamic compilation via MFFM Runtime..."
     _extra_compile_args=""
-    _req_colon=0; _req_pua_colon=0; _req_tabular=0; _req_freeze=0; _req_metrics=0
+    _req_colon=0; _req_pua_colon=0; _req_synthetic_italic=0; _req_tabular=0; _req_freeze=0; _req_metrics=0
     case "$_cfg_colon" in
       yes|YES|true|TRUE|1)
         _req_colon=1
@@ -2080,6 +2150,14 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
         _req_pua_colon=1
         _extra_compile_args="$_extra_compile_args --enable-pua-colon"
         ui_print "    [*] Mapping colon to Android lockscreen clock PUA (U+EE01, U+2236, U+2982)..."
+        ;;
+    esac
+    case "$_cfg_synthetic_italic" in
+      yes|YES|true|TRUE|1)
+        _req_synthetic_italic=1
+        _extra_compile_args="$_extra_compile_args --enable-synthetic-italic"
+        [ -n "$_cfg_italic_angle" ] && _extra_compile_args="$_extra_compile_args --synthetic-italic-angle $_cfg_italic_angle"
+        ui_print "    [*] Synthesizing Sans-serif italic faces (angle: ${_cfg_italic_angle}°)..."
         ;;
     esac
     case "$_cfg_tabular_digits" in
@@ -2136,6 +2214,10 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
         _applied_pua_colon=1
         ui_print "    [OK] Android lockscreen clock colon PUA mapped (U+EE01, U+2236, U+2982)"
       fi
+      if [ "$_req_synthetic_italic" = "1" ]; then
+        _applied_synthetic_italic=1
+        ui_print "    [OK] Sans-serif synthetic italic faces synthesized (${_cfg_italic_angle}°)"
+      fi
       if [ "$_req_tabular" = "1" ]; then
         _applied_tabular=1
         ui_print "    [OK] Tabular clock digits equalized"
@@ -2157,6 +2239,7 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
     else
       [ "$_req_colon" = "1" ] && ui_print "    [!] Centered colon injection failed"
       [ "$_req_pua_colon" = "1" ] && ui_print "    [!] Android lockscreen clock colon PUA mapping failed"
+      [ "$_req_synthetic_italic" = "1" ] && ui_print "    [!] Sans-serif synthetic italic generation failed"
       [ "$_req_tabular" = "1" ] && ui_print "    [!] Tabular clock digits equalization failed"
       [ "$_req_freeze" = "1" ] && ui_print "    [!] OpenType feature freezing failed"
       [ "$_req_metrics" = "1" ] && ui_print "    [!] Font metrics harmonization failed"

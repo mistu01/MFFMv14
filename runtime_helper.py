@@ -2,6 +2,7 @@
 """MFFM Runtime Helper — on-device font metrics normalization, TTC bundling, OpenType feature freezing, centered colon injection, and indexed XML compilation."""
 
 import argparse
+import math
 import os
 import re
 import sys
@@ -624,6 +625,69 @@ def font_has_pua_colon(font_or_path, pua_codepoints: tuple[int, ...] = (0xEE01,)
                 pass
 
 
+def font_has_italic_support(font_or_path) -> bool:
+    """Exhaustively inspect whether a Sans font implements native italic faces or variable slant/italic axis."""
+    from fontTools.ttLib import TTFont, TTCollection
+
+    should_close = False
+    if isinstance(font_or_path, (str, Path)):
+        p = Path(font_or_path)
+        if p.is_dir():
+            for child in sorted(p.iterdir()):
+                if child.is_file() and child.suffix.lower() in SUPPORTED_EXTENSIONS:
+                    if font_has_italic_support(child):
+                        return True
+            return False
+        if not p.is_file():
+            return False
+        try:
+            font = TTFont(str(p), lazy=True)
+            should_close = True
+        except Exception:
+            try:
+                ttc = TTCollection(str(p))
+                for f in ttc.fonts:
+                    if font_has_italic_support(f):
+                        return True
+                return False
+            except Exception:
+                return False
+    else:
+        font = font_or_path
+
+    try:
+        os2 = font.get("OS/2")
+        head = font.get("head")
+        post = font.get("post")
+
+        if os2 is not None and int(getattr(os2, "fsSelection", 0)) & 1:
+            return True
+        if head is not None and int(getattr(head, "macStyle", 0)) & 2:
+            return True
+        if post is not None and getattr(post, "italicAngle", 0) != 0:
+            return True
+
+        stem = ""
+        if hasattr(font, "reader") and getattr(font.reader, "file", None) and hasattr(font.reader.file, "name"):
+            stem = Path(font.reader.file.name).stem
+        name_str = f"{stem} {_name(font, 1, 2, 4, 16, 17)}".lower()
+        if re.search(r"\b(italic|oblique)\b", name_str):
+            return True
+
+        if "fvar" in font:
+            for axis in font["fvar"].axes:
+                if axis.axisTag in ("slnt", "ital"):
+                    return True
+
+        return False
+    finally:
+        if should_close:
+            try:
+                font.close()
+            except Exception:
+                pass
+
+
 def equalize_clock_digits(font_or_path, target_width: int | None = None) -> bool:
     """Equalize advance widths of digits (0-9) and center their contours for wobble-free clocks."""
     from fontTools.ttLib import TTFont
@@ -1076,6 +1140,437 @@ def copy_colon_to_pua(font_or_path, codepoints: tuple[int, ...] = LOCKSCREEN_COL
         return False
 
 
+HEAD_BOLD = 0x0001
+HEAD_ITALIC = 0x0002
+
+OS2_ITALIC = 0x0001
+OS2_BOLD = 0x0020
+OS2_REGULAR = 0x0040
+OS2_OBLIQUE = 0x0200
+
+RIBBI_STYLES = {"Regular", "Bold", "Italic", "Bold Italic"}
+FONT_HINTING_TABLES = ("cvt ", "cvar", "fpgm", "prep", "hdmx", "LTSH", "VDMX")
+
+
+def strip_italic_words(style: str) -> str:
+    style = re.sub(r"\b(Italic|Oblique)\b", "", style, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", style).strip() or "Regular"
+
+
+def italic_style_name(upright_style: str) -> str:
+    base = strip_italic_words(upright_style)
+    if base.lower() in {"regular", "roman"}:
+        return "Italic"
+    return f"{base} Italic"
+
+
+def postscript_name(family: str, style: str) -> str:
+    family_part = re.sub(r"[^A-Za-z0-9]", "", family)
+    style_part = re.sub(r"[^A-Za-z0-9]", "", style)
+    name = f"{family_part}-{style_part}" if style_part else family_part
+    return name[:63]
+
+
+def legacy_family_and_subfamily(family: str, upright_style: str, italic_style: str) -> tuple[str, str]:
+    base = strip_italic_words(upright_style)
+    if italic_style in RIBBI_STYLES:
+        return family, italic_style
+    return f"{family} {base}", "Italic"
+
+
+def update_italic_names(font, source_stem: str = "") -> dict:
+    family = _name(font, 16, 1) or source_stem or "Font"
+    upright_style = _name(font, 17, 2) or "Regular"
+    italic_style = italic_style_name(upright_style)
+    legacy_family, legacy_subfamily = legacy_family_and_subfamily(family, upright_style, italic_style)
+    full_name = f"{family} {italic_style}".strip()
+    ps_name = postscript_name(family, italic_style)
+    version = _name(font, 5) or f"Version {getattr(font.get('head'), 'fontRevision', 1.0):.3f}"
+
+    _set_name(font, 1, legacy_family)
+    _set_name(font, 2, legacy_subfamily)
+    _set_name(font, 3, f"{version};{ps_name}")
+    _set_name(font, 4, full_name)
+    _set_name(font, 6, ps_name)
+    _set_name(font, 16, family)
+    _set_name(font, 17, italic_style)
+
+    name_tbl = font.get("name")
+    existing_ids = {r.nameID for r in getattr(name_tbl, "names", [])} if name_tbl else set()
+    optional_names = {18: full_name, 21: family, 22: italic_style}
+    if "fvar" in font or 25 in existing_ids:
+        optional_names[25] = ps_name
+
+    for nid, val in optional_names.items():
+        if nid in existing_ids or nid == 25:
+            _set_name(font, nid, val)
+
+    return {
+        "family": family,
+        "upright_style": upright_style,
+        "italic_style": italic_style,
+        "legacy_family": legacy_family,
+        "legacy_subfamily": legacy_subfamily,
+        "full_name": full_name,
+        "ps_name": ps_name,
+        "version": version,
+    }
+
+
+def update_cff_names(font, naming: dict) -> None:
+    cff_tag = "CFF2" if "CFF2" in font else "CFF " if "CFF " in font else None
+    if cff_tag is None:
+        return
+    cff = font[cff_tag].cff
+    if getattr(cff, "fontNames", None):
+        cff.fontNames[0] = naming["ps_name"]
+    top_dict = cff.topDictIndex[0]
+    if hasattr(top_dict, "FullName"):
+        top_dict.FullName = naming["full_name"]
+    if hasattr(top_dict, "FamilyName"):
+        top_dict.FamilyName = naming["legacy_family"]
+    if hasattr(top_dict, "ItalicAngle") and "post" in font:
+        top_dict.ItalicAngle = font["post"].italicAngle
+
+
+def update_fvar_instance_names(font, naming: dict) -> None:
+    if "fvar" not in font:
+        return
+    for instance in font["fvar"].instances:
+        style = _name(font, instance.subfamilyNameID)
+        instance_style = italic_style_name(style) if style else naming["italic_style"]
+        if style:
+            _set_name(font, instance.subfamilyNameID, instance_style)
+        ps_id = getattr(instance, "postscriptNameID", 0xFFFF)
+        if ps_id != 0xFFFF:
+            _set_name(font, ps_id, postscript_name(naming["family"], instance_style))
+
+
+def ensure_italic_stat(font) -> None:
+    from fontTools.otlLib.builder import buildStatTable
+    from fontTools.ttLib.tables import otTables as ot
+
+    def _ensure_axis_value_array(stat_table):
+        if not hasattr(stat_table, "AxisValueArray") or stat_table.AxisValueArray is None:
+            stat_table.AxisValueArray = ot.AxisValueArray()
+            stat_table.AxisValueArray.AxisValue = []
+        return stat_table.AxisValueArray
+
+    def _create_stat(f):
+        axes = []
+        if "fvar" in f:
+            for idx, axis in enumerate(f["fvar"].axes):
+                axes.append({"tag": axis.axisTag, "name": axis.axisNameID, "ordering": idx})
+        axes.append({
+            "tag": "ital",
+            "name": "Italic",
+            "ordering": len(axes),
+            "values": [{"value": 1.0, "linkedValue": 0.0, "name": "Italic", "flags": 0}],
+        })
+        buildStatTable(f, axes, elidedFallbackName=2)
+
+    if "STAT" not in font:
+        _create_stat(font)
+        return
+
+    stat_table = font["STAT"].table
+    if not hasattr(stat_table, "DesignAxisRecord") or stat_table.DesignAxisRecord is None:
+        _create_stat(font)
+        return
+
+    axes = stat_table.DesignAxisRecord.Axis
+    italic_idx = next((i for i, a in enumerate(axes) if a.AxisTag == "ital"), None)
+    name_tbl = font.get("name")
+    if italic_idx is None:
+        axis = ot.AxisRecord()
+        axis.AxisTag = "ital"
+        axis.AxisNameID = name_tbl.addName("Italic") if name_tbl else 2
+        axis.AxisOrdering = max((r.AxisOrdering for r in axes), default=-1) + 1
+        axes.append(axis)
+        italic_idx = len(axes) - 1
+        stat_table.DesignAxisCount = len(axes)
+        stat_table.DesignAxisRecordSize = 8
+
+    val_id = name_tbl.addName("Italic") if name_tbl else 2
+    arr = _ensure_axis_value_array(stat_table)
+    it_vals = [
+        av for av in arr.AxisValue
+        if getattr(av, "Format", None) != 4 and getattr(av, "AxisIndex", None) == italic_idx
+    ]
+    if it_vals:
+        av = it_vals[0]
+        for d in it_vals[1:]:
+            arr.AxisValue.remove(d)
+    else:
+        av = ot.AxisValue()
+        arr.AxisValue.append(av)
+
+    av.Format = 3
+    av.AxisIndex = italic_idx
+    av.Flags = 0
+    av.ValueNameID = val_id
+    av.Value = 1.0
+    av.LinkedValue = 0.0
+    stat_table.AxisValueCount = len(arr.AxisValue)
+    stat_table.Version = max(getattr(stat_table, "Version", 0x00010001), 0x00010001)
+
+
+def round_font_value(v: float) -> int:
+    return int(round(v))
+
+
+def shear_component_transform(transform: list[list[float]], shear: float) -> list[list[float]]:
+    xx, xy = transform[0]
+    yx, yy = transform[1]
+    return [
+        [xx + shear * xy, xy],
+        [yx + shear * yy - shear * xx - (shear * shear * xy), yy - shear * xy],
+    ]
+
+
+def shear_glyf_outlines(font, shear: float) -> None:
+    if "glyf" not in font:
+        return
+    glyph_order = font.getGlyphOrder()
+    glyf_table = font["glyf"]
+    hmtx = font["hmtx"].metrics if "hmtx" in font else {}
+    matrix = ((1, 0), (shear, 1))
+
+    for name in glyph_order:
+        g = glyf_table[name]
+        g.expand(glyf_table)
+        if hasattr(g, "removeHinting"):
+            g.removeHinting()
+        if g.isComposite():
+            for comp in g.components:
+                if hasattr(comp, "x") and hasattr(comp, "y"):
+                    comp.x = round_font_value(comp.x + shear * comp.y)
+                if hasattr(comp, "transform"):
+                    comp.transform = shear_component_transform(comp.transform, shear)
+        elif g.numberOfContours > 0:
+            g.coordinates.transform(matrix)
+            g.coordinates.toInt()
+
+    for name in glyph_order:
+        g = glyf_table[name]
+        if g.numberOfContours:
+            g.recalcBounds(glyf_table)
+            if name in hmtx and hasattr(g, "xMin"):
+                adv, _ = hmtx[name]
+                hmtx[name] = (adv, g.xMin)
+
+
+def gvar_metrics(font):
+    return (font["hmtx"].metrics if "hmtx" in font else {}), getattr(font.get("vmtx"), "metrics", None)
+
+
+def capture_gvar_coordinates(font):
+    if "gvar" not in font or "glyf" not in font:
+        return {}
+    glyf_table = font["glyf"]
+    h_m, v_m = gvar_metrics(font)
+    caps = {}
+    for name, vars in font["gvar"].variations.items():
+        if not vars:
+            continue
+        res = glyf_table._getCoordinatesAndControls(name, h_m, v_m)
+        if res is not None:
+            caps[name] = res
+    return caps
+
+
+def transform_gvar_coord(coord, shear: float, transform_x: bool):
+    if coord is None:
+        return None
+    x, y = coord
+    if transform_x:
+        x = x + shear * y
+    return round_font_value(x), round_font_value(y)
+
+
+def shear_gvar_deltas(font, shear: float, original_coordinates: dict) -> None:
+    if "gvar" not in font or "glyf" not in font or not original_coordinates:
+        return
+    glyf_table = font["glyf"]
+    h_m, v_m = gvar_metrics(font)
+    for name, vars in font["gvar"].variations.items():
+        if name not in original_coordinates:
+            continue
+        orig_c, orig_ctrl = original_coordinates[name]
+        curr_c, curr_ctrl = glyf_table._getCoordinatesAndControls(name, h_m, v_m)
+        real_pts = max(0, len(orig_c) - 4)
+        for var in vars:
+            var.calcInferredDeltas(orig_c, orig_ctrl.endPts)
+            var.coordinates = [
+                transform_gvar_coord(c, shear, i < real_pts)
+                for i, c in enumerate(var.coordinates)
+            ]
+            var.optimize(curr_c, curr_ctrl.endPts)
+
+
+def shear_cff_outlines(font, shear: float, keep_hints: bool = False) -> None:
+    from fontTools.cffLib.transforms import desubroutinize, remove_hints
+    from fontTools.cffLib.specializer import commandsToProgram, generalizeCommands, programToCommands, specializeCommands
+
+    cff_tag = "CFF2" if "CFF2" in font else "CFF " if "CFF " in font else None
+    if cff_tag is None:
+        return
+    cff_table = font[cff_tag].cff
+    top_dict = cff_table.topDictIndex[0]
+    char_strings = top_dict.CharStrings
+    cff2 = cff_tag == "CFF2"
+
+    if not cff2 and not keep_hints:
+        remove_hints(cff_table)
+    desubroutinize(cff_table)
+
+    var_store = getattr(top_dict, "VarStore", None) or getattr(char_strings, "varStore", None)
+    get_num_regions = getattr(var_store, "getNumRegions", None) if var_store else None
+
+    for name in font.getGlyphOrder():
+        cs = char_strings[name]
+        cs.decompile()
+        cmds = programToCommands(cs.program, getNumRegions=get_num_regions)
+        cmds = generalizeCommands(cmds)
+        new_cmds = []
+        for op, args in cmds:
+            args = list(args)
+            if op in {"rmoveto", "rlineto", "rrcurveto"}:
+                for idx in range(0, len(args), 2):
+                    args[idx] = round_font_value(args[idx] + shear * args[idx + 1])
+            new_cmds.append((op, args))
+        max_stack = 513 if cff2 else 48
+        cs.program = commandsToProgram(specializeCommands(new_cmds, generalizeFirst=False, maxstack=max_stack))
+        if hasattr(cs, "bytecode"):
+            cs.bytecode = None
+
+
+def shear_layout_value(val: int | None, y_val: int | None, shear: float) -> int | None:
+    return int(round(val + shear * y_val)) if val is not None and y_val is not None else val
+
+
+def shear_layout_object(obj: object, shear: float, seen: set[int]) -> None:
+    obj_id = id(obj)
+    if obj_id in seen:
+        return
+    seen.add(obj_id)
+    if hasattr(obj, "XCoordinate") and hasattr(obj, "YCoordinate"):
+        obj.XCoordinate = shear_layout_value(obj.XCoordinate, obj.YCoordinate, shear)
+    if hasattr(obj, "XPlacement") and hasattr(obj, "YPlacement"):
+        obj.XPlacement = shear_layout_value(obj.XPlacement, obj.YPlacement, shear)
+    attrs = getattr(obj, "__dict__", None)
+    if not attrs:
+        return
+    for v in attrs.values():
+        if isinstance(v, (str, bytes, int, float, type(None))):
+            continue
+        if isinstance(v, dict):
+            for it in v.values():
+                shear_layout_object(it, shear, seen)
+        elif isinstance(v, (list, tuple)):
+            for it in v:
+                shear_layout_object(it, shear, seen)
+        else:
+            shear_layout_object(v, shear, seen)
+
+
+def shear_layout_tables(font, shear: float) -> None:
+    for tag in ("GPOS", "BASE"):
+        if tag in font and hasattr(font[tag], "table"):
+            shear_layout_object(font[tag].table, shear, set())
+
+
+def update_italic_metadata(font, italic_angle: float) -> None:
+    shear = -math.tan(math.radians(italic_angle))
+    if "post" in font:
+        font["post"].italicAngle = italic_angle
+    if "head" in font:
+        font["head"].macStyle |= HEAD_ITALIC
+    if "OS/2" in font:
+        os2 = font["OS/2"]
+        os2.fsSelection |= OS2_ITALIC
+        os2.fsSelection &= ~OS2_REGULAR
+        os2.fsSelection &= ~OS2_OBLIQUE
+        if getattr(os2, "usWeightClass", 400) >= 700:
+            if "head" in font:
+                font["head"].macStyle |= HEAD_BOLD
+            os2.fsSelection |= OS2_BOLD
+    if "hhea" in font:
+        hhea = font["hhea"]
+        hhea.caretSlopeRise = 1000
+        hhea.caretSlopeRun = int(round(shear * 1000))
+        hhea.caretOffset = 0
+
+
+def remove_hinting_tables(font) -> None:
+    for tag in FONT_HINTING_TABLES:
+        if tag in font:
+            del font[tag]
+
+
+def recalc_font_tables(font) -> None:
+    if "maxp" in font and "glyf" in font:
+        font["maxp"].recalc(font)
+    if "hhea" in font:
+        font["hhea"].recalc(font)
+    if "OS/2" in font:
+        font["OS/2"].recalcAvgCharWidth(font)
+    if "DSIG" in font:
+        del font["DSIG"]
+
+
+def synthesize_italic_font(
+    font_or_path,
+    output_path=None,
+    italic_angle: float = -12.0,
+    keep_hinting_tables: bool = False,
+    transform_layout: bool = True,
+    source_stem: str = "",
+    angle: float | None = None,
+) -> None:
+    """Algorithmically slant outlines, variable deltas, and layout tables in font in-place or save to output_path."""
+    if angle is not None:
+        italic_angle = angle
+
+    from fontTools.ttLib import TTFont
+    should_save = False
+    if isinstance(font_or_path, (str, Path)):
+        kw = {"lazy": False, "recalcBBoxes": False, "recalcTimestamp": False}
+        font = TTFont(str(font_or_path), **kw)
+        if getattr(font, "flavor", None) is not None:
+            font.flavor = None
+        if not source_stem:
+            source_stem = Path(font_or_path).stem
+        should_save = True
+    else:
+        font = font_or_path
+
+    shear = -math.tan(math.radians(italic_angle))
+    if "glyf" in font:
+        orig = capture_gvar_coordinates(font)
+        shear_glyf_outlines(font, shear)
+        shear_gvar_deltas(font, shear, orig)
+    elif "CFF " in font or "CFF2" in font:
+        shear_cff_outlines(font, shear, keep_hinting_tables)
+    if transform_layout:
+        shear_layout_tables(font, shear)
+    update_italic_metadata(font, italic_angle)
+    naming = update_italic_names(font, source_stem)
+    update_fvar_instance_names(font, naming)
+    ensure_italic_stat(font)
+    update_cff_names(font, naming)
+    if not keep_hinting_tables:
+        remove_hinting_tables(font)
+    recalc_font_tables(font)
+    font.recalcBBoxes = True
+    font.recalcTimestamp = False
+
+    if should_save:
+        target = Path(output_path) if output_path else Path(font_or_path)
+        font.save(str(target))
+        font.close()
+
+
 def extract_opentype_features(font_or_path) -> dict[str, str]:
     from fontTools.ttLib import TTFont
     should_close = False
@@ -1476,6 +1971,8 @@ def compile_bundle(
     sanitize_names: bool = True,
     enable_centered_colon: bool = False,
     enable_pua_colon: bool = False,
+    enable_synthetic_italic: bool = False,
+    synthetic_italic_angle: float = -12.0,
     convert_otf: bool = True,
     enable_tabular_digits: bool = False,
     colon_alignment: str = "center",
@@ -1618,8 +2115,41 @@ def compile_bundle(
             print(f"[*] Processing variable Sans italic: {italic.get('family', 'Font')}...", flush=True)
             italic_idx = len(ttc_fonts)
             ttc_fonts.append(process_and_open(italic, "sans"))
+        elif italic is None and enable_synthetic_italic and not any(tag in upright.get("axes", {}) for tag in ("slnt", "ital")):
+            print(f"[*] Synthesizing variable Sans italic (angle: {synthetic_italic_angle}°)...", flush=True)
+            kw = {"lazy": False, "recalcBBoxes": False, "recalcTimestamp": False}
+            if upright["font_number"] is not None:
+                kw["fontNumber"] = upright["font_number"]
+            ital_font = TTFont(upright["path"], **kw)
+            if getattr(ital_font, "flavor", None) is not None:
+                ital_font.flavor = None
+            synthesize_italic_font(
+                ital_font,
+                italic_angle=synthetic_italic_angle,
+                keep_hinting_tables=keep_hinting,
+                source_stem=Path(upright["path"]).stem,
+            )
+            if convert_otf and ("CFF " in ital_font or "CFF2" in ital_font or getattr(ital_font, "sfntVersion", None) == "OTTO"):
+                otf_to_ttf(ital_font)
+            if not keep_hinting:
+                remove_font_hinting(ital_font)
+            if enable_tabular_digits:
+                equalize_clock_digits(ital_font)
+            if freeze_sans:
+                freeze_font_features(ital_font, freeze_sans)
+            if enable_centered_colon:
+                inject_centered_colon(ital_font, alignment=colon_alignment, offset=colon_offset, rule=colon_rule)
+            if enable_pua_colon:
+                copy_colon_to_pua(ital_font)
+            if sanitize_names:
+                sanitize_name_table(ital_font)
+            if fix_metrics:
+                fix_font_metrics(ital_font, mode=metrics_mode)
 
-        for st, f_face, f_idx in (("normal", upright, upright_idx), ("italic", italic or upright, italic_idx)):
+            italic_idx = len(ttc_fonts)
+            ttc_fonts.append(ital_font)
+
+        for st, f_face, f_idx in (("normal", upright, upright_idx), ("italic", upright, italic_idx)):
             for w in WEIGHT_NAMES:
                 ax = calc_axis_values(f_face, w, st == "italic")
                 if ax:
@@ -1638,14 +2168,54 @@ def compile_bundle(
         ordered_sans = dedupe_static(sans_faces)
         ordered_sans.sort(key=lambda f: (int(f["condensed"]), int(f["style"] == "italic"), f["weight"]))
 
+        has_any_italic = any(f["style"] == "italic" for f in ordered_sans)
+        should_synth_static = enable_synthetic_italic and not has_any_italic
+
         for idx, f in enumerate(ordered_sans):
             print(f"[*] Processing Sans font {idx + 1}/{len(ordered_sans)}: {f.get('family', 'Font')} ({f.get('weight', 400)} {f.get('style', 'normal')})...", flush=True)
             ttc_fonts.append(process_and_open(f, "sans"))
             xml_line = font_xml(output_filename, f["weight"], f["style"], index=len(ttc_fonts) - 1)
             (condensed_entries if f["condensed"] else normal_entries).append((f["weight"], f["style"], xml_line))
 
+            if should_synth_static and f["style"] == "normal":
+                print(f"[*] Synthesizing Sans italic ({f.get('weight', 400)}): {f.get('family', 'Font')}...", flush=True)
+                kw = {"lazy": False, "recalcBBoxes": False, "recalcTimestamp": False}
+                if f["font_number"] is not None:
+                    kw["fontNumber"] = f["font_number"]
+                ital_f = TTFont(f["path"], **kw)
+                if getattr(ital_f, "flavor", None) is not None:
+                    ital_f.flavor = None
+                synthesize_italic_font(
+                    ital_f,
+                    italic_angle=synthetic_italic_angle,
+                    keep_hinting_tables=keep_hinting,
+                    source_stem=Path(f["path"]).stem,
+                )
+                if convert_otf and ("CFF " in ital_f or "CFF2" in ital_f or getattr(ital_f, "sfntVersion", None) == "OTTO"):
+                    otf_to_ttf(ital_f)
+                if not keep_hinting:
+                    remove_font_hinting(ital_f)
+                if enable_tabular_digits:
+                    equalize_clock_digits(ital_f)
+                if freeze_sans:
+                    freeze_font_features(ital_f, freeze_sans)
+                if enable_centered_colon:
+                    inject_centered_colon(ital_f, alignment=colon_alignment, offset=colon_offset, rule=colon_rule)
+                if enable_pua_colon:
+                    copy_colon_to_pua(ital_f)
+                if sanitize_names:
+                    sanitize_name_table(ital_f)
+                if fix_metrics:
+                    fix_font_metrics(ital_f, mode=metrics_mode)
+
+                ttc_fonts.append(ital_f)
+                xml_line_it = font_xml(output_filename, f["weight"], "italic", index=len(ttc_fonts) - 1)
+                (condensed_entries if f["condensed"] else normal_entries).append((f["weight"], "italic", xml_line_it))
+
         if not normal_entries:
             normal_entries = list(condensed_entries)
+        normal_entries.sort(key=lambda item: (item[1] == "italic", item[0]))
+        condensed_entries.sort(key=lambda item: (item[1] == "italic", item[0]))
         sans_xml_str = "\n".join(x for _, _, x in normal_entries)
         condensed_xml_str = "\n".join(x for _, _, x in (condensed_entries or normal_entries))
 
@@ -1762,6 +2332,8 @@ def main():
     s_comp.add_argument("--no-sanitize-names", action="store_true")
     s_comp.add_argument("--enable-centered-colon", action="store_true")
     s_comp.add_argument("--enable-pua-colon", action="store_true", help="Copy/map colon to Android lockscreen clock colon PUA (U+EE01, U+2236, U+2982)")
+    s_comp.add_argument("--enable-synthetic-italic", action="store_true", help="Synthesize Sans-serif italic faces if missing")
+    s_comp.add_argument("--synthetic-italic-angle", type=float, default=-12.0, help="Slant angle for synthetic italic (default: -12)")
     s_comp.add_argument("--colon-alignment", choices=["center", "cap_height", "x_height"], default="center")
     s_comp.add_argument("--colon-offset", type=int, default=0)
     s_comp.add_argument("--colon-rule", choices=["between_digits", "after_digit", "always"], default="between_digits")
@@ -1788,6 +2360,9 @@ def main():
 
     s_pua_col = sub.add_parser("check-pua-colon", help="Check if font or directory contains Android lockscreen clock colon PUA (U+EE01)")
     s_pua_col.add_argument("paths", nargs="+", help="Path(s) to font file(s) or director(ies)")
+
+    s_check_ital = sub.add_parser("check-italic", help="Check if Sans-serif font has native italic faces or slant/italic axis")
+    s_check_ital.add_argument("paths", nargs="+", help="Path(s) to font file(s) or director(ies)")
 
     s_inj_col = sub.add_parser("inject-colon", help="Inject centered colon into font")
     s_inj_col.add_argument("--in", dest="input_file", required=True)
@@ -1882,6 +2457,9 @@ def main():
     elif args.cmd == "check-pua-colon":
         has_pua = any(font_has_pua_colon(p) for p in args.paths)
         print("true" if has_pua else "false")
+    elif args.cmd == "check-italic":
+        has_ital = any(font_has_italic_support(p) for p in args.paths)
+        print("true" if has_ital else "false")
     elif args.cmd == "inject-colon":
         from fontTools.ttLib import TTFont
         out_f = args.output_file or args.input_file
@@ -1956,6 +2534,8 @@ def main():
             sanitize_names=not args.no_sanitize_names,
             enable_centered_colon=args.enable_centered_colon,
             enable_pua_colon=args.enable_pua_colon,
+            enable_synthetic_italic=args.enable_synthetic_italic,
+            synthetic_italic_angle=args.synthetic_italic_angle,
             convert_otf=not args.no_convert_otf,
             enable_tabular_digits=args.enable_tabular_digits,
             colon_alignment=args.colon_alignment,
