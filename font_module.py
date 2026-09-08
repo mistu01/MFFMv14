@@ -2419,62 +2419,6 @@ def compile_fonts(
                     if pf.is_file():
                         payload.append(str(pf.relative_to(files_dir).as_posix()))
 
-        primary_file = None
-        if faces:
-            candidates_400 = [f for f in faces if f.style == "normal" and not f.condensed and f.weight == 400]
-            if candidates_400:
-                best = max(candidates_400, key=lambda f: (f.variable, _face_preference_score(f)))
-            else:
-                normal_c = [f for f in faces if f.style == "normal" and not f.condensed]
-                if normal_c:
-                    best = max(normal_c, key=lambda f: (f.variable, _face_preference_score(f)))
-                else:
-                    best = max(faces, key=lambda f: (f.variable, _face_preference_score(f)))
-            primary_rel = f"Sans/{best.path.name}"
-            if primary_rel in payload:
-                primary_file = primary_rel
-        if not primary_file:
-            primary_file = payload[0] if payload else "Sans/DroidSans.ttf"
-
-        config = [
-            f"FONT_MODE={shell_quote(mode)}",
-            f"FONT_FAMILY={shell_quote(family)}",
-            f"FONT_FILES={shell_quote(' '.join(payload))}",
-            f"FONT_PRIMARY={shell_quote(primary_file)}",
-            "VF_CONFIG_SCHEMA='2'",
-        ]
-        if mode == "variable":
-            upright = next((f for f in faces if f.style == "normal" and not f.condensed), faces[0] if faces else None)
-            italic = next((f for f in faces if f.style == "italic" and not f.condensed), None)
-            if upright and upright.axes and "wght" in upright.axes:
-                config.append(f'VF_UPRIGHT_AXIS_META="{_axis_metadata(upright, italic=False)}"')
-                config.append(f'VF_UPRIGHT_WEIGHTS="{_supported_weights(upright)}"')
-            if italic and italic.axes and "wght" in italic.axes and italic.path != getattr(upright, "path", None):
-                config.append(f'VF_ITALIC_AXIS_META="{_axis_metadata(italic, italic=True)}"')
-                config.append(f'VF_ITALIC_WEIGHTS="{_supported_weights(italic)}"')
-
-        mono_var = next((f for f in mono_faces if f.variable and "wght" in f.axes), None)
-        if mono_var:
-            config.append(f'VF_MONO_AXIS_META="{_axis_metadata(mono_var, italic=False)}"')
-            config.append(f'VF_MONO_WEIGHTS="{_supported_weights(mono_var)}"')
-
-        serif_var_upright = next((f for f in serif_faces if f.variable and f.style == "normal" and "wght" in f.axes), None)
-        if serif_var_upright:
-            config.append(f'VF_SERIF_UPRIGHT_AXIS_META="{_axis_metadata(serif_var_upright, italic=False)}"')
-            config.append(f'VF_SERIF_UPRIGHT_WEIGHTS="{_supported_weights(serif_var_upright)}"')
-
-        serif_var_italic = next((f for f in serif_faces if f.variable and f.style == "italic" and "wght" in f.axes), None)
-        if serif_var_italic:
-            config.append(f'VF_SERIF_ITALIC_AXIS_META="{_axis_metadata(serif_var_italic, italic=True)}"')
-            config.append(f'VF_SERIF_ITALIC_WEIGHTS="{_supported_weights(serif_var_italic)}"')
-
-        bengali_var = next((f for f in bengali_faces if f.variable and "wght" in f.axes), None)
-        if bengali_var:
-            config.append(f'VF_BENGALI_AXIS_META="{_axis_metadata(bengali_var, italic=False)}"')
-            config.append(f'VF_BENGALI_WEIGHTS="{_supported_weights(bengali_var)}"')
-
-        (module_dir / "font-config.sh").write_text("\n".join(config) + "\n", encoding="utf-8", newline="\n")
-
         family_faces = {
             "sans": tuple(faces),
             "mono": tuple(mono_faces),

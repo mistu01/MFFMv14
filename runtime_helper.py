@@ -1490,11 +1490,13 @@ def compile_bundle(
         upright = next((f for f in sans_faces if f["style"] == "normal" and not f["condensed"]), sans_faces[0])
         italic = next((f for f in sans_faces if f["style"] == "italic" and not f["condensed"]), None)
 
+        print(f"[*] Processing variable Sans upright: {upright.get('family', 'Font')}...", flush=True)
         upright_idx = len(ttc_fonts)
         ttc_fonts.append(process_and_open(upright, "sans"))
 
         italic_idx = upright_idx
         if italic and italic["path"] != upright["path"]:
+            print(f"[*] Processing variable Sans italic: {italic.get('family', 'Font')}...", flush=True)
             italic_idx = len(ttc_fonts)
             ttc_fonts.append(process_and_open(italic, "sans"))
 
@@ -1517,10 +1519,10 @@ def compile_bundle(
         ordered_sans = dedupe_static(sans_faces)
         ordered_sans.sort(key=lambda f: (int(f["condensed"]), int(f["style"] == "italic"), f["weight"]))
 
-        for f in ordered_sans:
-            idx = len(ttc_fonts)
+        for idx, f in enumerate(ordered_sans):
+            print(f"[*] Processing Sans font {idx + 1}/{len(ordered_sans)}: {f.get('family', 'Font')} ({f.get('weight', 400)} {f.get('style', 'normal')})...", flush=True)
             ttc_fonts.append(process_and_open(f, "sans"))
-            xml_line = font_xml(output_filename, f["weight"], f["style"], index=idx)
+            xml_line = font_xml(output_filename, f["weight"], f["style"], index=len(ttc_fonts) - 1)
             (condensed_entries if f["condensed"] else normal_entries).append((f["weight"], f["style"], xml_line))
 
         if not normal_entries:
@@ -1535,12 +1537,14 @@ def compile_bundle(
         first_idx = None
         var_upright = next((f for f in faces if f["variable"] and "wght" in f["axes"]), None)
         if var_upright:
+            print(f"[*] Processing variable {cat_name} upright: {var_upright.get('family', 'Font')}...", flush=True)
             idx = len(ttc_fonts)
             first_idx = idx
             ttc_fonts.append(process_and_open(var_upright, cat_name))
             var_italic = next((f for f in faces if f["style"] == "italic" and f["variable"] and "wght" in f["axes"]), None)
             ital_idx = idx
             if var_italic and var_italic["path"] != var_upright["path"]:
+                print(f"[*] Processing variable {cat_name} italic: {var_italic.get('family', 'Font')}...", flush=True)
                 ital_idx = len(ttc_fonts)
                 ttc_fonts.append(process_and_open(var_italic, cat_name))
             for st, vf, f_i in (("normal", var_upright, idx), ("italic", var_italic or var_upright, ital_idx)):
@@ -1556,11 +1560,11 @@ def compile_bundle(
 
             deduped = [max(group, key=face_preference_score) for group in grouped_static.values()]
             sorted_faces = sorted(deduped, key=lambda f: (int(f["condensed"]), int(f["style"] == "italic"), f["weight"]))
-            for f in sorted_faces:
-                idx = len(ttc_fonts)
-                if first_idx is None: first_idx = idx
+            for idx, f in enumerate(sorted_faces):
+                print(f"[*] Processing {cat_name} font {idx + 1}/{len(sorted_faces)}: {f.get('family', 'Font')} ({f.get('weight', 400)} {f.get('style', 'normal')})...", flush=True)
+                if first_idx is None: first_idx = len(ttc_fonts)
                 ttc_fonts.append(process_and_open(f, cat_name))
-                f_lines.append(font_xml(output_filename, f["weight"], f["style"], index=idx))
+                f_lines.append(font_xml(output_filename, f["weight"], f["style"], index=len(ttc_fonts) - 1))
         return f_lines, first_idx
 
     mono_lines, mono_idx = process_family(mono_faces, "mono")
@@ -1568,6 +1572,7 @@ def compile_bundle(
     bengali_lines, bengali_idx = process_family(bengali_faces, "bengali")
 
     # Save TTCollection
+    print(f"[*] Packaging {len(ttc_fonts)} fonts into TrueType collection ({output_filename})...", flush=True)
     ttc = TTCollection()
     ttc.fonts = ttc_fonts
     ttc.save(str(out_path / output_filename))
@@ -1593,45 +1598,6 @@ def compile_bundle(
     if bengali_lines:
         (out_path / "bengali.xml").write_text("\n".join(bengali_lines) + "\n", encoding="utf-8", newline="\n")
 
-    conf_lines = [
-        f'FONT_MODE="{mode}"',
-        f'FONT_FAMILY="{family_name}"',
-        f'HAS_CUSTOM_MONO="{"true" if mono_lines else "false"}"',
-        f'HAS_CUSTOM_SERIF="{"true" if serif_lines else "false"}"',
-        f'HAS_CUSTOM_BENGALI="{"true" if bengali_lines else "false"}"',
-        f'TTC_TOTAL_FONTS="{len(ttc_fonts)}"',
-    ]
-
-    if mode == "variable":
-        upright = next((f for f in sans_faces if f["style"] == "normal" and not f["condensed"]), sans_faces[0])
-        italic = next((f for f in sans_faces if f["style"] == "italic" and not f["condensed"]), None)
-        if upright and upright.get("axes") and "wght" in upright["axes"]:
-            conf_lines.append(f'VF_UPRIGHT_AXIS_META="{format_axis_meta(upright, False)}"')
-            conf_lines.append(f'VF_UPRIGHT_WEIGHTS="{supported_weights_str(upright)}"')
-        if italic and italic.get("axes") and "wght" in italic["axes"] and italic["path"] != upright["path"]:
-            conf_lines.append(f'VF_ITALIC_AXIS_META="{format_axis_meta(italic, True)}"')
-            conf_lines.append(f'VF_ITALIC_WEIGHTS="{supported_weights_str(italic)}"')
-
-    mono_var = next((f for f in mono_faces if f["variable"] and "wght" in f.get("axes", {})), None)
-    if mono_var:
-        conf_lines.append(f'VF_MONO_AXIS_META="{format_axis_meta(mono_var, False)}"')
-        conf_lines.append(f'VF_MONO_WEIGHTS="{supported_weights_str(mono_var)}"')
-
-    serif_var_upright = next((f for f in serif_faces if f["variable"] and f["style"] == "normal" and "wght" in f.get("axes", {})), None)
-    if serif_var_upright:
-        conf_lines.append(f'VF_SERIF_UPRIGHT_AXIS_META="{format_axis_meta(serif_var_upright, False)}"')
-        conf_lines.append(f'VF_SERIF_UPRIGHT_WEIGHTS="{supported_weights_str(serif_var_upright)}"')
-    serif_var_italic = next((f for f in serif_faces if f["variable"] and f["style"] == "italic" and "wght" in f.get("axes", {})), None)
-    if serif_var_italic:
-        conf_lines.append(f'VF_SERIF_ITALIC_AXIS_META="{format_axis_meta(serif_var_italic, True)}"')
-        conf_lines.append(f'VF_SERIF_ITALIC_WEIGHTS="{supported_weights_str(serif_var_italic)}"')
-
-    beng_var = next((f for f in bengali_faces if f["variable"] and "wght" in f.get("axes", {})), None)
-    if beng_var:
-        conf_lines.append(f'VF_BENGALI_AXIS_META="{format_axis_meta(beng_var, False)}"')
-        conf_lines.append(f'VF_BENGALI_WEIGHTS="{supported_weights_str(beng_var)}"')
-
-    (out_path / "font-config.sh").write_text("\n".join(conf_lines) + "\n", encoding="utf-8", newline="\n")
     print(f"Compiled unified TTC ({output_filename}) with {len(ttc_fonts)} fonts -> {out_dir}")
     return 0
 

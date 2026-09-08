@@ -1,6 +1,9 @@
 #!/system/bin/sh
 # MFFMv14 Font Module Installer
 
+# Prevent broken pipes (e.g. terminal disconnects, background UI freeze) from aborting the installer
+trap '' PIPE
+
 # Add Termux environment paths if available to access Python and fontTools during recovery/root installation
 if [ -d "/data/data/com.termux/files/usr/bin" ]; then
   export PATH="/data/data/com.termux/files/usr/bin:$PATH"
@@ -44,10 +47,13 @@ mffm_has_runtime() {
   done
   return 1
 }
-# Pre-export runtime lib to LD_LIBRARY_PATH if present (for brotli .so)
+# Pre-export runtime lib and bin to environment if present
 if [ -d "$MFFM_RUNTIME_DEST/lib" ]; then
   export LD_LIBRARY_PATH="$MFFM_RUNTIME_DEST/lib:$LD_LIBRARY_PATH"
   export PYTHONPATH="$MFFM_RUNTIME_DEST/lib/python3.11/site-packages:$MFFM_RUNTIME_DEST/lib/python3.11:$MFFM_RUNTIME_DEST/lib:$MFFM_RUNTIME_DEST:$PYTHONPATH"
+fi
+if [ -d "$MFFM_RUNTIME_DEST/bin" ]; then
+  export PATH="$MFFM_RUNTIME_DEST/bin:$PATH"
 fi
 
 if ! command -v ui_print >/dev/null 2>&1; then
@@ -89,14 +95,14 @@ mffm_log_line() {
 }
 
 mffm_ui_print() {
-  local message=$1
+  local message="$1"
   mffm_log_line "$message"
   if [ "${BOOTMODE:-false}" = "true" ]; then
-    printf '%s\n' "$message"
+    printf '%s\n' "$message" 2>/dev/null || true
   else
     case "$OUTFD" in
-      ''|*[!0-9]*) printf '%s\n' "$message" ;;
-      *) printf 'ui_print %s\nui_print\n' "$message" >&$OUTFD ;;
+      ''|*[!0-9]*) printf '%s\n' "$message" 2>/dev/null || true ;;
+      *) printf 'ui_print %s\nui_print\n' "$message" >&$OUTFD 2>/dev/null || true ;;
     esac
   fi
 }
@@ -639,17 +645,66 @@ get_category_dirs() {
   printf '%s' "$dirs"
 }
 
-if [ -f "$MODPATH/font-config.sh" ]; then
-  . "$MODPATH/font-config.sh"
-else
-  FONT_MODE=${FONT_MODE:-"variable"}
-  FONT_FILES=${FONT_FILES:-"DroidSans.ttf"}
-fi
-
 if [ -z "$FONT_FAMILY" ] && [ -f "$MODPATH/module.prop" ]; then
   FONT_FAMILY=$(grep '^name=' "$MODPATH/module.prop" 2>/dev/null | cut -d= -f2- | sed 's/^\[MFFMv14\][[:space:]]*//')
 fi
 [ -n "$FONT_FAMILY" ] || FONT_FAMILY="Custom Font"
+
+FONT_FILES="DroidSans.ttf"
+
+# Autonomous per-category font mode detection (Sans, Monospace, Serif, Bengali)
+# No external font-config.sh crutch required!
+detect_category_mode() {
+  local _f _d _p
+  for _d in "$@"; do
+    [ -d "$_d" ] || continue
+    for _p in '*.ttf' '*.otf' '*.ttc' '*.otc'; do
+      for _f in "$_d"/$_p; do
+        [ -f "$_f" ] || continue
+        if is_variable_font "$_f"; then
+          printf '%s\n' "variable"
+          return 0
+        fi
+      done
+    done
+  done
+  for _d in "$@"; do
+    [ -d "$_d" ] || continue
+    for _p in '*.ttf' '*.otf' '*.ttc' '*.otc' '*.woff' '*.woff2'; do
+      for _f in "$_d"/$_p; do
+        [ -f "$_f" ] || continue
+        printf '%s\n' "static"
+        return 0
+      done
+    done
+  done
+  printf '%s\n' "none"
+  return 0
+}
+
+refresh_font_modes() {
+  if [ -f "$FONT_DIR/DroidSans.ttf" ] && is_variable_font "$FONT_DIR/DroidSans.ttf"; then
+    SANS_MODE="variable"
+  elif [ -f "$FONT_DIR/DroidSans.ttf" ]; then
+    SANS_MODE="static"
+  else
+    SANS_MODE=$(detect_category_mode "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
+  fi
+  [ "$SANS_MODE" = "none" ] && SANS_MODE="static"
+
+  MONO_MODE=$(detect_category_mode "$FONT_DIR/Monospace" "$MFFM_DIR/Monospace")
+  SERIF_MODE=$(detect_category_mode "$FONT_DIR/Serif" "$MFFM_DIR/Serif")
+  BENGALI_MODE=$(detect_category_mode "$FONT_DIR/Bengali" "$MFFM_DIR/Bengali")
+
+  FONT_MODE="$SANS_MODE"
+
+  HAS_ANY_VARIABLE=false
+  if [ "$SANS_MODE" = "variable" ] || [ "$MONO_MODE" = "variable" ] || [ "$SERIF_MODE" = "variable" ] || [ "$BENGALI_MODE" = "variable" ]; then
+    HAS_ANY_VARIABLE=true
+  fi
+}
+
+refresh_font_modes
 
 mkdir -p "$SYS_FONT" "$SYS_ETC" "$PRODUCT_FONT" "$PRODUCT_ETC" || fail "Could not create module overlay directories"
 if [ "$MOUNTIFY" != "true" ] && [ ! -d "/data/adb/modules/mountify" ]; then
@@ -1515,9 +1570,15 @@ ensure_variable_config_file() {
   fi
 
   if [ ! -f "$VF_CONFIG_FILE" ]; then
+    _cfg_title="MFFMv14 VARIABLE FONT CONFIGURATION"
+    _cfg_msg="variable-axis configuration"
+    if [ "$HAS_ANY_VARIABLE" != "true" ]; then
+      _cfg_title="MFFMv14 FONT CONFIGURATION"
+      _cfg_msg="typography configuration"
+    fi
     cat > "$VF_CONFIG_FILE" <<EOF
 # ==============================================================================
-# MFFMv14 VARIABLE FONT CONFIGURATION
+# $_cfg_title
 # ==============================================================================
 # Font: $FONT_FAMILY
 # Module identity: $VF_CONFIG_ID
@@ -1525,14 +1586,14 @@ CONFIG_SCHEMA=$VF_CONFIG_SCHEMA
 MODULE_IDENTITY=$VF_CONFIG_ID
 EOF
     VF_CONFIG_CREATED=1
-    ui_print "  [OK] Created variable-axis configuration: ${VF_CONFIG_FILE##*/}"
+    ui_print "  [OK] Created ${_cfg_msg}: ${VF_CONFIG_FILE##*/}"
   else
     VF_CONFIG_CREATED=0
     if ! grep -q "^[[:space:]]*MODULE_IDENTITY[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
       printf 'MODULE_IDENTITY=%s\n' "$VF_CONFIG_ID" >> "$VF_CONFIG_FILE"
     fi
   fi
-  [ -f "$VF_CONFIG_FILE" ] || fail "Could not create variable-axis configuration: $VF_CONFIG_FILE"
+  [ -f "$VF_CONFIG_FILE" ] || fail "Could not create configuration file: $VF_CONFIG_FILE"
 
   # Clean any other stale/older module configs and older logs in /sdcard/MFFM
   if [ -d "$MFFM_DIR" ]; then
@@ -1548,32 +1609,157 @@ EOF
 }
 
 configure_variable_family_profile() {
-  local profile=$1 font_file=$2 xml_style=$3 weights=$4
-  shift 4
-  local fragment_list="$*"
-  [ -f "$font_file" ] || return 0
-
-  ensure_variable_config_file
-  [ -n "$VF_CONFIG_FILE" ] && [ -f "$VF_CONFIG_FILE" ] || return 0
-
-  local axes_meta
-  axes_meta=$(extract_fvar_axes "$font_file" | tr ' ' '\n' | awk -F: '{print $1 "|" $2 "|" $3 "|" $4}' | tr '\n' ' ')
-  [ -n "$axes_meta" ] || axes_meta="wght|300|400|700"
-
-  ensure_profile_keys "$profile" "$axes_meta" "$weights"
-  apply_profile "$profile" "$xml_style" "$axes_meta" "$weights" $fragment_list
-  reformat_config_file
+  local profile=$1 meta=$2 weights=$3 xml_file=$4 style=$5
+  [ -n "$meta" ] && [ -f "$xml_file" ] || return 0
+  ensure_profile_keys "$profile" "$meta" "$weights"
+  apply_profile "$profile" "$style" "$meta" "$weights" "$xml_file"
 }
 
-prune_obsolete_profile_keys() {
-  local profile=$1
-  [ -n "$VF_CONFIG_FILE" ] && [ -f "$VF_CONFIG_FILE" ] || return 0
+reformat_config_file() {
+  local conf="$VF_CONFIG_FILE"
+  [ -f "$conf" ] || return 0
 
-  awk -v prefix="${profile}_" '
-    $0 ~ "^[[:space:]]*#" && index($0, prefix) > 0 { next }
-    $0 ~ "^[[:space:]]*" prefix { next }
-    { print }
-  ' "$VF_CONFIG_FILE" > "$VF_CONFIG_FILE.tmp" && mv -f "$VF_CONFIG_FILE.tmp" "$VF_CONFIG_FILE"
+  awk '
+  BEGIN {
+    in_typo = 0
+    in_profile = 0
+    cur_profile = ""
+    num_profiles = 0
+    header_count = 0
+    typo_count = 0
+    buf_count = 0
+
+    profiles[++num_profiles] = "SANS_UPRIGHT"; titles["SANS_UPRIGHT"] = "SANS-SERIF / UPRIGHT"
+    profiles[++num_profiles] = "SANS_ITALIC"; titles["SANS_ITALIC"] = "SANS-SERIF / ITALIC"
+    profiles[++num_profiles] = "CONDENSED_UPRIGHT"; titles["CONDENSED_UPRIGHT"] = "CONDENSED / UPRIGHT"
+    profiles[++num_profiles] = "CONDENSED_ITALIC"; titles["CONDENSED_ITALIC"] = "CONDENSED / ITALIC"
+    profiles[++num_profiles] = "MONOSPACE_UPRIGHT"; titles["MONOSPACE_UPRIGHT"] = "MONOSPACE / UPRIGHT"
+    profiles[++num_profiles] = "SERIF_UPRIGHT"; titles["SERIF_UPRIGHT"] = "SERIF / UPRIGHT"
+    profiles[++num_profiles] = "SERIF_ITALIC"; titles["SERIF_ITALIC"] = "SERIF / ITALIC"
+    profiles[++num_profiles] = "BENGALI_UPRIGHT"; titles["BENGALI_UPRIGHT"] = "BENGALI / UPRIGHT"
+
+    for (p = 1; p <= num_profiles; p++) prof_counts[profiles[p]] = 0
+  }
+
+  function get_profile(k) {
+    for (p = 1; p <= num_profiles; p++) {
+      if (index(k, profiles[p] "_") == 1) return profiles[p]
+    }
+    return ""
+  }
+
+  {
+    line = $0
+
+    if (line ~ /ADVANCED TYPOGRAPHY/) {
+      in_typo = 1
+      in_profile = 0
+      for (b = 0; b < buf_count; b++) typo[typo_count++] = buf[b]
+      buf_count = 0
+      typo[typo_count++] = line
+      next
+    }
+
+    if (in_typo) {
+      typo[typo_count++] = line
+      next
+    }
+
+    if (line ~ /^CONFIG_SCHEMA=/ || line ~ /^MODULE_IDENTITY=/) {
+      for (b = 0; b < buf_count; b++) header[header_count++] = buf[b]
+      buf_count = 0
+      header[header_count++] = line
+      next
+    }
+
+    match_prof = ""
+    if (line ~ /^[A-Z0-9_]+=[^#;]*/) {
+      split(line, parts, "=")
+      key = parts[1]
+      gsub(/[ \t]/, "", key)
+      match_prof = get_profile(key)
+    }
+
+    if (match_prof != "") {
+      for (b = 0; b < buf_count; b++) {
+        b_line = buf[b]
+        if (b_line !~ /^# -{10,}/ && b_line !~ /^# [A-Z0-9_ \/\-]+$/) {
+          prof_lines[match_prof, prof_counts[match_prof]++] = b_line
+        }
+      }
+      buf_count = 0
+      prof_lines[match_prof, prof_counts[match_prof]++] = line
+      in_profile = 1
+      cur_profile = match_prof
+      next
+    }
+
+    if (line ~ /^#/) {
+      buf[buf_count++] = line
+    }
+  }
+
+  END {
+    while (header_count > 0 && header[header_count - 1] ~ /^[ \t]*$/) header_count--
+    for (h = 0; h < header_count; h++) print header[h]
+
+    for (p = 1; p <= num_profiles; p++) {
+      prof = profiles[p]
+      if (prof_counts[prof] > 0) {
+        print ""
+        print "# ------------------------------------------------------------------------------"
+        print "# " titles[prof]
+        print "# ------------------------------------------------------------------------------"
+        for (l = 0; l < prof_counts[prof]; l++) {
+          print prof_lines[prof, l]
+        }
+      }
+    }
+
+    if (typo_count > 0) {
+      start_t = 0
+      while (start_t < typo_count && typo[start_t] ~ /^[ \t]*$/) start_t++
+      if (start_t < typo_count) {
+        print ""
+        for (t = start_t; t < typo_count; t++) print typo[t]
+      }
+    }
+  }
+  ' "$conf" > "$conf.tmp" && mv -f "$conf.tmp" "$conf"
+}
+
+update_installed_module_description() {
+  local prop_file="$MODPATH/module.prop"
+  [ -f "$prop_file" ] || return 0
+
+  local current_desc
+  current_desc=$(grep '^description=' "$prop_file" 2>/dev/null | cut -d= -f2-)
+  [ -z "$current_desc" ] && return 0
+
+  # Strip any previous active tag to stay idempotent across reflashes
+  local base_desc
+  base_desc=$(printf '%s' "$current_desc" | sed -E 's/ \[[^]]*\]$//')
+
+  local active_tags=""
+  [ "${_applied_colon:-0}" = "1" ] && active_tags="${active_tags:+$active_tags, }Centered Colon"
+  [ "${_applied_tabular:-0}" = "1" ] && active_tags="${active_tags:+$active_tags, }Tabular Clock"
+  if [ "${_applied_freeze:-0}" = "1" ]; then
+    local _frozen_list=""
+    [ -n "$_cfg_sans_f" ] && _frozen_list="Sans: $_cfg_sans_f"
+    [ -n "$_cfg_mono_f" ] && _frozen_list="${_frozen_list:+$_frozen_list, }Mono: $_cfg_mono_f"
+    [ -n "$_cfg_serif_f" ] && _frozen_list="${_frozen_list:+$_frozen_list, }Serif: $_cfg_serif_f"
+    [ -n "$_cfg_beng_f" ] && _frozen_list="${_frozen_list:+$_frozen_list, }Bengali: $_cfg_beng_f"
+    [ -n "$_frozen_list" ] && active_tags="${active_tags:+$active_tags, }Freeze: $_frozen_list"
+  fi
+  if [ "${_applied_metrics:-0}" = "1" ] && [ -n "$_cfg_metrics_mode" ] && [ "$_cfg_metrics_mode" != "preserve" ]; then
+    active_tags="${active_tags:+$active_tags, }Metrics: $_cfg_metrics_mode"
+  fi
+
+  if [ -n "$active_tags" ]; then
+    sed -i "s|^description=.*|description=${base_desc} [Active: ${active_tags}]|" "$prop_file" 2>/dev/null
+  else
+    sed -i "s|^description=.*|description=${base_desc}|" "$prop_file" 2>/dev/null
+  fi
 }
 
 prepare_variable_config() {
@@ -1589,6 +1775,63 @@ prepare_variable_config() {
     if [ -n "$_vf_candidate" ] && is_variable_font "$_vf_candidate"; then
       VF_UPRIGHT_AXIS_META=$(extract_fvar_axes "$_vf_candidate" | tr ' ' '\n' | awk -F: '{print $1 "|" $2 "|" $3 "|" $4}' | tr '\n' ' ')
       [ -z "$VF_UPRIGHT_WEIGHTS" ] && VF_UPRIGHT_WEIGHTS="100 200 300 400 500 600 700 800 900"
+      HAS_ANY_VARIABLE=true
+    fi
+  fi
+
+  if [ -z "$VF_ITALIC_AXIS_META" ]; then
+    local _vf_ital_cand
+    _vf_ital_cand=$(find_first '*Italic*.ttf' "$FONT_DIR/Sans" "$MFFM_DIR/Sans")
+    [ -z "$_vf_ital_cand" ] && _vf_ital_cand=$(find_first '*Italic*.otf' "$FONT_DIR/Sans" "$MFFM_DIR/Sans")
+    if [ -n "$_vf_ital_cand" ] && [ "$_vf_ital_cand" != "$_vf_candidate" ] && is_variable_font "$_vf_ital_cand"; then
+      VF_ITALIC_AXIS_META=$(extract_fvar_axes "$_vf_ital_cand" | tr ' ' '\n' | awk -F: '{print $1 "|" $2 "|" $3 "|" $4}' | tr '\n' ' ')
+      [ -z "$VF_ITALIC_WEIGHTS" ] && VF_ITALIC_WEIGHTS="100 200 300 400 500 600 700 800 900"
+      HAS_ANY_VARIABLE=true
+    fi
+  fi
+
+  if [ -z "$VF_MONO_AXIS_META" ]; then
+    local _vf_mono_cand
+    _vf_mono_cand=$(find_first '*.ttf' "$FONT_DIR/Monospace" "$MFFM_DIR/Monospace")
+    [ -z "$_vf_mono_cand" ] && _vf_mono_cand=$(find_first '*.otf' "$FONT_DIR/Monospace" "$MFFM_DIR/Monospace")
+    if [ -n "$_vf_mono_cand" ] && is_variable_font "$_vf_mono_cand"; then
+      VF_MONO_AXIS_META=$(extract_fvar_axes "$_vf_mono_cand" | tr ' ' '\n' | awk -F: '{print $1 "|" $2 "|" $3 "|" $4}' | tr '\n' ' ')
+      [ -z "$VF_MONO_WEIGHTS" ] && VF_MONO_WEIGHTS="100 200 300 400 500 600 700 800 900"
+      HAS_ANY_VARIABLE=true
+    fi
+  fi
+
+  if [ -z "$VF_SERIF_UPRIGHT_AXIS_META" ]; then
+    local _vf_serif_cand
+    _vf_serif_cand=$(find_first '*Regular*.ttf' "$FONT_DIR/Serif" "$MFFM_DIR/Serif")
+    [ -z "$_vf_serif_cand" ] && _vf_serif_cand=$(find_first '*.ttf' "$FONT_DIR/Serif" "$MFFM_DIR/Serif")
+    [ -z "$_vf_serif_cand" ] && _vf_serif_cand=$(find_first '*.otf' "$FONT_DIR/Serif" "$MFFM_DIR/Serif")
+    if [ -n "$_vf_serif_cand" ] && is_variable_font "$_vf_serif_cand"; then
+      VF_SERIF_UPRIGHT_AXIS_META=$(extract_fvar_axes "$_vf_serif_cand" | tr ' ' '\n' | awk -F: '{print $1 "|" $2 "|" $3 "|" $4}' | tr '\n' ' ')
+      [ -z "$VF_SERIF_UPRIGHT_WEIGHTS" ] && VF_SERIF_UPRIGHT_WEIGHTS="100 200 300 400 500 600 700 800 900"
+      HAS_ANY_VARIABLE=true
+    fi
+  fi
+
+  if [ -z "$VF_SERIF_ITALIC_AXIS_META" ]; then
+    local _vf_serif_ital_cand
+    _vf_serif_ital_cand=$(find_first '*Italic*.ttf' "$FONT_DIR/Serif" "$MFFM_DIR/Serif")
+    [ -z "$_vf_serif_ital_cand" ] && _vf_serif_ital_cand=$(find_first '*Italic*.otf' "$FONT_DIR/Serif" "$MFFM_DIR/Serif")
+    if [ -n "$_vf_serif_ital_cand" ] && [ "$_vf_serif_ital_cand" != "$_vf_serif_cand" ] && is_variable_font "$_vf_serif_ital_cand"; then
+      VF_SERIF_ITALIC_AXIS_META=$(extract_fvar_axes "$_vf_serif_ital_cand" | tr ' ' '\n' | awk -F: '{print $1 "|" $2 "|" $3 "|" $4}' | tr '\n' ' ')
+      [ -z "$VF_SERIF_ITALIC_WEIGHTS" ] && VF_SERIF_ITALIC_WEIGHTS="100 200 300 400 500 600 700 800 900"
+      HAS_ANY_VARIABLE=true
+    fi
+  fi
+
+  if [ -z "$VF_BENGALI_AXIS_META" ]; then
+    local _vf_beng_cand
+    _vf_beng_cand=$(find_first '*.ttf' "$FONT_DIR/Bengali" "$MFFM_DIR/Bengali")
+    [ -z "$_vf_beng_cand" ] && _vf_beng_cand=$(find_first '*.otf' "$FONT_DIR/Bengali" "$MFFM_DIR/Bengali")
+    if [ -n "$_vf_beng_cand" ] && is_variable_font "$_vf_beng_cand"; then
+      VF_BENGALI_AXIS_META=$(extract_fvar_axes "$_vf_beng_cand" | tr ' ' '\n' | awk -F: '{print $1 "|" $2 "|" $3 "|" $4}' | tr '\n' ' ')
+      [ -z "$VF_BENGALI_WEIGHTS" ] && VF_BENGALI_WEIGHTS="100 200 300 400 500 600 700 800 900"
+      HAS_ANY_VARIABLE=true
     fi
   fi
 
@@ -1826,14 +2069,11 @@ fi
 _helper_avail=$(mffm_runtime_helper 2>/dev/null)
 if [ "$FONT_MODE" = "variable" ] || [ -n "$VF_UPRIGHT_AXIS_META" ] || [ -n "$VF_ITALIC_AXIS_META" ] || [ -n "$VF_MONO_AXIS_META" ] || [ -n "$VF_SERIF_UPRIGHT_AXIS_META" ] || [ -n "$VF_BENGALI_AXIS_META" ] || [ -n "$_helper_avail" ]; then
   prepare_variable_config
-  ui_print "    Axis config  : $VF_CONFIG_FILE"
-fi
-
-if [ "$FONT_MODE" != "variable" ]; then
-  prune_obsolete_profile_keys SANS_UPRIGHT
-  prune_obsolete_profile_keys SANS_ITALIC
-  prune_obsolete_profile_keys CONDENSED_UPRIGHT
-  prune_obsolete_profile_keys CONDENSED_ITALIC
+  if [ "$HAS_ANY_VARIABLE" = "true" ]; then
+    ui_print "    Axis config  : $VF_CONFIG_FILE"
+  else
+    ui_print "    Config file  : $VF_CONFIG_FILE"
+  fi
 fi
 
 # ── Dynamic On-Device Compilation Engine (MFFM Runtime) ──────────────────────
@@ -1876,15 +2116,15 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
     _should_compile=1
   fi
 
-  local _applied_colon=0
-  local _applied_tabular=0
-  local _applied_freeze=0
-  local _applied_metrics=0
+  _applied_colon=0
+  _applied_tabular=0
+  _applied_freeze=0
+  _applied_metrics=0
 
   if [ "$_should_compile" = "1" ]; then
     ui_print "- Dynamic compilation via MFFM Runtime..."
     _extra_compile_args=""
-    local _req_colon=0 _req_tabular=0 _req_freeze=0 _req_metrics=0
+    _req_colon=0; _req_tabular=0; _req_freeze=0; _req_metrics=0
     case "$_cfg_colon" in
       yes|YES|true|TRUE|1)
         _req_colon=1
@@ -1914,19 +2154,32 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
     if [ -n "$_cfg_serif_f" ]; then _req_freeze=1; _extra_compile_args="$_extra_compile_args --freeze-serif $_cfg_serif_f"; ui_print "    [*] Freezing Serif features: $_cfg_serif_f..."; fi
     if [ -n "$_cfg_beng_f" ]; then _req_freeze=1; _extra_compile_args="$_extra_compile_args --freeze-bengali $_cfg_beng_f"; ui_print "    [*] Freezing Bengali features: $_cfg_beng_f..."; fi
 
-    local _comp_log="/dev/.mffm_compile_output.log"
+    _comp_log="/dev/.mffm_compile_output.log"
     rm -f "$_comp_log" 2>/dev/null
+
+    _comp_pid=
     "$_helper" compile-bundle \
       --out-dir "$FONT_DIR" \
       --sans-dir "$FONT_DIR/Sans" --sans-dir "$MFFM_DIR/Sans" --sans-dir "$FONT_DIR" \
       --mono-dir "$FONT_DIR/Monospace" --mono-dir "$MFFM_DIR/Monospace" \
       --serif-dir "$FONT_DIR/Serif" --serif-dir "$MFFM_DIR/Serif" \
       --bengali-dir "$FONT_DIR/Bengali" --bengali-dir "$MFFM_DIR/Bengali" \
-      $_extra_compile_args > "$_comp_log" 2>&1
+      $_extra_compile_args > "$_comp_log" 2>&1 &
+    _comp_pid=$!
+
+    # Heartbeat loop keeps terminal pipe and UI active during compilation
+    _elapsed=0
+    while kill -0 "$_comp_pid" 2>/dev/null; do
+      sleep 3
+      _elapsed=$((_elapsed + 3))
+      ui_print "    [*] Compiling font payload on-device (${_elapsed}s elapsed)..."
+    done
+    wait "$_comp_pid"
     _compile_ret=$?
     cat "$_comp_log" >> "$LOG_FILE" 2>/dev/null
-    if [ "$_compile_ret" = "0" ] && [ -f "$FONT_DIR/font-config.sh" ]; then
-      . "$FONT_DIR/font-config.sh"
+
+    if [ "$_compile_ret" = "0" ]; then
+      refresh_font_modes
       FONT_FILES="DroidSans.ttf"
       if [ "$_req_colon" = "1" ]; then
         _applied_colon=1
@@ -1938,7 +2191,7 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
       fi
       if [ "$_req_freeze" = "1" ]; then
         _applied_freeze=1
-        local _fr_summary=""
+        _fr_summary=""
         [ -n "$_cfg_sans_f" ] && _fr_summary="Sans: $_cfg_sans_f"
         [ -n "$_cfg_mono_f" ] && _fr_summary="${_fr_summary:+$_fr_summary, }Mono: $_cfg_mono_f"
         [ -n "$_cfg_serif_f" ] && _fr_summary="${_fr_summary:+$_fr_summary, }Serif: $_cfg_serif_f"
@@ -1956,7 +2209,6 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
       [ "$_req_freeze" = "1" ] && ui_print "    [!] OpenType feature freezing failed"
       [ "$_req_metrics" = "1" ] && ui_print "    [!] Font metrics harmonization failed"
       status_warn "Dynamic compilation failed (exit $_compile_ret); see $LOG_FILE"
-      local _err_snippet
       _err_snippet=$(grep -iE 'error|exception|traceback' "$_comp_log" 2>/dev/null | tail -n 1)
       [ -n "$_err_snippet" ] && ui_print "    [!] Cause: $_err_snippet"
       ui_print "    [!] Reverting to bundled fonts without dynamic modifications"
@@ -1966,15 +2218,9 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
 fi
 
 # Re-evaluate the variable-axis config after the on-device compiler may have
-# refreshed font-config.sh (FONT_MODE / FONT_FAMILY / VF_*_AXIS_META). The
-# build-time call above ran against pre-compile state, so without this
-# re-check the /sdcard/MFFM/MFFMv14_*.conf file is either never created (when
-# the build was static and the user dropped VF fonts in /sdcard/MFFM/) or
-# carries stale weights and gets cleaned up by the post-process gate.
-if [ "$FONT_MODE" = "variable" ] || [ -n "$VF_UPRIGHT_AXIS_META" ] || [ -n "$VF_ITALIC_AXIS_META" ] || [ -n "$VF_MONO_AXIS_META" ] || [ -n "$VF_SERIF_UPRIGHT_AXIS_META" ] || [ -n "$VF_BENGALI_AXIS_META" ]; then
-  # Re-evaluate variable-axis config with the runtime-discovered family and metadata
-  # without destroying existing user customizations (ensure_variable_config_file will retain them).
-  local _prev_vf_conf="$VF_CONFIG_FILE"
+# discovered new weights or updated payload.
+if [ "$HAS_ANY_VARIABLE" = "true" ] || [ -n "$VF_UPRIGHT_AXIS_META" ] || [ -n "$VF_ITALIC_AXIS_META" ] || [ -n "$VF_MONO_AXIS_META" ] || [ -n "$VF_SERIF_UPRIGHT_AXIS_META" ] || [ -n "$VF_BENGALI_AXIS_META" ]; then
+  _prev_vf_conf="$VF_CONFIG_FILE"
   VF_CONFIG_FILE=""
   prepare_variable_config
   if [ -n "$_prev_vf_conf" ] && [ -f "$_prev_vf_conf" ] && [ "$_prev_vf_conf" != "$VF_CONFIG_FILE" ]; then
@@ -3037,7 +3283,6 @@ if [ -d "$MFFM_DIR" ]; then
 fi
 
 rm -rf "$FONT_DIR"
-rm -f "$MODPATH/font-config.sh"
 rm -f /dev/.mffm_stock_*.xml 2>/dev/null
 status_ok "Permissions and cleanup"
 
