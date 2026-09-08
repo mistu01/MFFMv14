@@ -16,11 +16,29 @@ versioning scheme the modules themselves carry.
   - Automatically updates `module.prop`'s `description` during installation (and at build time) to clearly reflect all active features (e.g. `[Active: Centered Colon, Tabular Digits, Frozen: ss03, ss04, zero]`) cleanly and idempotently across re-flashes.
 
 ### Removed
+- **Completely Eliminated `font-config.sh`**:
+  - Removed `font-config.sh` generation, packaging, and sourcing across `build.py`, `font_module.py`, `runtime_helper.py`, `runtime-template/customize.sh`, and `template/customize.sh`.
+  - Font modules no longer require any external shell configuration crutch; the installer discovers font parameters and metadata dynamically from binaries and `module.prop`.
 - **Completely Dropped Zygote RAM & Table Optimizer**:
   - Removed `optimize_font_tables()`, `ZYGOTE_BLOAT_TABLES`, and the `optimize` CLI command from `runtime_helper.py`.
   - Removed `--optimize-tables` CLI flag and logic from `compile_bundle` and `process-font`.
   - Removed `ENABLE_ZYGOTE_OPTIMIZATION` from configuration generator and runtime compiler forwarding in `template/customize.sh`.
   - Standard bytecode hinting removal (`remove_font_hinting` / `--no-hinting`) remains fully supported and intact.
+
+### Added
+- **Autonomous Multi-Category Font Detection**:
+  - Implemented `detect_category_mode()` and `refresh_font_modes()` in `template/customize.sh`.
+  - Directly inspects font binaries on-the-fly (`is_variable_font`) across all four categories: Sans (`SANS_MODE`), Monospace (`MONO_MODE`), Serif (`SERIF_MODE`), and Bengali (`BENGALI_MODE`).
+  - Sets `FONT_MODE="variable"` if Sans is variable or if any secondary category contains variable fonts (`HAS_ANY_VARIABLE=true`).
+  - Autonomously extracts `fvar` axes and populates `VF_*_AXIS_META` directly from font headers for any variable category present without external helper scripts.
+  - Automatically recognizes purely static font packages (like SF Pro static) and generates appropriate configuration files without axis confusion.
+- **Root Manager Anti-Freeze & Broken-Pipe Safeguards (KernelSU / Magisk / APatch)**:
+  - Added `trap '' PIPE` signal ignoring and error suppression (`2>/dev/null || true`) in `mffm_ui_print` to prevent unhandled `SIGPIPE` termination when root manager UI log streams close or lag.
+  - Added active 3-second heartbeat progress loop while running on-device dynamic compilation (`compile-bundle`) in the background, keeping the root manager terminal pipe fed and preventing the Android Cached App Freezer from freezing long-running font compilations.
+  - Added real-time flushed font processing logs (`flush=True`) in `runtime_helper.py`.
+  - Removed invalid top-level `local` declarations in `template/customize.sh` for strict POSIX shell compliance (`toybox`, `mksh`, `busybox ash`).
+- **Legacy Extraction Enhancements in `update.py`**:
+  - Expanded `OLD_PRIMARY_NAMES` and added automatic categorization for fonts found in legacy `system/fonts` directories, properly assigning Monospace and Serif fonts to their respective subdirectories during migration.
 
 ### Changed
 - **Compact Metric Optimization Default**:

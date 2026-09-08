@@ -19,6 +19,8 @@ from zipsigner_auto import ZipSignerError, sign_zip
 OLD_PRIMARY_NAMES = (
     "DroidSans.ttc", "DroidSans.ttf", "DroidSans.otf", "RobotoStatic-Regular.ttf",
     "DroidSans-Italic.ttf", "DroidSans-Italic.otf", "DroidSans-Bold.ttf",
+    "DroidSansMono.ttf", "CutiveMono.ttf",
+    "DroidSerif-Regular.ttf", "DroidSerif-Italic.ttf", "DroidSerif-Bold.ttf", "DroidSerif-BoldItalic.ttf",
 )
 
 
@@ -83,13 +85,20 @@ def find_categorized_sources(old_root: Path) -> dict[str, list[Path]]:
             categorized[category].append(path)
 
     if not any(categorized.values()):
-        for directory in (old_root / "system" / "fonts", old_root):
-            if directory.is_dir():
-                for path in sorted(directory.iterdir()):
-                    if not path.is_file() or path.suffix.lower() not in FONT_EXTENSIONS:
-                        continue
-                    if path.name in OLD_PRIMARY_NAMES:
-                        categorized["sans"].append(path)
+        sys_fonts = old_root / "system" / "fonts"
+        if sys_fonts.is_dir():
+            for path in sorted(sys_fonts.iterdir()):
+                if not path.is_file() or path.suffix.lower() not in FONT_EXTENSIONS:
+                    continue
+                cat = classify_source_path([], path.stem.lower())
+                categorized[cat].append(path)
+        if not any(categorized.values()):
+            for path in sorted(old_root.iterdir()):
+                if not path.is_file() or path.suffix.lower() not in FONT_EXTENSIONS:
+                    continue
+                if path.name in OLD_PRIMARY_NAMES:
+                    cat = classify_source_path([], path.stem.lower())
+                    categorized[cat].append(path)
 
     return categorized
 

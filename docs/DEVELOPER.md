@@ -16,7 +16,6 @@ graph TD
 
     subgraph "MFFM Font Module (Magisk / KSU / APatch)"
         MOD_PROP["module.prop"]
-        FONT_CONF["font-config.sh"]
         SRC_FONTS["Files/ (Sans, Mono, Serif, Bengali)"]
         CUSTOMIZE["customize.sh (Installer Orchestrator)"]
         SERVICE["service.sh (Boot Shield Daemon)"]
@@ -40,7 +39,7 @@ graph TD
 ### Module Responsibilities
 1. **Font Module**:
    - Holds source font binaries (`Files/Sans/`, `Files/Monospace/`, `Files/Serif/`, `Files/Bengali/`).
-   - Carries metadata: `font-config.sh` (variable axis ranges, default weights, fallback priorities) and `module.prop`.
+   - Autonomous metadata discovery: `customize.sh` dynamically discovers font modes (variable vs. static), `fvar` axis ranges, and weights directly from font binaries on-the-fly without relying on external configuration scripts.
    - Manages installation orchestration via `customize.sh`.
    - Manages anti-override protection via `service.sh` and `action.sh`.
 2. **MFFM Runtime (`mffm-runtime-*.zip`)**:
