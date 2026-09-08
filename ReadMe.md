@@ -27,6 +27,10 @@ Unlike old font modules that only copy static font files, MFFMv14 automatically 
 
 - 🕒 **Centered Lockscreen Clock Colon**  
   Standard fonts place the colon (`:`) low on the baseline for sentences. MFFM automatically lifts the colon in `12:30` on your lockscreen and status bar to look perfectly centered, while keeping normal sentence punctuation untouched.
+- 📱 **Lockscreen Colon Missing Glyph Fix (PUA `U+EE01`)**  
+  Resolves broken tofu boxes (`[?]`) on OEM lockscreens (Google Pixel, Xiaomi HyperOS, Samsung One UI, OnePlus OxygenOS, Nothing OS) by mapping the colon to Android system clock Private Use Area codepoints.
+- 📐 **Synthetic Italic Companion Generator**  
+  If your favorite font only comes in upright styles and has no italics, MFFM can algorithmically synthesize and bundle slanted italic companion faces on-the-fly, keeping variable axes, glyph outlines, and layout anchors intact.
 - ⏱️ **Jitter-Free Clock Numbers**  
   Numbers in many fonts have different widths (for example, `1` is narrower than `0`). MFFM equalizes digit widths so your lockscreen clock doesn't wobble or jump sideways every time a second ticks or a minute changes.
 - 🛡️ **Zero Text Clipping (Safe Metrics)**  
@@ -96,16 +100,23 @@ Whenever you install a font module, a simple settings file is created on your in
 If you want to tweak settings, open the file in any text editor, change what you want, and re-flash your module ZIP:
 
 ```sh
-# Centered colon for lockscreen & status bar clocks (12:30)
+# 1. Centered colon for lockscreen & status bar clocks (12:30)
 ENABLE_CENTERED_COLON=yes
 
-# Equalize clock numbers so the clock doesn't wobble
+# 2. Fix broken glyph box [?] on OEM lockscreen clocks (PUA U+EE01)
+ENABLE_LOCKSCREEN_COLON_PUA=false
+
+# 3. Synthesize italic companion faces if the font lacks them (Sans-serif only)
+ENABLE_SYNTHETIC_ITALIC=false
+SYNTHETIC_ITALIC_ANGLE=-12
+
+# 4. Equalize clock numbers so the clock doesn't wobble
 ENABLE_TABULAR_CLOCK_DIGITS=yes
 
-# Metric mode: compact (default tight UI), safe (zero accent clipping), or preserve
+# 5. Metric mode: compact (default tight UI), safe (zero accent clipping), or preserve
 METRICS_MODE=compact
 
-# Activate cool font features (like slashed zero or stylistic sets)
+# 6. Activate cool font features (like slashed zero or stylistic sets)
 SANS_FREEZE_FEATURES=ss01,zero
 ```
 

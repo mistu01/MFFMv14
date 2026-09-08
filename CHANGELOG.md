@@ -3,6 +3,23 @@
 All notable changes to MFFMv14 are documented here. Dates use the `YYYY.MM.DD`
 versioning scheme the modules themselves carry.
 
+## 2026.09.09
+
+### Added
+- **On-Time Synthetic Italic Engine for Sans-serif Fonts (`ENABLE_SYNTHETIC_ITALIC`)**:
+  - Automatically audits the Sans-serif family during installation. If the supplied fonts lack native italic styles (both variable and static) and lack variable slant (`slnt`) or italic (`ital`) axes, exposes `ENABLE_SYNTHETIC_ITALIC=false` and `SYNTHETIC_ITALIC_ANGLE=-12` under section `# 3. SYNTHETIC ITALIC / OBLIQUE (for Sans-serif)` in `/sdcard/MFFM/*.conf`.
+  - When enabled, algorithmically shears glyph outlines across TrueType quadratic `glyf` contours, variable font deltas (`gvar`), and CFF/CFF2 cubic Bezier curves.
+  - Slants OpenType layout anchors (`GPOS` and `BASE` tables) to preserve optical kerning and mark-to-base attachments.
+  - Updates font metadata (`post.italicAngle`, `head.macStyle |= 2`, `OS/2.fsSelection |= 1`, `hhea.caretSlopeRun`) and injects an `ital` axis into the `STAT` table.
+  - Bundles the synthesized italic companion into the unified `DroidSans.ttf` collection (at index 1 for variable fonts, or companion indices for static fonts) with corresponding `<font style="italic">` mappings emitted into `sans.xml` and `condensed.xml`.
+  - Strictly dedicated to the Sans-serif family; Monospace, Serif, and Bengali families remain untouched.
+- **Dynamic Configuration Category Filtering & Renumbering**:
+  - If native italic styles or variable slant axes are detected, the installer automatically omits the synthetic italic category from `/sdcard/MFFM/*.conf` and dynamically strips any existing synthetic italic keys.
+  - Renumbers subsequent typography categories sequentially (1 to 5 or 1 to 6) without missing section numbers.
+- **Build & Packaging CLI Parity**:
+  - Added `--synthetic-italic`, `--no-synthetic-italic`, and `--synthetic-italic-angle` flags across `build.py`, `update.py`, and `font_module.py`.
+  - Added `synthetic_italic` and `synthetic_italic_angle` to `.mffm-build.json` project configuration keys.
+
 ## 2026.09.08
 
 ### Added

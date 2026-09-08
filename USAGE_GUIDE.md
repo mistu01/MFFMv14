@@ -205,6 +205,12 @@ MFFMv14 provides automated dual-layer defense:
 ### Q: My clock colon is still low on a 2-line vertical lockscreen clock.
 **A:** Open your `.conf` file and set `COLON_RULE=after_digit`. Standard `between_digits` requires digits on both sides (`12:30`), whereas `after_digit` supports clocks that place the hours and minutes on separate lines (`12:` on top, `30` on bottom).
 
+### Q: Why is `ENABLE_SYNTHETIC_ITALIC` not showing in my `.conf` file?
+**A:** MFFMv14 automatically audits your Sans-serif font at installation time. If your font already provides native italic faces or variable slant (`slnt` / `ital`) axes, MFFM hides the synthetic italic category to keep your configuration clean and concise. The setting only populates when your Sans font truly lacks italic support.
+
+### Q: Why does my lockscreen clock show a missing tofu box `[?]` instead of a colon?
+**A:** Certain OEM skins and custom ROMs (HyperOS, One UI, OxygenOS, Nothing OS, Google Pixel) query Private Use Area codepoint `U+EE01` or ratio symbols (`U+2236`, `U+2982`) for their lockscreen clock colon. If your font lacks these codepoints, open your `.conf` file, set `ENABLE_LOCKSCREEN_COLON_PUA=true`, and re-flash the module to map the colon to these codepoints across all cmap tables.
+
 ### Q: Where can I find installation and error logs?
 **A:** The installer retains the 3 most recent detailed diagnostic logs at:
 ```
