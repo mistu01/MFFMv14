@@ -1214,25 +1214,16 @@ reformat_config_file() {
   {
     line = $0
 
-    # 1. Header lines
-    if (in_header) {
-      if (line ~ /^CONFIG_SCHEMA=/ || line ~ /^MODULE_IDENTITY=/) {
-        header[header_count++] = line
-        next
-      }
-      if (line ~ /^[A-Z0-9_]+=[^#;]*/ || line ~ /ADVANCED TYPOGRAPHY/) {
-        in_header = 0
-      } else {
-        if (line !~ /^# -{10,}/ && !is_profile_title(line) && line !~ /^#[ \t]*$/) {
-          header[header_count++] = line
-        }
-        next
-      }
-    }
+    # Always discard standalone profile titles and profile divider lines everywhere!
+    # The END block generates canonical banners for all active profiles.
+    if (is_profile_title(line)) next
+    if (line ~ /^#[ \t]*-{10,}/ && !in_typo) next
 
     # Check if line is a profile key
     prof = get_profile(line)
     if (prof != "") {
+      in_header = 0
+      in_typo = 0
       if (buf_count > 0) {
         for (b = 0; b < buf_count; b++) {
           prof_lines[prof, prof_counts[prof]++] = buf[b]
@@ -1245,12 +1236,35 @@ reformat_config_file() {
 
     # Check if line is a comment for a profile key
     if (line ~ /^#[ \t]*(Android[ \t]+[0-9]+|[a-zA-Z0-9_]+[ \t]+axis[ \t]+range)/) {
+      in_header = 0
+      in_typo = 0
       buf[buf_count++] = line
       next
     }
 
+    # 1. Header lines
+    if (in_header) {
+      if (line ~ /^CONFIG_SCHEMA=/ || line ~ /^MODULE_IDENTITY=/) {
+        header[header_count++] = line
+        next
+      }
+      if (line ~ /^#[ \t]*([=]{10,}|MFFMv14|Font:|Module identity:)/) {
+        header[header_count++] = line
+        next
+      }
+      if (line ~ /^[ \t]*$/) {
+        if (header_count > 0 && header[header_count - 1] !~ /^[ \t]*$/) {
+          header[header_count++] = line
+        }
+        next
+      }
+      # Any other line means header is done
+      in_header = 0
+    }
+
     # 2. Check if line starts ADVANCED TYPOGRAPHY section
     if (line ~ /ADVANCED TYPOGRAPHY/) {
+      in_header = 0
       in_typo = 1
       buf_count = 0
       typo[typo_count++] = "# =============================================================================="
