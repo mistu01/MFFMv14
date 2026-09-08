@@ -6,120 +6,117 @@
 [![Magisk](https://img.shields.io/badge/Magisk-v20.4+-B0BEC5?style=for-the-badge&logo=android&logoColor=black)](https://github.com/topjohnwu/Magisk)
 [![KernelSU](https://img.shields.io/badge/KernelSU-v0.9.4+-80CBC4?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/tiann/KernelSU)
 [![APatch](https://img.shields.io/badge/APatch-v0.11.0+-90CAF9?style=for-the-badge&logo=android&logoColor=black)](https://github.com/bmax121/APatch)
-[![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![Telegram](https://img.shields.io/badge/Telegram-MFFMMain-0088CC?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/MFFMMain)
 
-**The next-generation, universal Android system font module engine.**  
-*Transform any static or variable font into a production-grade, flashable root module with on-device typography intelligence.*
+**The easy, universal system font engine for rooted Android devices.**  
+*Use any font you love system-wide on Magisk, KernelSU, and APatch — with automatic fixes for lockscreens, clocks, and accents.*
 
 </div>
 
 ---
 
-## 📖 Overview
+## 📖 What is MFFMv14?
 
-**MFFMv14** is a modern, cross-platform Android font framework that compiles, packages, and tunes system fonts across **Magisk**, **KernelSU**, and **APatch**.
+**MFFMv14** turns your favorite fonts into clean, flashable root modules. 
 
-Unlike legacy font modules that merely swap static TTF files, MFFMv14 introduces a **split-architecture engine**: a lightweight font module works in tandem with a standalone, on-device Python + `fontTools` runtime (`mffm-runtime`). Together, they perform intelligent bounding-box metric clamping, contextual centered clock colons, tabular digit advance equalization, OpenType feature freezing, and dynamic TrueType Collection (`.ttc`) packaging directly on your phone.
-
----
-
-## ✨ Key Highlights
-
-- 🛡️ **Zero-Clipping Decoupled Safe Metrics Engine**  
-  Positive $y$-axis (ascent) and negative $y$-axis (descent) expand independently based on actual glyph extremes. Accents (Vietnamese `ế`, `Ậ`, Devanagari, Thai, Arabic, Polish) never clip, while button heights and status bar icons stay centered with **zero monospace line-height inflation**.
-- 🕒 **Contextual Centered Clock Colon (GSUB Format 6)**  
-  Injects an OpenType Chaining Contextual Substitution rule so clock times (`12:30`) display a vertically centered colon, without distorting normal text punctuation.
-- ⏱️ **Tabular Lockscreen Clock Digits**  
-  Equalizes numeral advance widths (0–9) to stop lockscreen clocks from wobbling horizontally when minutes or seconds tick.
-- 🎨 **OpenType Feature Freezing**  
-  Bakes stylistic sets (`ss01`–`ss20`), slashed zero (`zero`), and character variants permanently into default glyphs system-wide.
-- 🛑 **Anti-Google Font Update Shield**  
-  A background boot daemon (`service.sh`) and an on-demand Action button (`action.sh`) neutralize silent Google Play System font overrides (`/data/fonts/files/`).
-- 🌐 **Multi-Family & Multi-Script Architecture**  
-  Full first-class support for **Sans-serif**, **Monospace**, **Serif**, and **Bengali** script font families within a single module.
-- 📦 **Universal Format Ingestion**  
-  Accepts `.ttf`, `.otf`, `.ttc`, `.otc`, `.woff`, and `.woff2` fonts, with automatic decompression and CFF-to-TrueType curve conversion (`cu2qu`).
+Unlike old font modules that only copy static font files, MFFMv14 automatically tunes your fonts directly on your phone. It fixes the common annoyances of custom fonts on Android — such as sunken clock colons, jittery lockscreen numbers, and cut-off accents — without requiring any technical knowledge.
 
 ---
 
-## ⚠️ Mandatory Prerequisite: MFFM Runtime
+## ✨ Why Use MFFMv14?
 
-MFFMv14 uses a modular architecture. Before flashing any MFFMv14 font module, you **MUST** install the standalone runtime module once:
+- 🕒 **Centered Lockscreen Clock Colon**  
+  Standard fonts place the colon (`:`) low on the baseline for sentences. MFFM automatically lifts the colon in `12:30` on your lockscreen and status bar to look perfectly centered, while keeping normal sentence punctuation untouched.
+- ⏱️ **Jitter-Free Clock Numbers**  
+  Numbers in many fonts have different widths (for example, `1` is narrower than `0`). MFFM equalizes digit widths so your lockscreen clock doesn't wobble or jump sideways every time a second ticks or a minute changes.
+- 🛡️ **Zero Text Clipping (Safe Metrics)**  
+  Tall accents (like Vietnamese `ế`, `Ậ`, Devanagari, Thai, Arabic, or `Å`) often get cut off at the top or bottom of notifications and status bars. MFFM ensures all characters fit comfortably without inflating line spacing or breaking app layouts.
+- 🎨 **Slashed Zeros & Style Alternates**  
+  Easily activate font features you want system-wide, like slashed zeros (`0`), curved lowercase `l`, or alternate letter designs.
+- 🛑 **Anti-Google Font Override Shield**  
+  Android often silently overrides custom fonts during Google Play System updates. MFFM includes a built-in shield that blocks Google from reverting your font back to stock Roboto.
+- 🌐 **Multi-Family Support**  
+  Apply custom fonts for your main system font (**Sans**), coding/terminal font (**Monospace**), book font (**Serif**), and **Bengali** script all in the same module.
+- 📦 **Works with Any Font File**  
+  Accepts `.ttf`, `.otf`, `.ttc`, `.otc`, `.woff`, and `.woff2`, including variable and static fonts.
+
+---
+
+## ⚠️ Step 1: Install MFFM Runtime First (One-Time Setup)
+
+Before flashing any MFFMv14 font module, install the standalone **MFFM Runtime** module once in your root manager:
 
 ```
 mffm-runtime-YYYY.MM.DD.zip
 ```
 
-- **What it is**: A standalone module providing embedded Python 3.12/3.14, `fontTools`, `brotli`, and the `mffm-helper` CLI at `/data/adb/mffm_runtime/`.
-- **Install Once**: You only flash the runtime once. After that, any MFFMv14 font module will execute instantly.
-- **Download**: Grab official runtime releases from **[GitHub Releases](https://github.com/mistu01/MFFMv14/releases)**.
+- **Why is it needed?** It gives your phone the tools required to adjust metrics, align clock colons, and package fonts on-device.
+- **Install Once**: You only flash it once. All your current and future MFFMv14 font modules will use it automatically.
+- **Download**: Grab the latest `mffm-runtime-*.zip` from **[GitHub Releases](https://github.com/mistu01/MFFMv14/releases)**.
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Step 2: Create & Flash Your Font
 
-### Option 1: Create a Module on Your Phone (No Python Needed)
-1. Ensure **`mffm-runtime`** is installed in your root manager.
-2. Extract **`MFFMv14-Source-Template.zip`** using your favorite file manager (MiXplorer, MT Manager, ZArchiver).
-3. Put your font file(s) into **`Files/Sans/`** (optionally add fonts to `Files/Monospace/`, `Files/Serif/`, or `Files/Bengali/`).
-4. Edit **`module.prop`** with your font name and author.
-5. Compress the template contents into a standard **ZIP** and flash it in **Magisk**, **KernelSU**, or **APatch**!
+### Option A: On Your Phone (No PC Needed)
+1. Download and extract **`MFFMv14-Source-Template.zip`** using any file manager (like MiXplorer, MT Manager, or ZArchiver).
+2. Put your font file(s) into the **`Files/Sans/`** folder.  
+   *(Optional: put coding fonts into `Files/Monospace/`, serif fonts into `Files/Serif/`, or Bengali fonts into `Files/Bengali/`)*.
+3. Open **`module.prop`** and change the font name/author if you like.
+4. Select all files inside the template folder, compress them into a standard **ZIP**, and flash it in **Magisk**, **KernelSU**, or **APatch**!
+5. Reboot and enjoy your new font!
 
-### Option 2: Build with the PC Script (`build.py`)
-1. Clone the repository and install requirements:
+### Option B: On PC using Python (`build.py`)
+1. Clone this repository:
    ```sh
    git clone https://github.com/mistu01/MFFMv14.git
    cd MFFMv14
    pip install -r requirements.txt
    ```
-2. Place fonts into `Fonts/Sans/`.
-3. Run the compiler:
+2. Put your font files into `Fonts/Sans/`.
+3. Run the builder:
    ```sh
    python build.py
    ```
-   Outputs a cryptographically signed flashable ZIP directly to `dist/`.
+4. Transfer the flashable ZIP generated in `dist/` to your phone and flash it!
 
 ---
 
-## 🎛️ On-Device Customization (`/sdcard/MFFM/*.conf`)
+## 🎛️ How to Customize Your Font (`.conf`)
 
-Every installed font module generates an editable settings file at:
+Whenever you install a font module, a simple settings file is created on your internal storage at:
 ```
 /sdcard/MFFM/MFFMv14_<FontFamily>_<ID>.conf
 ```
 
-All settings are optional and pre-tuned with safe defaults:
-```sh
-# Centered Clock Colon for 12:30
-ENABLE_CENTERED_COLON=yes
-COLON_ALIGNMENT=center
-COLON_OFFSET=0
-COLON_RULE=between_digits
+> [!TIP]
+> **Do you have to change anything?**  
+> **No!** Everything works out of the box with safe, beautiful defaults.
 
-# Wobble-free lockscreen clock digits
+If you want to tweak settings, open the file in any text editor, change what you want, and re-flash your module ZIP:
+
+```sh
+# Centered colon for lockscreen & status bar clocks (12:30)
+ENABLE_CENTERED_COLON=yes
+
+# Equalize clock numbers so the clock doesn't wobble
 ENABLE_TABULAR_CLOCK_DIGITS=yes
 
-# Compact vertical metrics (tight FFIX3, zero unnecessary line padding)
+# Metric mode: compact (default tight UI), safe (zero accent clipping), or preserve
 METRICS_MODE=compact
 
-# OpenType feature freezing (slashed zero, stylistic sets)
+# Activate cool font features (like slashed zero or stylistic sets)
 SANS_FREEZE_FEATURES=ss01,zero
-MONO_FREEZE_FEATURES=zero
 ```
-*To apply changes, simply edit the file and re-flash your font module ZIP.*
 
 ---
 
 ## 📚 Documentation Index
 
-For detailed documentation, refer to the specialized guides:
-
-| Document | Purpose & Contents |
+| Document | Description |
 | :--- | :--- |
-| 📖 **[User & Configuration Guide](USAGE_GUIDE.md)** | Step-by-step module creation, full `/sdcard/MFFM/*.conf` parameter guide, on-device font additions, Google font update defense, and FAQ. |
-| 🛠️ **[Developer & Architecture Guide](docs/DEVELOPER.md)** | Internal architecture, typography mathematics (Decoupled Safe Metrics, GSUB Format 6 colon, tabular digits), and full CLI tool reference. |
-| 📜 **[Changelog](CHANGELOG.md)** | Complete version history, release notes, and milestone tracking. |
+| 📖 **[User & Configuration Guide](USAGE_GUIDE.md)** | Detailed handbook covering on-device module creation, full configuration settings guide, adding extra fonts directly on phone, and FAQ. |
+| 📜 **[Changelog](CHANGELOG.md)** | Complete release notes and version history. |
 
 ---
 
@@ -127,34 +124,31 @@ For detailed documentation, refer to the specialized guides:
 
 ```
 MFFMv14/
-├── build.py                  # PC module compiler and packaging engine
-├── build_runtime.py          # Standalone MFFM Runtime module builder
-├── update.py                 # Module migration utility (legacy and modern)
+├── build.py                  # PC module builder and packaging script
+├── build_runtime.py          # MFFM Runtime module builder
+├── update.py                 # Module update and migration utility
 ├── package_template.py       # Builder for MFFMv14-Source-Template.zip
-├── font_module.py            # Core font compiler & metadata engine
-├── runtime_helper.py         # On-device mffm-helper CLI & typography tools
-├── zipsigner_auto.py         # Automatic cryptographic ZIP signer
-├── template/                 # Shared font module skeleton & orchestrator
-│   ├── customize.sh          # On-device installer orchestrator
-│   ├── service.sh            # Boot daemon neutralizing Google Font updates
-│   ├── action.sh             # On-demand Action button for KSU / APatch / MMRL
-│   └── META-INF/             # Standard Android update binary
+├── font_module.py            # Core font inspection and compilation engine
+├── runtime_helper.py         # On-device helper CLI & font tools
+├── zipsigner_auto.py         # Automatic ZIP signer
+├── template/                 # Font module template files (flashable module skeleton)
+│   ├── customize.sh          # Installer script executed during flashing
+│   ├── service.sh            # Boot shield blocking Google Play font overrides
+│   ├── action.sh             # On-demand Action button for root managers
+│   └── META-INF/             # Android flashable ZIP binary
 ├── runtime-template/         # Standalone MFFM Runtime module skeleton
-├── docs/
-│   └── DEVELOPER.md          # Architecture, metric math & developer guide
-├── USAGE_GUIDE.md            # Comprehensive user handbook & .conf manual
-├── CHANGELOG.md              # Version release history
-└── ReadMe.md                 # Public repository frontpage
+├── USAGE_GUIDE.md            # Comprehensive user manual
+├── CHANGELOG.md              # Full version history
+└── ReadMe.md                 # Project frontpage
 ```
 
 ---
 
 ## 📱 Compatibility
 
-- **Root Environments**: Magisk v20.4+, KernelSU v0.9.4+, APatch v0.11.0+, MMRL.
-- **Android Versions**: Android 8.0 (Oreo / API 26) through Android 15 (Vanilla Ice Cream / API 35).
-- **Architectures**: `arm64-v8a` (aarch64), `x86_64`.
-- **Python**: Python 3.9+ (on PC), embedded Python 3.12/3.14 (on device runtime).
+- **Root Managers**: Magisk v20.4+, KernelSU v0.9.4+, APatch v0.11.0+, MMRL.
+- **Android Versions**: Android 8.0 (Oreo) through Android 15.
+- **Architectures**: ARM64 (`arm64-v8a`) and x86_64.
 
 ---
 
@@ -163,10 +157,10 @@ MFFMv14/
 - **Official Releases**: [GitHub Releases](https://github.com/mistu01/MFFMv14/releases)
 - **Telegram Community**: [t.me/MFFMMain](https://t.me/MFFMMain)
 - **Author**: Mistu (@MFFMMain)
-- **Issues & Contributions**: Pull requests and issue reports are welcome via GitHub!
+- **Feedback & Issues**: Bug reports and feature suggestions are welcome on GitHub Issues!
 
 ---
 
 <div align="center">
-<b>MFFMv14</b> — Crafted with precision for Android typography enthusiasts.
+<b>MFFMv14</b> — Beautiful typography made effortless on Android.
 </div>
