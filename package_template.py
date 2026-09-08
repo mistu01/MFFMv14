@@ -13,7 +13,6 @@ from build import ROOT, zip_timestamp
 ROOT_EXTRA_FILES = (
     "USAGE_GUIDE.md",
     "CHANGELOG.md",
-    "RUNTIME_ENHANCEMENTS.md",
 )
 
 EMPTY_FOLDERS = (

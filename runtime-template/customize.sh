@@ -11,14 +11,6 @@ if [ -d "/data/data/com.termux/files/usr/bin" ]; then
   mkdir -p "$TMPDIR" 2>/dev/null
 fi
 
-# --- ui_print shim ---
-if ! command -v ui_print >/dev/null 2>&1; then
-  ui_print() { echo "$1"; }
-fi
-if ! command -v abort >/dev/null 2>&1; then
-  abort() { ui_print "$1"; exit 1; }
-fi
-
 # --- Logging (reuse font-module log dir) ---
 LOG_DIR=${LOG_DIR:-/sdcard/MFFM}
 LOG_FILE=${LOG_FILE:-"$LOG_DIR/mffmv14_runtime_$(date '+%Y%m%d_%H%M%S' 2>/dev/null || echo current).log"}
@@ -44,6 +36,9 @@ mffm_ui_print() {
   else case "$OUTFD" in ''|*[!0-9]*) printf '%s\n' "$msg";; *) printf 'ui_print %s\nui_print\n' "$msg" >&$OUTFD;; esac; fi
 }
 ui_print() { mffm_ui_print "$1"; }
+if ! command -v abort >/dev/null 2>&1; then
+  abort() { ui_print "$1"; exit 1; }
+fi
 fail() { ui_print ""; ui_print "  [ERROR] $1"; ui_print "  Runtime installation stopped."; ui_print ""; exit 1; }
 section() { ui_print ""; ui_print "  [$1] $2"; ui_print "  ----------------------------------------"; }
 status_ok() { ui_print "    [OK] $1"; }
@@ -366,10 +361,6 @@ CAUTION_FEATURES = {
     "ordn": "Ordinals (Shrinks letters into ordinal position)",
     "onum": "Changes default numbers to oldstyle height",
 }
-
-
-def _scale_value(val: int, from_upm: int, to_upm: int = 2048) -> int:
-    return int(round(val * to_upm / from_upm))
 
 
 def _name(font, *ids: int) -> str:
@@ -1592,22 +1583,6 @@ def build_ttc(out_path: str, files: list[str]) -> None:
         sys.stderr.write("no fonts loaded\n"); sys.exit(1)
     col.save(out_path)
     print(f"TTC saved {out_path} with {len(col.fonts)} fonts")
-
-
-def format_axis_meta(face: dict, italic: bool = False) -> str:
-    if not face.get("axes"): return ""
-    default_vals = calc_axis_values(face, int(face["axes"]["wght"][1]), italic) or {} if "wght" in face["axes"] else {}
-    parts = []
-    for tag, (a_min, a_def, a_max) in face["axes"].items():
-        val = default_vals.get(tag, a_def)
-        parts.append(f"{tag}|{format_num(a_min)}|{format_num(val)}|{format_num(a_max)}")
-    return " ".join(parts)
-
-
-def supported_weights_str(face: dict) -> str:
-    if "wght" not in face.get("axes", {}): return ""
-    a_min, _, a_max = face["axes"]["wght"]
-    return " ".join(str(w) for w in WEIGHT_NAMES if a_min <= w <= a_max)
 
 
 def face_preference_score(face: dict) -> int:

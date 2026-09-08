@@ -56,9 +56,6 @@ if [ -d "$MFFM_RUNTIME_DEST/bin" ]; then
   export PATH="$MFFM_RUNTIME_DEST/bin:$PATH"
 fi
 
-if ! command -v ui_print >/dev/null 2>&1; then
-  ui_print() { echo "$1"; }
-fi
 if ! command -v set_perm >/dev/null 2>&1; then
   set_perm() { chown "$2:$3" "$1" 2>/dev/null; chmod "$4" "$1" 2>/dev/null; }
 fi
@@ -784,13 +781,6 @@ replace_lang_family() {
 PRODUCT_RUBIK_REGULAR="Rubik-Regular.ttf"
 PRODUCT_RUBIK_ITALIC="Rubik-Italic.ttf"
 
-is_google_sans_product_name() {
-  case "$1" in
-    sans-serif|google-sans|google-sans-*|variable-*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 resolve_product_rubik_sources() {
   PRODUCT_HAS_DEDICATED_ITALIC=0
   PRODUCT_RUBIK_REGULAR_SRC=$FONT_PRIMARY
@@ -1194,14 +1184,24 @@ reformat_config_file() {
     in_typo = 0
     seen_typo_banner = 0
     in_colon_block = 0
+    header_count = 0
+    typo_count = 0
+    buf_count = 0
   }
 
-  function get_profile(line,   p, k) {
+  function get_profile(str,   p, k) {
     for (p = 1; p <= num_profiles; p++) {
       k = profiles[p] "_"
-      if (index(line, k) == 1 || match(line, "^[ \t]*" k)) return profiles[p]
+      if (index(str, k) == 1 || match(str, "^[ \t]*" k)) return profiles[p]
     }
     return ""
+  }
+
+  function is_profile_title(str,   p) {
+    for (p = 1; p <= num_profiles; p++) {
+      if (str ~ ("^#[ \t]*" titles[profiles[p]] "[ \t]*$")) return 1
+    }
+    return 0
   }
 
   {
@@ -1217,9 +1217,15 @@ reformat_config_file() {
       next
     }
 
-    # 2. Check if line starts ADVANCED TYPOGRAPHY section
-    if (line ~ /ADVANCED TYPOGRAPHY/ || line ~ /^#[ \t]*1\.[ \t]*(CENTERED CLOCK COLON|TABULAR CLOCK DIGITS)/) {
-      in_typo = 1
+    # Skip all standalone dashed dividers (they will be regenerated uniformly)
+    if (line ~ /^#[ \t]*-{10,}[ \t]*$/) {
+      next
+    }
+
+    # Skip any existing profile title comments (they will be regenerated uniformly)
+    if (is_profile_title(line)) {
+      buf_count = 0
+      next
     }
 
     # Check if line is a profile key
@@ -1241,7 +1247,26 @@ reformat_config_file() {
       next
     }
 
-    # If it is inside typo section
+    # 2. Check if line starts ADVANCED TYPOGRAPHY section
+    if (line ~ /ADVANCED TYPOGRAPHY/) {
+      in_typo = 1
+      buf_count = 0
+      typo[typo_count++] = "# =============================================================================="
+      typo[typo_count++] = "# ADVANCED TYPOGRAPHY & LOCKSCREEN CLOCK SETTINGS"
+      typo[typo_count++] = "# =============================================================================="
+      typo[typo_count++] = "# NOTE: All options below are optional! If you are unsure, leave them at defaults."
+      typo[typo_count++] = "# After modifying any value, simply re-flash this module in your root manager."
+      typo[typo_count++] = "# =============================================================================="
+      seen_typo_banner = 1
+      next
+    }
+
+    if (seen_typo_banner) {
+      if (line ~ /^#[ \t]*(NOTE: All options|After modifying|={10,})/ || line ~ /^[ \t]*$/) next
+      seen_typo_banner = 0
+    }
+
+    # If inside typo section
     if (in_typo) {
       if (strip_colon == 1) {
         if (line ~ /^#[ \t]*1\.[ \t]*CENTERED CLOCK COLON/) {
@@ -1263,17 +1288,20 @@ reformat_config_file() {
         if (line ~ /^#[ \t]*4\.[ \t]*OPENTYPE FEATURE/) sub(/4\./, "3.", line)
       }
 
-      if (line ~ /ADVANCED TYPOGRAPHY/) {
-        typo[typo_count++] = "# =============================================================================="
-        typo[typo_count++] = "# ADVANCED TYPOGRAPHY & LOCKSCREEN CLOCK SETTINGS"
-        typo[typo_count++] = "# =============================================================================="
-        seen_typo_banner = 1
+      # If this line is a numbered typography section header, wrap with clean dividers
+      if (line ~ /^#[ \t]*[1-4]\.[ \t]*(CENTERED CLOCK COLON|TABULAR CLOCK DIGITS|SMART METRIC|OPENTYPE FEATURE)/) {
+        while (typo_count > 0 && typo[typo_count - 1] ~ /^[ \t]*$/) typo_count--
+        typo[typo_count++] = ""
+        typo[typo_count++] = "# ------------------------------------------------------------------------------"
+        typo[typo_count++] = line
+        typo[typo_count++] = "# ------------------------------------------------------------------------------"
         next
       }
-      if (seen_typo_banner && line ~ /^#[ \t]*={10,}[ \t]*$/) {
-        seen_typo_banner = 0
-        next
+
+      if (line ~ /^[ \t]*$/) {
+        if (typo_count > 0 && typo[typo_count - 1] ~ /^[ \t]*$/) next
       }
+
       if (buf_count > 0) {
         for (b = 0; b < buf_count; b++) typo[typo_count++] = buf[b]
         buf_count = 0
@@ -1281,16 +1309,6 @@ reformat_config_file() {
       typo[typo_count++] = line
       next
     }
-
-    # If before typo, ignore existing profile section separators so we recreate them cleanly
-    if (line ~ /^#[ \t]*-{10,}[ \t]*$/ || line ~ /^#[ \t]*={10,}[ \t]*$/) {
-      next
-    }
-    is_prof_title = 0
-    for (p = 1; p <= num_profiles; p++) {
-      if (line ~ titles[profiles[p]]) { is_prof_title = 1; break }
-    }
-    if (is_prof_title) next
 
     if (line ~ /^#/) {
       buf[buf_count++] = line
@@ -1318,6 +1336,7 @@ reformat_config_file() {
 
     # 3. Output Advanced Typography section
     if (typo_count > 0) {
+      while (typo_count > 0 && typo[typo_count - 1] ~ /^[ \t]*$/) typo_count--
       start_t = 0
       while (start_t < typo_count && typo[start_t] ~ /^[ \t]*$/) start_t++
       if (start_t < typo_count) {
@@ -1613,153 +1632,7 @@ configure_variable_family_profile() {
   [ -n "$meta" ] && [ -f "$xml_file" ] || return 0
   ensure_profile_keys "$profile" "$meta" "$weights"
   apply_profile "$profile" "$style" "$meta" "$weights" "$xml_file"
-}
-
-reformat_config_file() {
-  local conf="$VF_CONFIG_FILE"
-  [ -f "$conf" ] || return 0
-
-  awk '
-  BEGIN {
-    in_typo = 0
-    in_profile = 0
-    cur_profile = ""
-    num_profiles = 0
-    header_count = 0
-    typo_count = 0
-    buf_count = 0
-
-    profiles[++num_profiles] = "SANS_UPRIGHT"; titles["SANS_UPRIGHT"] = "SANS-SERIF / UPRIGHT"
-    profiles[++num_profiles] = "SANS_ITALIC"; titles["SANS_ITALIC"] = "SANS-SERIF / ITALIC"
-    profiles[++num_profiles] = "CONDENSED_UPRIGHT"; titles["CONDENSED_UPRIGHT"] = "CONDENSED / UPRIGHT"
-    profiles[++num_profiles] = "CONDENSED_ITALIC"; titles["CONDENSED_ITALIC"] = "CONDENSED / ITALIC"
-    profiles[++num_profiles] = "MONOSPACE_UPRIGHT"; titles["MONOSPACE_UPRIGHT"] = "MONOSPACE / UPRIGHT"
-    profiles[++num_profiles] = "SERIF_UPRIGHT"; titles["SERIF_UPRIGHT"] = "SERIF / UPRIGHT"
-    profiles[++num_profiles] = "SERIF_ITALIC"; titles["SERIF_ITALIC"] = "SERIF / ITALIC"
-    profiles[++num_profiles] = "BENGALI_UPRIGHT"; titles["BENGALI_UPRIGHT"] = "BENGALI / UPRIGHT"
-
-    for (p = 1; p <= num_profiles; p++) prof_counts[profiles[p]] = 0
-  }
-
-  function get_profile(k) {
-    for (p = 1; p <= num_profiles; p++) {
-      if (index(k, profiles[p] "_") == 1) return profiles[p]
-    }
-    return ""
-  }
-
-  {
-    line = $0
-
-    if (line ~ /ADVANCED TYPOGRAPHY/) {
-      in_typo = 1
-      in_profile = 0
-      for (b = 0; b < buf_count; b++) typo[typo_count++] = buf[b]
-      buf_count = 0
-      typo[typo_count++] = line
-      next
-    }
-
-    if (in_typo) {
-      typo[typo_count++] = line
-      next
-    }
-
-    if (line ~ /^CONFIG_SCHEMA=/ || line ~ /^MODULE_IDENTITY=/) {
-      for (b = 0; b < buf_count; b++) header[header_count++] = buf[b]
-      buf_count = 0
-      header[header_count++] = line
-      next
-    }
-
-    match_prof = ""
-    if (line ~ /^[A-Z0-9_]+=[^#;]*/) {
-      split(line, parts, "=")
-      key = parts[1]
-      gsub(/[ \t]/, "", key)
-      match_prof = get_profile(key)
-    }
-
-    if (match_prof != "") {
-      for (b = 0; b < buf_count; b++) {
-        b_line = buf[b]
-        if (b_line !~ /^# -{10,}/ && b_line !~ /^# [A-Z0-9_ \/\-]+$/) {
-          prof_lines[match_prof, prof_counts[match_prof]++] = b_line
-        }
-      }
-      buf_count = 0
-      prof_lines[match_prof, prof_counts[match_prof]++] = line
-      in_profile = 1
-      cur_profile = match_prof
-      next
-    }
-
-    if (line ~ /^#/) {
-      buf[buf_count++] = line
-    }
-  }
-
-  END {
-    while (header_count > 0 && header[header_count - 1] ~ /^[ \t]*$/) header_count--
-    for (h = 0; h < header_count; h++) print header[h]
-
-    for (p = 1; p <= num_profiles; p++) {
-      prof = profiles[p]
-      if (prof_counts[prof] > 0) {
-        print ""
-        print "# ------------------------------------------------------------------------------"
-        print "# " titles[prof]
-        print "# ------------------------------------------------------------------------------"
-        for (l = 0; l < prof_counts[prof]; l++) {
-          print prof_lines[prof, l]
-        }
-      }
-    }
-
-    if (typo_count > 0) {
-      start_t = 0
-      while (start_t < typo_count && typo[start_t] ~ /^[ \t]*$/) start_t++
-      if (start_t < typo_count) {
-        print ""
-        for (t = start_t; t < typo_count; t++) print typo[t]
-      }
-    }
-  }
-  ' "$conf" > "$conf.tmp" && mv -f "$conf.tmp" "$conf"
-}
-
-update_installed_module_description() {
-  local prop_file="$MODPATH/module.prop"
-  [ -f "$prop_file" ] || return 0
-
-  local current_desc
-  current_desc=$(grep '^description=' "$prop_file" 2>/dev/null | cut -d= -f2-)
-  [ -z "$current_desc" ] && return 0
-
-  # Strip any previous active tag to stay idempotent across reflashes
-  local base_desc
-  base_desc=$(printf '%s' "$current_desc" | sed -E 's/ \[[^]]*\]$//')
-
-  local active_tags=""
-  [ "${_applied_colon:-0}" = "1" ] && active_tags="${active_tags:+$active_tags, }Centered Colon"
-  [ "${_applied_tabular:-0}" = "1" ] && active_tags="${active_tags:+$active_tags, }Tabular Clock"
-  if [ "${_applied_freeze:-0}" = "1" ]; then
-    local _frozen_list=""
-    [ -n "$_cfg_sans_f" ] && _frozen_list="Sans: $_cfg_sans_f"
-    [ -n "$_cfg_mono_f" ] && _frozen_list="${_frozen_list:+$_frozen_list, }Mono: $_cfg_mono_f"
-    [ -n "$_cfg_serif_f" ] && _frozen_list="${_frozen_list:+$_frozen_list, }Serif: $_cfg_serif_f"
-    [ -n "$_cfg_beng_f" ] && _frozen_list="${_frozen_list:+$_frozen_list, }Bengali: $_cfg_beng_f"
-    [ -n "$_frozen_list" ] && active_tags="${active_tags:+$active_tags, }Freeze: $_frozen_list"
-  fi
-  if [ "${_applied_metrics:-0}" = "1" ] && [ -n "$_cfg_metrics_mode" ] && [ "$_cfg_metrics_mode" != "preserve" ]; then
-    active_tags="${active_tags:+$active_tags, }Metrics: $_cfg_metrics_mode"
-  fi
-
-  if [ -n "$active_tags" ]; then
-    sed -i "s|^description=.*|description=${base_desc} [Active: ${active_tags}]|" "$prop_file" 2>/dev/null
-  else
-    sed -i "s|^description=.*|description=${base_desc}|" "$prop_file" 2>/dev/null
-  fi
+  reformat_config_file
 }
 
 prepare_variable_config() {
@@ -1837,40 +1710,36 @@ prepare_variable_config() {
 
   if [ -n "$VF_UPRIGHT_AXIS_META" ]; then
     ensure_profile_keys SANS_UPRIGHT "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS"
-    apply_profile SANS_UPRIGHT normal "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS" "$FONT_DIR/sans.xml"
-    if [ -f "$FONT_DIR/condensed.xml" ]; then
-      ensure_profile_keys CONDENSED_UPRIGHT "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS"
-      apply_profile CONDENSED_UPRIGHT normal "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS" "$FONT_DIR/condensed.xml"
-    fi
+    [ -f "$FONT_DIR/sans.xml" ] && apply_profile SANS_UPRIGHT normal "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS" "$FONT_DIR/sans.xml"
+    ensure_profile_keys CONDENSED_UPRIGHT "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS"
+    [ -f "$FONT_DIR/condensed.xml" ] && apply_profile CONDENSED_UPRIGHT normal "$VF_UPRIGHT_AXIS_META" "$VF_UPRIGHT_WEIGHTS" "$FONT_DIR/condensed.xml"
   fi
 
   if [ -n "$VF_ITALIC_AXIS_META" ]; then
     ensure_profile_keys SANS_ITALIC "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS"
-    apply_profile SANS_ITALIC italic "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS" "$FONT_DIR/sans.xml"
-    if [ -f "$FONT_DIR/condensed.xml" ]; then
-      ensure_profile_keys CONDENSED_ITALIC "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS"
-      apply_profile CONDENSED_ITALIC italic "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS" "$FONT_DIR/condensed.xml"
-    fi
+    [ -f "$FONT_DIR/sans.xml" ] && apply_profile SANS_ITALIC italic "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS" "$FONT_DIR/sans.xml"
+    ensure_profile_keys CONDENSED_ITALIC "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS"
+    [ -f "$FONT_DIR/condensed.xml" ] && apply_profile CONDENSED_ITALIC italic "$VF_ITALIC_AXIS_META" "$VF_ITALIC_WEIGHTS" "$FONT_DIR/condensed.xml"
   fi
 
-  if [ -n "$VF_MONO_AXIS_META" ] && [ -f "$FONT_DIR/mono.xml" ]; then
+  if [ -n "$VF_MONO_AXIS_META" ]; then
     ensure_profile_keys MONOSPACE_UPRIGHT "$VF_MONO_AXIS_META" "$VF_MONO_WEIGHTS"
-    apply_profile MONOSPACE_UPRIGHT normal "$VF_MONO_AXIS_META" "$VF_MONO_WEIGHTS" "$FONT_DIR/mono.xml"
+    [ -f "$FONT_DIR/mono.xml" ] && apply_profile MONOSPACE_UPRIGHT normal "$VF_MONO_AXIS_META" "$VF_MONO_WEIGHTS" "$FONT_DIR/mono.xml"
   fi
 
-  if [ -n "$VF_SERIF_UPRIGHT_AXIS_META" ] && [ -f "$FONT_DIR/serif.xml" ]; then
+  if [ -n "$VF_SERIF_UPRIGHT_AXIS_META" ]; then
     ensure_profile_keys SERIF_UPRIGHT "$VF_SERIF_UPRIGHT_AXIS_META" "$VF_SERIF_UPRIGHT_WEIGHTS"
-    apply_profile SERIF_UPRIGHT normal "$VF_SERIF_UPRIGHT_AXIS_META" "$VF_SERIF_UPRIGHT_WEIGHTS" "$FONT_DIR/serif.xml"
+    [ -f "$FONT_DIR/serif.xml" ] && apply_profile SERIF_UPRIGHT normal "$VF_SERIF_UPRIGHT_AXIS_META" "$VF_SERIF_UPRIGHT_WEIGHTS" "$FONT_DIR/serif.xml"
   fi
 
-  if [ -n "$VF_SERIF_ITALIC_AXIS_META" ] && [ -f "$FONT_DIR/serif.xml" ]; then
+  if [ -n "$VF_SERIF_ITALIC_AXIS_META" ]; then
     ensure_profile_keys SERIF_ITALIC "$VF_SERIF_ITALIC_AXIS_META" "$VF_SERIF_ITALIC_WEIGHTS"
-    apply_profile SERIF_ITALIC italic "$VF_SERIF_ITALIC_AXIS_META" "$VF_SERIF_ITALIC_WEIGHTS" "$FONT_DIR/serif.xml"
+    [ -f "$FONT_DIR/serif.xml" ] && apply_profile SERIF_ITALIC italic "$VF_SERIF_ITALIC_AXIS_META" "$VF_SERIF_ITALIC_WEIGHTS" "$FONT_DIR/serif.xml"
   fi
 
-  if [ -n "$VF_BENGALI_AXIS_META" ] && [ -f "$FONT_DIR/bengali.xml" ]; then
+  if [ -n "$VF_BENGALI_AXIS_META" ]; then
     ensure_profile_keys BENGALI_UPRIGHT "$VF_BENGALI_AXIS_META" "$VF_BENGALI_WEIGHTS"
-    apply_profile BENGALI_UPRIGHT normal "$VF_BENGALI_AXIS_META" "$VF_BENGALI_WEIGHTS" "$FONT_DIR/bengali.xml"
+    [ -f "$FONT_DIR/bengali.xml" ] && apply_profile BENGALI_UPRIGHT normal "$VF_BENGALI_AXIS_META" "$VF_BENGALI_WEIGHTS" "$FONT_DIR/bengali.xml"
   fi
 
   # --- Centered Colon & OpenType Feature Freezing Configuration ---
@@ -3247,6 +3116,8 @@ fi
 section "5/5" "Running custom local scripts"
 
 run_custom_scripts
+
+[ -n "$VF_CONFIG_FILE" ] && [ -f "$VF_CONFIG_FILE" ] && reformat_config_file
 
 update_installed_module_description
 

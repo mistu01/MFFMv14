@@ -87,10 +87,6 @@ CAUTION_FEATURES = {
 }
 
 
-def _scale_value(val: int, from_upm: int, to_upm: int = 2048) -> int:
-    return int(round(val * to_upm / from_upm))
-
-
 def _name(font, *ids: int) -> str:
     if "name" not in font:
         return ""
@@ -1311,22 +1307,6 @@ def build_ttc(out_path: str, files: list[str]) -> None:
         sys.stderr.write("no fonts loaded\n"); sys.exit(1)
     col.save(out_path)
     print(f"TTC saved {out_path} with {len(col.fonts)} fonts")
-
-
-def format_axis_meta(face: dict, italic: bool = False) -> str:
-    if not face.get("axes"): return ""
-    default_vals = calc_axis_values(face, int(face["axes"]["wght"][1]), italic) or {} if "wght" in face["axes"] else {}
-    parts = []
-    for tag, (a_min, a_def, a_max) in face["axes"].items():
-        val = default_vals.get(tag, a_def)
-        parts.append(f"{tag}|{format_num(a_min)}|{format_num(val)}|{format_num(a_max)}")
-    return " ".join(parts)
-
-
-def supported_weights_str(face: dict) -> str:
-    if "wght" not in face.get("axes", {}): return ""
-    a_min, _, a_max = face["axes"]["wght"]
-    return " ".join(str(w) for w in WEIGHT_NAMES if a_min <= w <= a_max)
 
 
 def face_preference_score(face: dict) -> int:
