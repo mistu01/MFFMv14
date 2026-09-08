@@ -36,15 +36,15 @@ You can build an MFFMv14 font module either directly on your phone using any fil
    ```ini
    id=mffm14_myfont
    name=[MFFMv14] My Font Name
-   version=2026.09.06
-   versionCode=260906
+   version=2026.09.08
+   versionCode=260908
    author=Your Name
    description=Custom font module powered by MFFMv14 engine.
    ```
 6. **Package and Flash**:
    - Select all files and folders inside the extracted folder:
      `Files`, `META-INF`, `customize.sh`, `module.prop`, `service.sh`, `action.sh`, `post-mount.sh`, `uninstall.sh`.
-   - Compress them into a standard **ZIP** file.
+   - Compress them into a standard **ZIP** file. *(Note: No external configuration scripts or helper files are needed — MFFMv14 discovers font properties autonomously).*
    - Flash the ZIP directly in **Magisk**, **KernelSU**, or **APatch**, then reboot!
 
 ---
@@ -84,7 +84,7 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
 
 | Parameter | Default | Recommended | Description / Purpose |
 | :--- | :--- | :--- | :--- |
-| `ENABLE_CENTERED_COLON` | `no` | `yes` (if clock colon looks low) | Injects a vertically centered colon glyph for clock times (`12:30`) on status bars and lockscreens. |
+| `ENABLE_CENTERED_COLON` | `no` | `yes` (if clock colon looks low) | Injects a vertically centered colon glyph for clock times (`12:30`) on status bars and lockscreens. *(Omitted if font already has one).* |
 | `COLON_ALIGNMENT` | `center` | `center` | Target height alignment: `center` (digits midpoint), `cap_height` (capitals), or `x_height` (lowercase). |
 | `COLON_OFFSET` | `0` | `0` | Fine vertical offset in font units (+/-) for OEM lockscreens. |
 | `COLON_RULE` | `between_digits` | `between_digits` | Rule condition: `between_digits` (`12:30`), `after_digit` (for stacked 2-line clocks `12:` / `30`), or `always`. |
@@ -99,7 +99,8 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
 
 #### 1. 🕒 Centered Clock Colon (`ENABLE_CENTERED_COLON`)
 - **The Problem**: Standard fonts only provide a punctuation colon (`:`), designed to sit low near the baseline for sentence punctuation (e.g. `"Note: Hello"`). On lockscreens and status bars, clocks like `12:30` appear sunken and uneven.
-- **How to Use**:
+- **Intelligent Auto-Detection**: The installer automatically performs an exhaustive audit of your font for existing centered colons (OpenType substitutions, vertical shifts, and glyph geometry). If your font already has a native centered colon, MFFM leaves it intact and automatically omits all colon settings from your `.conf` file to keep your configuration clean.
+- **How to Use (if your font does not have one)**:
   - Set `ENABLE_CENTERED_COLON=yes` in your `.conf`.
   - `COLON_ALIGNMENT=center`: Aligns the colon dots with the vertical midpoint of numerals.
   - `COLON_OFFSET=0`: Adjust by `+20` or `-20` to fine-tune height if needed.
@@ -137,13 +138,20 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
   SANS_WDTH="100 100 100 100 100 100 100 100 100"
   ```
 
-#### 7. 🌐 Adding Extra Fonts Directly on Your Phone
+#### 6. 🌐 Adding Extra Fonts Directly on Your Phone
 - You can augment an installed module with additional language or style families without repacking the ZIP on PC:
   - Place extra fonts into `/sdcard/MFFM/<FontFamily>/`:
     - `/sdcard/MFFM/<FontFamily>/Bengali/`
     - `/sdcard/MFFM/<FontFamily>/Monospace/`
     - `/sdcard/MFFM/<FontFamily>/Serif/`
   - Re-flash your font module — it will scan the directory, optimize the fonts, and package them into the system collection automatically!
+
+#### 7. 🏷️ Active Feature Badges in Module Description
+- Whenever you activate typography enhancements in your `.conf` file, the installer automatically updates the module description visible in Magisk, KernelSU, APatch, or MMRL:
+  ```
+  [MFFMv14] Inter Variable VF [Active: Centered Colon, Tabular Digits, Metrics: compact, Frozen: ss01, zero]
+  ```
+  This lets you verify at a glance which features are active without digging into config files.
 
 ---
 
