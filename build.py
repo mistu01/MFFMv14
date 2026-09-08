@@ -35,7 +35,7 @@ BUILD_CONFIG_NAME = ".mffm-build.json"
 BUILD_CONFIG_KEYS = (
     "fonts_dir", "mode", "name", "version", "version_code", "output_dir",
     "keep_hinting", "no_prefix", "features", "mono_features", "serif_features",
-    "bengali_features", "centered_colon", "interactive",
+    "bengali_features", "centered_colon", "pua_colon", "interactive",
 )
 
 
@@ -59,6 +59,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-interactive", action="store_false", dest="interactive", help="disable interactive feature prompt")
     parser.add_argument("--centered-colon", action="store_true", default=None, help="force centered colon generation/injection for digits (12:30)")
     parser.add_argument("--no-centered-colon", action="store_false", dest="centered_colon", help="disable centered colon injection")
+    parser.add_argument("--pua-colon", action="store_true", default=None, help="force mapping colon to Android lockscreen clock PUA (U+EE01, U+2236, U+2982)")
+    parser.add_argument("--no-pua-colon", action="store_false", dest="pua_colon", help="disable Android lockscreen clock PUA mapping")
     parser.add_argument("--config", type=Path, help=f"build config file to load (default: {BUILD_CONFIG_NAME} in the project root, when present)")
     parser.add_argument("--no-config", action="store_true", help="ignore any build config file")
     parser.add_argument("--save-config", action="store_true", help=f"save the effective build options to the config file (default: {BUILD_CONFIG_NAME})")
@@ -143,6 +145,7 @@ def save_build_config(path: Path, args: argparse.Namespace) -> None:
         "serif_features": args.serif_features,
         "bengali_features": args.bengali_features,
         "centered_colon": args.centered_colon,
+        "pua_colon": args.pua_colon,
         "interactive": args.interactive,
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -234,6 +237,7 @@ def build_module(args: argparse.Namespace) -> Path | None:
             bengali_features=args.bengali_features,
             interactive_features=args.interactive,
             centered_colon=args.centered_colon,
+            pua_colon=args.pua_colon,
         )
         display_name = display_name_for_mode(args.name or result.family, result.mode)
         props = update_module_metadata(

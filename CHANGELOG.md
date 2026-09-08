@@ -9,6 +9,10 @@ versioning scheme the modules themselves carry.
 - **Exhaustive Centered Colon Detection Engine**:
   - Implemented deep inspection across glyph names, Unicode codepoints (including Android lockscreen clock colon PUA `U+EE01`, `U+2236`, `U+2982`, etc.), OpenType GSUB lookups (Types 1, 3, 4, 5, 6, and 7 extension subtables), OpenType GPOS vertical placement shifts (`case`/`calt`), and glyph outline geometry (detecting native elevated colons aligned to digit centers).
   - When the primary sans-serif font already includes a centered colon feature, all centered colon configuration settings are completely omitted from the generated `/sdcard/MFFM/*.conf` file, any obsolete colon settings are pruned, and subsequent typography sections are dynamically renumbered.
+- **Android Lockscreen Clock Colon PUA Mapping (`ENABLE_LOCKSCREEN_COLON_PUA`)**:
+  - Automatically scans if the Sans-serif font implements Android lockscreen clock colon PUA (`U+EE01`) with valid glyph geometry.
+  - If the font already implements `U+EE01`, the configuration option is omitted from `/sdcard/MFFM/*.conf`.
+  - If missing, adds `ENABLE_LOCKSCREEN_COLON_PUA=false` to `.conf`. When enabled (`true`), dynamically maps the colon (or centered colon) glyph to Android lockscreen clock Private Use Area codepoints (`U+EE01`, `U+2236`, `U+2982`) across all Unicode cmap sub-tables, resolving broken glyph tofu boxes `[?]` on Pixel, HyperOS, One UI, OxygenOS, and Nothing OS lockscreens.
 - **Granular On-Screen Installation Progress & Status Feedback**:
   - Replaced generic compilation messages during dynamic on-device compilation with minimal, per-feature progress indicators (`[*] Generating & injecting centered clock colon...`, `[*] Equalizing clock digits...`, `[*] Freezing OpenType features...`).
   - Added explicit per-feature success (`[OK]`) and failure (`[!]`) status indicators along with exact cause diagnostics extracted from the compilation log.

@@ -748,6 +748,12 @@ COLON_UNICODES = (
     0xFE30,  # PRESENTATION FORM FOR VERTICAL TWO DOT LEADER (︰)
 )
 
+LOCKSCREEN_COLON_CODEPOINTS = (
+    0xEE01,  # Android clock colon PUA (Google Sans / Roboto / AOSP lockscreen clock)
+    0x2236,  # RATIO (∶)
+    0x2982,  # Z NOTATION TYPE COLON (⦂)
+)
+
 
 def _unwrap_subtables(subtables):
     unwrapped = []
@@ -940,6 +946,54 @@ def font_has_centered_colon(font_path: Path) -> bool:
         font.close()
 
     return False
+
+
+def font_has_pua_colon(font_path: Path, pua_codepoints: tuple[int, ...] = (0xEE01,)) -> bool:
+    """Exhaustively inspect whether a font implements Android lockscreen clock colon PUA (U+EE01)."""
+    _collection, TTFont = require_fonttools()
+    from fontTools.pens.boundsPen import BoundsPen
+
+    try:
+        font = TTFont(str(font_path), lazy=True)
+    except Exception:
+        try:
+            from fontTools.ttLib import TTCollection
+            ttc = TTCollection(str(font_path))
+            for f in ttc.fonts:
+                if font_has_pua_colon(f, pua_codepoints):
+                    return True
+            return False
+        except Exception:
+            return False
+
+    try:
+        glyph_order = set(font.getGlyphOrder())
+        cmap = font.getBestCmap() if hasattr(font, "getBestCmap") else {}
+        if not cmap and "cmap" in font:
+            cmap = font["cmap"].getBestCmap() or {}
+
+        glyph_set = font.getGlyphSet() if hasattr(font, "getGlyphSet") else None
+        for cp in pua_codepoints:
+            mapped = cmap.get(cp)
+            if mapped and mapped in glyph_order and mapped != ".notdef":
+                if glyph_set is not None and mapped in glyph_set:
+                    try:
+                        pen = BoundsPen(glyph_set)
+                        glyph_set[mapped].draw(pen)
+                        if pen.bounds:
+                            return True
+                    except Exception:
+                        return True
+                else:
+                    return True
+
+        for name in ("uniEE01", "glyphEE01", "uEE01", "colon.pua", "colon_pua"):
+            if name in glyph_order:
+                return True
+
+        return False
+    finally:
+        font.close()
 
 
 def prompt_add_centered_colon_if_missing(font_paths: Iterable[Path], interactive: bool = False, category: str = "font") -> bool:
@@ -1401,6 +1455,60 @@ def inject_centered_colon(font_path: Path) -> bool:
         return False
 
 
+def copy_colon_to_pua(font_path: Path, codepoints: tuple[int, ...] = LOCKSCREEN_COLON_CODEPOINTS) -> bool:
+    """Copy/map the colon (or centered colon) glyph to Android lockscreen clock colon PUA (U+EE01) and symbols (U+2236, U+2982)."""
+    _collection, TTFont = require_fonttools()
+
+    try:
+        font = TTFont(str(font_path))
+    except Exception:
+        return False
+
+    try:
+        glyph_order = font.getGlyphOrder()
+        cmap = font.getBestCmap() if hasattr(font, "getBestCmap") else {}
+        if not cmap and "cmap" in font:
+            cmap = font["cmap"].getBestCmap() or {}
+
+        # Determine the best colon glyph to map
+        # Prefer centered colon if one was created or exists, otherwise standard colon
+        target_glyph = None
+        for candidate in ("colon.case.tf", "colon.case", "colon.centered", "colon.cap", "colon.centered.tf", "colon_centered"):
+            if candidate in glyph_order:
+                target_glyph = candidate
+                break
+
+        if not target_glyph:
+            if 0x003A in cmap and cmap[0x003A] in glyph_order:
+                target_glyph = cmap[0x003A]
+            elif "colon" in glyph_order:
+                target_glyph = "colon"
+
+        if not target_glyph or "cmap" not in font:
+            font.close()
+            return False
+
+        changed = False
+        for table in font["cmap"].tables:
+            if table.isUnicode():
+                for cp in codepoints:
+                    if table.cmap.get(cp) != target_glyph:
+                        table.cmap[cp] = target_glyph
+                        changed = True
+
+        if changed:
+            font.save(str(font_path))
+        font.close()
+        return changed
+    except Exception as exc:
+        log.warning(f"copy_colon_to_pua error for {font_path.name}: {exc}")
+        try:
+            font.close()
+        except Exception:
+            pass
+        return False
+
+
 def _separate_faces_by_category(all_faces: list[SourceFace]) -> dict[str, list[SourceFace]]:
     """Split discovered faces per category, with legacy fallbacks preserved:
     optional families are deduped, and when no Sans face exists the Sans slot
@@ -1494,6 +1602,7 @@ def compile_fonts(
     bengali_features: list[str] | str | None = None,
     interactive_features: bool | None = None,
     centered_colon: bool | None = None,
+    pua_colon: bool | None = None,
 ) -> CompileResult:
     files_dir = module_dir / "Files"
     files_dir.mkdir(parents=True, exist_ok=True)
@@ -1606,6 +1715,10 @@ def compile_fonts(
                 for font_path in colon_paths:
                     inject_centered_colon(font_path)
                     colon_injected = True
+
+        if pua_colon:
+            for font_path in sans_ttf_paths:
+                copy_colon_to_pua(font_path)
 
         all_faces = discover_faces(temp_fonts_dir)
         separated = _separate_faces_by_category(all_faces)

@@ -88,6 +88,7 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
 | `COLON_ALIGNMENT` | `center` | `center` | Target height alignment: `center` (digits midpoint), `cap_height` (capitals), or `x_height` (lowercase). |
 | `COLON_OFFSET` | `0` | `0` | Fine vertical offset in font units (+/-) for OEM lockscreens. |
 | `COLON_RULE` | `between_digits` | `between_digits` | Rule condition: `between_digits` (`12:30`), `after_digit` (for stacked 2-line clocks `12:` / `30`), or `always`. |
+| `ENABLE_LOCKSCREEN_COLON_PUA` | `false` | `false` (or `true` if lockscreen shows `[?]`) | Maps the colon / centered colon glyph to Android lockscreen clock PUA codepoints (`U+EE01`, `U+2236`, `U+2982`) to resolve missing glyph boxes on OEM lockscreens. *(Omitted if font already has them).* |
 | `ENABLE_TABULAR_CLOCK_DIGITS` | `no` | `yes` (if clock wobbles) | Equalizes digit widths (0–9) so lockscreen clocks never jump horizontally as minutes or seconds change. |
 | `METRICS_MODE` | `compact` | `compact` | Vertical metrics: `compact` forces tight FFIX3; `safe` prevents accent clipping with zero monospace inflation; `preserve` leaves original metrics untouched. |
 | `*_FREEZE_FEATURES` | *(empty)* | `ss01,zero` (user choice) | Freezes OpenType layout features (like slashed zero `0` or stylistic sets) permanently into default characters. |
@@ -107,20 +108,27 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
   - `COLON_RULE=between_digits`: Standard setting. The centered colon only triggers when typed between numbers (`12:30`), leaving normal text punctuation completely untouched.
   - `COLON_RULE=after_digit`: Use this if your phone's lockscreen displays a stacked two-line clock (where `12:` is on line 1 and `30` is on line 2).
 
-#### 2. ⏱️ Tabular Clock Digits (`ENABLE_TABULAR_CLOCK_DIGITS`)
+#### 2. 📱 Android Lockscreen Clock Colon PUA (`ENABLE_LOCKSCREEN_COLON_PUA`)
+- **The Problem**: Several OEM Android skins and custom ROMs (Google Pixel, Xiaomi HyperOS, Samsung One UI, OnePlus OxygenOS, Nothing OS) do not look up standard ASCII `:` on the lockscreen clock. Instead, their SystemUI clock components specifically query Private Use Area (PUA) codepoints (`U+EE01`) or mathematical ratio symbols (`U+2236`, `U+2982`) present in stock fonts like Google Sans Clock or Roboto. When a custom font lacks these codepoints, the lockscreen clock displays a broken tofu box `[?]` or question mark.
+- **Intelligent Auto-Detection**: The installer scans your Sans-serif font at install time. If `U+EE01` is already mapped and drawn in the font, this option is automatically stripped from `.conf`.
+- **How to Use**:
+  - Set `ENABLE_LOCKSCREEN_COLON_PUA=true` in your `.conf`.
+  - The runtime maps the font's colon (or newly injected centered colon) directly to `U+EE01`, `U+2236`, and `U+2982` across all Unicode cmap tables, guaranteeing flawless lockscreen clock rendering with zero broken glyphs.
+
+#### 3. ⏱️ Tabular Clock Digits (`ENABLE_TABULAR_CLOCK_DIGITS`)
 - **The Problem**: Proportional fonts assign different widths to different numbers (e.g., `1` is much narrower than `0` or `8`). When your lockscreen clock changes from `11:59` to `12:00`, or if you have a ticking seconds display, the digits jump horizontally and create visible jitter.
 - **How to Use**:
   - Set `ENABLE_TABULAR_CLOCK_DIGITS=yes`.
   - The runtime equalizes the horizontal advance width across all digits `0` through `9` and centers their contours within the standardized bounding box.
 
-#### 3. 🛡️ Decoupled Safe Metrics (`METRICS_MODE`)
+#### 4. 🛡️ Decoupled Safe Metrics (`METRICS_MODE`)
 - **The Problem**: In status bars, app toolbars, and notification headers, tall diacritics (Vietnamese `ế`, `Ậ`, Devanagari, Thai, Arabic, or display letters `Å`, `Ŵ`) can get clipped if vertical metrics are too tight. Conversely, older scripts that blindly expanded line heights caused code editors and terminal emulators to experience severe (+41%) vertical line-height ballooning.
 - **Options**:
   - `METRICS_MODE=compact` (Default & Recommended): Forces classic ultra-tight FFIX3 metrics ($2128 / -550$). Delivers maximum notification and UI compactness.
   - `METRICS_MODE=safe`: Decoupled safe metrics. Ascent and descent expand independently based on actual glyph boundaries. Tall accents never clip, descenders remain clear, and UI elements stay centered and compact.
   - `METRICS_MODE=preserve`: Leaves the font designer's original metric tables unaltered.
 
-#### 4. 🎨 OpenType Feature Freezing (`*_FREEZE_FEATURES`)
+#### 5. 🎨 OpenType Feature Freezing (`*_FREEZE_FEATURES`)
 - **The Problem**: Many professional fonts feature alternate characters (slashed zeros, curved lowercase `l`, single-story `a` and `g`, or geometric glyphs) hidden behind OpenType tags (`zero`, `ss01`–`ss20`, `cv01`–`cv99`). Android apps lack menus to activate these.
 - **How to Use**:
   - Check the discovered features list commented directly in your `.conf` file.
@@ -131,14 +139,14 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
     ```
   - Re-flash the font module ZIP to bake these alternates into the default glyphs system-wide!
 
-#### 5. ⚖️ Variable Font Weight Tuning
+#### 6. ⚖️ Variable Font Weight Tuning
 - For variable fonts, fine-tune the exact numeric weight mapped to each of Android's system weight tiers (100–900):
   ```sh
   SANS_WGHT="100 200 300 400 500 600 700 800 900"
   SANS_WDTH="100 100 100 100 100 100 100 100 100"
   ```
 
-#### 6. 🌐 Adding Extra Fonts Directly on Your Phone
+#### 7. 🌐 Adding Extra Fonts Directly on Your Phone
 - You can augment an installed module with additional language or style families without repacking the ZIP on PC:
   - Place extra fonts into `/sdcard/MFFM/<FontFamily>/`:
     - `/sdcard/MFFM/<FontFamily>/Bengali/`

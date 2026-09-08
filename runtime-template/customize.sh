@@ -614,6 +614,12 @@ COLON_UNICODES = (
     0xFE30,  # PRESENTATION FORM FOR VERTICAL TWO DOT LEADER (︰)
 )
 
+LOCKSCREEN_COLON_CODEPOINTS = (
+    0xEE01,  # Android clock colon PUA (Google Sans / Roboto / AOSP lockscreen clock)
+    0x2236,  # RATIO (∶)
+    0x2982,  # Z NOTATION TYPE COLON (⦂)
+)
+
 
 def _unwrap_subtables(subtables):
     unwrapped = []
@@ -826,6 +832,72 @@ def font_has_centered_colon(font_or_path) -> bool:
             font.close()
 
     return False
+
+
+def font_has_pua_colon(font_or_path, pua_codepoints: tuple[int, ...] = (0xEE01,)) -> bool:
+    """Exhaustively inspect whether a font implements Android lockscreen clock colon PUA (U+EE01)."""
+    from fontTools.ttLib import TTFont
+    from fontTools.pens.boundsPen import BoundsPen
+
+    should_close = False
+    if isinstance(font_or_path, (str, Path)):
+        p = Path(font_or_path)
+        if p.is_dir():
+            for child in sorted(p.iterdir()):
+                if child.is_file() and child.suffix.lower() in SUPPORTED_EXTENSIONS:
+                    if font_has_pua_colon(child, pua_codepoints):
+                        return True
+            return False
+        if not p.is_file():
+            return False
+        try:
+            font = TTFont(str(p), lazy=True)
+            should_close = True
+        except Exception:
+            try:
+                from fontTools.ttLib import TTCollection
+                ttc = TTCollection(str(p))
+                for f in ttc.fonts:
+                    if font_has_pua_colon(f, pua_codepoints):
+                        return True
+                return False
+            except Exception:
+                return False
+    else:
+        font = font_or_path
+
+    try:
+        glyph_order = set(font.getGlyphOrder())
+        cmap = font.getBestCmap() if hasattr(font, "getBestCmap") else {}
+        if not cmap and "cmap" in font:
+            cmap = font["cmap"].getBestCmap() or {}
+
+        glyph_set = font.getGlyphSet() if hasattr(font, "getGlyphSet") else None
+        for cp in pua_codepoints:
+            mapped = cmap.get(cp)
+            if mapped and mapped in glyph_order and mapped != ".notdef":
+                if glyph_set is not None and mapped in glyph_set:
+                    try:
+                        pen = BoundsPen(glyph_set)
+                        glyph_set[mapped].draw(pen)
+                        if pen.bounds:
+                            return True
+                    except Exception:
+                        return True
+                else:
+                    return True
+
+        for name in ("uniEE01", "glyphEE01", "uEE01", "colon.pua", "colon_pua"):
+            if name in glyph_order:
+                return True
+
+        return False
+    finally:
+        if should_close:
+            try:
+                font.close()
+            except Exception:
+                pass
 
 
 def equalize_clock_digits(font_or_path, target_width: int | None = None) -> bool:
@@ -1215,6 +1287,68 @@ def inject_centered_colon(
         return True
     except Exception as exc:
         sys.stderr.write(f"inject_centered_colon error: {exc}\n")
+        return False
+
+
+def copy_colon_to_pua(font_or_path, codepoints: tuple[int, ...] = LOCKSCREEN_COLON_CODEPOINTS) -> bool:
+    """Copy/map the colon (or centered colon) glyph to Android lockscreen clock colon PUA (U+EE01) and symbols (U+2236, U+2982)."""
+    from fontTools.ttLib import TTFont
+
+    should_save_and_close = False
+    if isinstance(font_or_path, (str, Path)):
+        try:
+            font = TTFont(str(font_or_path))
+            should_save_and_close = True
+        except Exception:
+            return False
+    else:
+        font = font_or_path
+
+    try:
+        glyph_order = font.getGlyphOrder()
+        cmap = font.getBestCmap() if hasattr(font, "getBestCmap") else {}
+        if not cmap and "cmap" in font:
+            cmap = font["cmap"].getBestCmap() or {}
+
+        # Determine the best colon glyph to map
+        # Prefer centered colon if one was created or exists, otherwise standard colon
+        target_glyph = None
+        for candidate in ("colon.case.tf", "colon.case", "colon.centered", "colon.cap", "colon.centered.tf", "colon_centered"):
+            if candidate in glyph_order:
+                target_glyph = candidate
+                break
+
+        if not target_glyph:
+            if 0x003A in cmap and cmap[0x003A] in glyph_order:
+                target_glyph = cmap[0x003A]
+            elif "colon" in glyph_order:
+                target_glyph = "colon"
+
+        if not target_glyph or "cmap" not in font:
+            if should_save_and_close:
+                font.close()
+            return False
+
+        changed = False
+        for table in font["cmap"].tables:
+            if table.isUnicode():
+                for cp in codepoints:
+                    if table.cmap.get(cp) != target_glyph:
+                        table.cmap[cp] = target_glyph
+                        changed = True
+
+        if should_save_and_close:
+            if changed:
+                font.save(str(font_or_path))
+            font.close()
+        return changed
+    except Exception as exc:
+        sys.stderr.write(f"copy_colon_to_pua error: {exc}\n")
+        if should_save_and_close:
+            try:
+                font.close()
+            except Exception:
+                pass
         return False
 
 
@@ -1617,6 +1751,7 @@ def compile_bundle(
     fix_metrics: bool = True,
     sanitize_names: bool = True,
     enable_centered_colon: bool = False,
+    enable_pua_colon: bool = False,
     convert_otf: bool = True,
     enable_tabular_digits: bool = False,
     colon_alignment: str = "center",
@@ -1727,11 +1862,15 @@ def compile_bundle(
                 rule=colon_rule,
             )
 
-        # 5. Name table sanitization
+        # 5. Lockscreen clock colon PUA (Sans only)
+        if category == "sans" and enable_pua_colon:
+            copy_colon_to_pua(font)
+
+        # 6. Name table sanitization
         if sanitize_names:
             sanitize_name_table(font)
 
-        # 6. Metrics normalization
+        # 7. Metrics normalization
         if fix_metrics:
             fix_font_metrics(font, mode=metrics_mode)
 
@@ -1883,6 +2022,7 @@ def main():
     s_proc.add_argument("--equalize-digits", action="store_true", help="Equalize advance widths of digits (0-9)")
     s_proc.add_argument("--digit-width", type=int, help="Target advance width for digits")
     s_proc.add_argument("--freeze-features")
+    s_proc.add_argument("--copy-pua-colon", action="store_true", help="Copy/map colon to Android lockscreen clock colon PUA (U+EE01, U+2236, U+2982)")
     s_proc.add_argument("--convert-otf", action="store_true", help="Convert CFF/OTF outlines to TrueType")
     s_proc.add_argument("--no-convert-otf", action="store_true", help="Skip OTF to TTF conversion")
 
@@ -1897,6 +2037,7 @@ def main():
     s_comp.add_argument("--metrics-mode", choices=["safe", "compact", "preserve"], default="compact", help="Metrics mode (safe=auto-clamp FFIX3 ratio, compact=fixed FFIX3, preserve=keep original)")
     s_comp.add_argument("--no-sanitize-names", action="store_true")
     s_comp.add_argument("--enable-centered-colon", action="store_true")
+    s_comp.add_argument("--enable-pua-colon", action="store_true", help="Copy/map colon to Android lockscreen clock colon PUA (U+EE01, U+2236, U+2982)")
     s_comp.add_argument("--colon-alignment", choices=["center", "cap_height", "x_height"], default="center")
     s_comp.add_argument("--colon-offset", type=int, default=0)
     s_comp.add_argument("--colon-rule", choices=["between_digits", "after_digit", "always"], default="between_digits")
@@ -1921,12 +2062,19 @@ def main():
     s_colon = sub.add_parser("check-colon", help="Check if font or directory contains centered colon")
     s_colon.add_argument("paths", nargs="+", help="Path(s) to font file(s) or director(ies)")
 
+    s_pua_col = sub.add_parser("check-pua-colon", help="Check if font or directory contains Android lockscreen clock colon PUA (U+EE01)")
+    s_pua_col.add_argument("paths", nargs="+", help="Path(s) to font file(s) or director(ies)")
+
     s_inj_col = sub.add_parser("inject-colon", help="Inject centered colon into font")
     s_inj_col.add_argument("--in", dest="input_file", required=True)
     s_inj_col.add_argument("--out", dest="output_file")
     s_inj_col.add_argument("--alignment", choices=["center", "cap_height", "x_height"], default="center")
     s_inj_col.add_argument("--offset", type=int, default=0)
     s_inj_col.add_argument("--rule", choices=["between_digits", "after_digit", "always"], default="between_digits")
+
+    s_copy_pua = sub.add_parser("copy-pua-colon", help="Copy/map colon to Android lockscreen clock colon PUA (U+EE01, U+2236, U+2982)")
+    s_copy_pua.add_argument("--in", dest="input_file", required=True)
+    s_copy_pua.add_argument("--out", dest="output_file")
 
     s_freeze = sub.add_parser("freeze-features", help="Freeze OpenType features into font")
     s_freeze.add_argument("--in", dest="input_file", required=True)
@@ -1969,6 +2117,8 @@ def main():
                 offset=args.colon_offset,
                 rule=args.colon_rule,
             )
+        if args.copy_pua_colon:
+            copy_colon_to_pua(font)
         if args.sanitize_names:
             sanitize_name_table(font)
         if not args.no_fix_metrics:
@@ -2005,6 +2155,9 @@ def main():
     elif args.cmd == "check-colon":
         has_col = any(font_has_centered_colon(p) for p in args.paths)
         print("true" if has_col else "false")
+    elif args.cmd == "check-pua-colon":
+        has_pua = any(font_has_pua_colon(p) for p in args.paths)
+        print("true" if has_pua else "false")
     elif args.cmd == "inject-colon":
         from fontTools.ttLib import TTFont
         out_f = args.output_file or args.input_file
@@ -2022,6 +2175,18 @@ def main():
         else:
             font.close()
             print(f"Centered colon already present or not applicable in {args.input_file}")
+    elif args.cmd == "copy-pua-colon":
+        from fontTools.ttLib import TTFont
+        out_f = args.output_file or args.input_file
+        font = TTFont(args.input_file)
+        ok = copy_colon_to_pua(font)
+        if ok:
+            font.save(out_f)
+            font.close()
+            print(f"Copied colon to Android clock PUA in {out_f}")
+        else:
+            font.close()
+            print(f"Android clock PUA already present or not applicable in {args.input_file}")
     elif args.cmd == "freeze-features":
         from fontTools.ttLib import TTFont
         out_f = args.output_file or args.input_file
@@ -2066,6 +2231,7 @@ def main():
             metrics_mode=args.metrics_mode,
             sanitize_names=not args.no_sanitize_names,
             enable_centered_colon=args.enable_centered_colon,
+            enable_pua_colon=args.enable_pua_colon,
             convert_otf=not args.no_convert_otf,
             enable_tabular_digits=args.enable_tabular_digits,
             colon_alignment=args.colon_alignment,

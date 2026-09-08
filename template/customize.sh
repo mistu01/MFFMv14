@@ -1168,7 +1168,12 @@ reformat_config_file() {
     _strip_colon=1
   fi
 
-  awk -v strip_colon="$_strip_colon" '
+  local _strip_pua=0
+  if [ "$_has_pua_col" = "true" ]; then
+    _strip_pua=1
+  fi
+
+  awk -v strip_colon="$_strip_colon" -v strip_pua="$_strip_pua" '
   BEGIN {
     profiles[1] = "SANS_UPRIGHT"; titles["SANS_UPRIGHT"] = "SANS-SERIF / UPRIGHT"
     profiles[2] = "CONDENSED_UPRIGHT"; titles["CONDENSED_UPRIGHT"] = "CONDENSED / UPRIGHT"
@@ -1184,6 +1189,8 @@ reformat_config_file() {
     in_typo = 0
     seen_typo_banner = 0
     in_colon_block = 0
+    in_pua_block = 0
+    typo_sec_num = 0
     header_count = 0
     typo_count = 0
     buf_count = 0
@@ -1199,33 +1206,28 @@ reformat_config_file() {
 
   function is_profile_title(str,   p) {
     for (p = 1; p <= num_profiles; p++) {
-      if (str ~ ("^#[ \t]*" titles[profiles[p]] "[ \t]*$")) return 1
+      if (index(str, titles[profiles[p]]) > 0) return 1
     }
     return 0
   }
 
   {
     line = $0
-    sub(/\r$/, "", line)
 
-    # 1. Header (lines up to MODULE_IDENTITY=)
+    # 1. Header lines
     if (in_header) {
-      header[header_count++] = line
-      if (line ~ /^[ \t]*MODULE_IDENTITY[ \t]*=/) {
-        in_header = 0
+      if (line ~ /^CONFIG_SCHEMA=/ || line ~ /^MODULE_IDENTITY=/) {
+        header[header_count++] = line
+        next
       }
-      next
-    }
-
-    # Skip all standalone dashed dividers (they will be regenerated uniformly)
-    if (line ~ /^#[ \t]*-{10,}[ \t]*$/) {
-      next
-    }
-
-    # Skip any existing profile title comments (they will be regenerated uniformly)
-    if (is_profile_title(line)) {
-      buf_count = 0
-      next
+      if (line ~ /^[A-Z0-9_]+=[^#;]*/ || line ~ /ADVANCED TYPOGRAPHY/) {
+        in_header = 0
+      } else {
+        if (line !~ /^# -{10,}/ && !is_profile_title(line) && line !~ /^#[ \t]*$/) {
+          header[header_count++] = line
+        }
+        next
+      }
     }
 
     # Check if line is a profile key
@@ -1269,12 +1271,12 @@ reformat_config_file() {
     # If inside typo section
     if (in_typo) {
       if (strip_colon == 1) {
-        if (line ~ /^#[ \t]*1\.[ \t]*CENTERED CLOCK COLON/) {
+        if (line ~ /^#[ \t]*[1-5]\.[ \t]*CENTERED CLOCK COLON/) {
           in_colon_block = 1
           next
         }
         if (in_colon_block) {
-          if (line ~ /^#[ \t]*[12]\.[ \t]*TABULAR CLOCK DIGITS/) {
+          if (line ~ /^#[ \t]*[1-5]\.[ \t]*(ANDROID LOCKSCREEN CLOCK COLON|TABULAR CLOCK DIGITS|SMART METRIC|OPENTYPE FEATURE)/) {
             in_colon_block = 0
           } else {
             next
@@ -1283,13 +1285,29 @@ reformat_config_file() {
         if (line ~ /^[ \t]*(ENABLE_CENTERED_COLON|COLON_ALIGNMENT|COLON_OFFSET|COLON_RULE)[ \t]*=/) {
           next
         }
-        if (line ~ /^#[ \t]*2\.[ \t]*TABULAR CLOCK DIGITS/) sub(/2\./, "1.", line)
-        if (line ~ /^#[ \t]*3\.[ \t]*SMART METRIC/) sub(/3\./, "2.", line)
-        if (line ~ /^#[ \t]*4\.[ \t]*OPENTYPE FEATURE/) sub(/4\./, "3.", line)
       }
 
-      # If this line is a numbered typography section header, wrap with clean dividers
-      if (line ~ /^#[ \t]*[1-4]\.[ \t]*(CENTERED CLOCK COLON|TABULAR CLOCK DIGITS|SMART METRIC|OPENTYPE FEATURE)/) {
+      if (strip_pua == 1) {
+        if (line ~ /^#[ \t]*[1-5]\.[ \t]*ANDROID LOCKSCREEN CLOCK COLON/) {
+          in_pua_block = 1
+          next
+        }
+        if (in_pua_block) {
+          if (line ~ /^#[ \t]*[1-5]\.[ \t]*(TABULAR CLOCK DIGITS|SMART METRIC|OPENTYPE FEATURE)/) {
+            in_pua_block = 0
+          } else {
+            next
+          }
+        }
+        if (line ~ /^[ \t]*ENABLE_LOCKSCREEN_COLON_PUA[ \t]*=/) {
+          next
+        }
+      }
+
+      # If this line is a numbered typography section header, wrap with clean dividers and renumber
+      if (line ~ /^#[ \t]*[1-5]\.[ \t]*(CENTERED CLOCK COLON|ANDROID LOCKSCREEN CLOCK COLON|TABULAR CLOCK DIGITS|SMART METRIC|OPENTYPE FEATURE)/) {
+        typo_sec_num++
+        sub(/^#[ \t]*[1-5]\./, "# " typo_sec_num ".", line)
         while (typo_count > 0 && typo[typo_count - 1] ~ /^[ \t]*$/) typo_count--
         typo[typo_count++] = ""
         typo[typo_count++] = "# ------------------------------------------------------------------------------"
@@ -1297,6 +1315,8 @@ reformat_config_file() {
         typo[typo_count++] = "# ------------------------------------------------------------------------------"
         next
       }
+
+      if (line ~ /^#[ \t]*-{10,}/) next
 
       if (line ~ /^[ \t]*$/) {
         if (typo_count > 0 && typo[typo_count - 1] ~ /^[ \t]*$/) next
@@ -1365,6 +1385,10 @@ update_installed_module_description() {
     active_feats="Centered Colon"
   elif [ "$_has_col" = "true" ]; then
     active_feats="Centered Colon (native)"
+  fi
+
+  if [ "$_applied_pua_colon" = "1" ]; then
+    active_feats="${active_feats:+$active_feats, }Clock Colon PUA"
   fi
 
   if [ "$_applied_tabular" = "1" ]; then
@@ -1766,6 +1790,10 @@ prepare_variable_config() {
       _has_col=$("$_helper" check-colon "$_primary_sans" "$FONT_DIR/Sans" "$MFFM_DIR/Sans" 2>/dev/null)
       export _has_col
 
+      local _has_pua_col
+      _has_pua_col=$("$_helper" check-pua-colon "$_primary_sans" "$FONT_DIR/Sans" "$MFFM_DIR/Sans" 2>/dev/null)
+      export _has_pua_col
+
       if ! grep -q "ADVANCED TYPOGRAPHY" "$VF_CONFIG_FILE" 2>/dev/null; then
         {
           printf '\n# ==============================================================================\n'
@@ -1816,12 +1844,34 @@ prepare_variable_config() {
         fi
       fi
 
-      local _tab_sec=2 _met_sec=3 _feat_sec=4
-      if [ "$_has_col" = "true" ]; then
-        _tab_sec=1
-        _met_sec=2
-        _feat_sec=3
+      if [ "$_has_pua_col" = "true" ]; then
+        sed -i -E '/^[[:space:]]*ENABLE_LOCKSCREEN_COLON_PUA[[:space:]]*=/d' "$VF_CONFIG_FILE" 2>/dev/null
+      else
+        if ! grep -q "^[[:space:]]*ENABLE_LOCKSCREEN_COLON_PUA[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+          {
+            printf '# ------------------------------------------------------------------------------\n'
+            printf '# 2. ANDROID LOCKSCREEN CLOCK COLON (PUA U+EE01, U+2236, U+2982)\n'
+            printf '# ------------------------------------------------------------------------------\n'
+            printf '# WHAT IT DOES:\n'
+            printf '#   Some Android skins (Pixel, HyperOS, One UI, OxygenOS, Nothing OS) query\n'
+            printf '#   dedicated Private Use Area (PUA) codepoints (U+EE01, U+2236, U+2982) for lockscreen\n'
+            printf '#   clocks. If missing in a custom font, clocks may display missing glyph boxes [?].\n'
+            printf '#   Enabling this maps the colon / centered colon glyph to these lockscreen PUA codepoints.\n'
+            printf '#\n'
+            printf '# WHEN TO CHOOSE:\n'
+            printf '#   - true  : If your lockscreen clock shows a broken box [?] or missing colon glyph.\n'
+            printf '#   - false : Keep default Unicode font mapping untouched. [Default]\n'
+            printf 'ENABLE_LOCKSCREEN_COLON_PUA=false\n\n'
+          } >> "$VF_CONFIG_FILE"
+        fi
       fi
+
+      local _sec_idx=1
+      [ "$_has_col" != "true" ] && _sec_idx=$((_sec_idx + 1))
+      [ "$_has_pua_col" != "true" ] && _sec_idx=$((_sec_idx + 1))
+      local _tab_sec=$_sec_idx
+      _sec_idx=$((_sec_idx + 1))
+      local _met_sec=$_sec_idx
 
       if ! grep -q "^[[:space:]]*ENABLE_TABULAR_CLOCK_DIGITS[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
         {
@@ -1871,11 +1921,13 @@ prepare_variable_config() {
         --serif-dir "$FONT_DIR/Serif" --serif-dir "$MFFM_DIR/Serif" \
         --bengali-dir "$FONT_DIR/Bengali" --bengali-dir "$MFFM_DIR/Bengali" 2>/dev/null)
       if [ -n "$_feat_report" ]; then
-        local _fr_num=4
-        [ "$_has_col" = "true" ] && _fr_num=3
+        local _fr_num_calc=1
+        [ "$_has_col" != "true" ] && _fr_num_calc=$((_fr_num_calc + 1))
+        [ "$_has_pua_col" != "true" ] && _fr_num_calc=$((_fr_num_calc + 1))
+        _fr_num_calc=$((_fr_num_calc + 2))
         {
           printf '\n# ------------------------------------------------------------------------------\n'
-          printf '# %s. OPENTYPE FEATURE FREEZING (Stylistic Alternates)\n' "$_fr_num"
+          printf '# %s. OPENTYPE FEATURE FREEZING (Stylistic Alternates)\n' "$_fr_num_calc"
           printf '# ------------------------------------------------------------------------------\n'
           printf '# WHAT IT DOES:\n'
           printf '#   Bakes special character designs (like slashed zero, curved "l", single-story\n'
@@ -1964,6 +2016,7 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
   _cfg_colon_align=$(config_value COLON_ALIGNMENT)
   _cfg_colon_offset=$(config_value COLON_OFFSET)
   _cfg_colon_rule=$(config_value COLON_RULE)
+  _cfg_pua_colon=$(config_value ENABLE_LOCKSCREEN_COLON_PUA)
   _cfg_tabular_digits=$(config_value ENABLE_TABULAR_CLOCK_DIGITS)
   _cfg_metrics_mode=$(config_value METRICS_MODE)
   _cfg_metrics_mode=${_cfg_metrics_mode:-compact}
@@ -1973,6 +2026,9 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
   _cfg_beng_f=$(config_value BENGALI_FREEZE_FEATURES)
 
   case "$_cfg_colon" in
+    yes|YES|true|TRUE|1) _should_compile=1 ;;
+  esac
+  case "$_cfg_pua_colon" in
     yes|YES|true|TRUE|1) _should_compile=1 ;;
   esac
   case "$_cfg_tabular_digits" in
@@ -1986,6 +2042,7 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
   fi
 
   _applied_colon=0
+  _applied_pua_colon=0
   _applied_tabular=0
   _applied_freeze=0
   _applied_metrics=0
@@ -1993,7 +2050,7 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
   if [ "$_should_compile" = "1" ]; then
     ui_print "- Dynamic compilation via MFFM Runtime..."
     _extra_compile_args=""
-    _req_colon=0; _req_tabular=0; _req_freeze=0; _req_metrics=0
+    _req_colon=0; _req_pua_colon=0; _req_tabular=0; _req_freeze=0; _req_metrics=0
     case "$_cfg_colon" in
       yes|YES|true|TRUE|1)
         _req_colon=1
@@ -2002,6 +2059,13 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
         [ -n "$_cfg_colon_align" ] && _extra_compile_args="$_extra_compile_args --colon-alignment $_cfg_colon_align"
         [ -n "$_cfg_colon_offset" ] && _extra_compile_args="$_extra_compile_args --colon-offset $_cfg_colon_offset"
         [ -n "$_cfg_colon_rule" ] && _extra_compile_args="$_extra_compile_args --colon-rule $_cfg_colon_rule"
+        ;;
+    esac
+    case "$_cfg_pua_colon" in
+      yes|YES|true|TRUE|1)
+        _req_pua_colon=1
+        _extra_compile_args="$_extra_compile_args --enable-pua-colon"
+        ui_print "    [*] Mapping colon to Android lockscreen clock PUA (U+EE01, U+2236, U+2982)..."
         ;;
     esac
     case "$_cfg_tabular_digits" in
@@ -2054,6 +2118,10 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
         _applied_colon=1
         ui_print "    [OK] Centered clock colon injected"
       fi
+      if [ "$_req_pua_colon" = "1" ]; then
+        _applied_pua_colon=1
+        ui_print "    [OK] Android lockscreen clock colon PUA mapped (U+EE01, U+2236, U+2982)"
+      fi
       if [ "$_req_tabular" = "1" ]; then
         _applied_tabular=1
         ui_print "    [OK] Tabular clock digits equalized"
@@ -2074,6 +2142,7 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
       ui_print "    [OK] Dynamic compilation completed successfully"
     else
       [ "$_req_colon" = "1" ] && ui_print "    [!] Centered colon injection failed"
+      [ "$_req_pua_colon" = "1" ] && ui_print "    [!] Android lockscreen clock colon PUA mapping failed"
       [ "$_req_tabular" = "1" ] && ui_print "    [!] Tabular clock digits equalization failed"
       [ "$_req_freeze" = "1" ] && ui_print "    [!] OpenType feature freezing failed"
       [ "$_req_metrics" = "1" ] && ui_print "    [!] Font metrics harmonization failed"

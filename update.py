@@ -49,6 +49,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-interactive", action="store_false", dest="interactive", help="disable interactive feature prompt")
     parser.add_argument("--centered-colon", action="store_true", default=None, help="force centered colon generation/injection for digits (12:30)")
     parser.add_argument("--no-centered-colon", action="store_false", dest="centered_colon", help="disable centered colon injection")
+    parser.add_argument("--pua-colon", action="store_true", default=None, help="force mapping colon to Android lockscreen clock PUA (U+EE01, U+2236, U+2982)")
+    parser.add_argument("--no-pua-colon", action="store_false", dest="pua_colon", help="disable Android lockscreen clock PUA mapping")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--keep-temp", action="store_true")
     return parser.parse_args()
@@ -167,6 +169,7 @@ def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) ->
             bengali_features=args.bengali_features,
             interactive_features=args.interactive,
             centered_colon=args.centered_colon,
+            pua_colon=args.pua_colon,
         )
         display = display_name_for_mode(
             args.name or old_display_name(old_root) or result.family,
