@@ -170,8 +170,5 @@ MFFMv14/
 - **Author**: Mistu (@MFFMMain)
 - **Feedback & Issues**: Bug reports and feature suggestions are welcome on GitHub Issues!
 
----
 
-<div align="center">
-<b>MFFMv14</b> — Beautiful typography made effortless on Android.
-</div>
+
