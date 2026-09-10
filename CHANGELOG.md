@@ -15,6 +15,14 @@ versioning scheme the modules themselves carry.
   - When compiling bundles containing CFF/OTF faces on-device with `convert_otf=True`, emits an immediate advisory notice informing users of intensive Bezier curve conversion on mobile CPUs (`[*] Notice: Detected X PostScript (CFF/OTF) faces...`).
   - Tags processing steps for CFF fonts with `[CFF->TTF]` in real-time logs so users have full visibility into why specific fonts take longer to convert.
 
+### Fixed
+- **Centered Colon False Positive on Fonts with `tnum` Tabular Colon Substitutions**:
+  - `font_has_centered_colon()` in `runtime_helper.py` incorrectly returned `true` for fonts that only have a `tnum` GSUB `colon → colon.tf` substitution (a tabular-width colon for digit alignment), suppressing the `ENABLE_CENTERED_COLON` config option even though the font has no elevated/centered colon.
+  - Root cause 1: `"tnum"` was listed alongside `"case"` and `"calt"` in the GSUB trusted-tag shortcut (L458). Only `case` (uppercase-height positional shift) and `calt` (contextual reposition) are valid indicators; `tnum` only widens advance width.
+  - Root cause 2: `COLON_GLYPH_PATTERNS` included `tab|tf|tnum` as colon variant suffixes. `colon.tf` and `colon.tab` are tabular figures colons, not centered/elevated clock colons. Removed these three tokens from the pattern suffix alternation.
+  - Root cause 3: `target_colons` included `"colon.tf"` and `"colon.tab"`, causing them to be treated as canonical base colon glyphs for GSUB source matching.
+  - Affects any static or variable sans-serif font exposing a `tnum` feature (e.g. Circular Spotify Tx T, and potentially other Monotype/Spotify-licensed families).
+
 ## 2026.09.09
 
 ### Added

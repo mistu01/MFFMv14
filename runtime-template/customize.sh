@@ -603,7 +603,7 @@ def otf_to_ttf(tt_font, post_format: float = 2.0, max_err: float = 1.0, reverse_
 
 
 COLON_GLYPH_PATTERNS = re.compile(
-    r"^(colon[._-](case|cent|cap|mid|vert|uc|up|alt|tab|tf|tnum|cv|ss)|(case|cent|cap|mid|vert)[._-]colon|uniEE01|glyphEE01|uEE01|ratio$)",
+    r"^(colon[._-](case|cent|cap|mid|vert|uc|up|alt|cv|ss)|(case|cent|cap|mid|vert)[._-]colon|uniEE01|glyphEE01|uEE01|ratio$)",
     re.IGNORECASE,
 )
 
@@ -673,7 +673,7 @@ def font_has_centered_colon(font_or_path) -> bool:
             cmap = font["cmap"].getBestCmap() or {}
 
         colon_glyph = cmap.get(0x003A, "colon")
-        target_colons = {colon_glyph, "colon", "colon.tf", "colon.tab"}
+        target_colons = {colon_glyph, "colon"}
 
         # 1. Direct glyph names for centered/case/clock colon variants
         for name in glyph_order:
@@ -731,7 +731,7 @@ def font_has_centered_colon(font_or_path) -> bool:
                             mapping = getattr(st, "mapping", {})
                             for src_g, dst_g in mapping.items():
                                 if src_g in target_colons:
-                                    if tag in ("case", "calt", "tnum") or COLON_GLYPH_PATTERNS.search(dst_g):
+                                    if tag in ("case", "calt") or COLON_GLYPH_PATTERNS.search(dst_g):
                                         return True
 
                             # AlternateSubst
