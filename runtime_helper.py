@@ -2261,84 +2261,45 @@ def compile_bundle(
         has_any_italic = any(f["style"] == "italic" for f in ordered_sans)
         should_synth_static = enable_synthetic_italic and not has_any_italic
 
-        # --- Concurrent processing: each font file is independent ---
-        import os as _os
-        from concurrent.futures import ThreadPoolExecutor as _TPE
-
-        _workers = min(4, max(1, (_os.cpu_count() or 2)))
-
-        def _open_sans_upright(f):
+        for idx, f in enumerate(ordered_sans):
             cff_tag = " [CFF->TTF]" if (convert_otf and f.get("is_cff")) else ""
-            print(
-                f"[*] Processing Sans font {ordered_sans.index(f) + 1}/{len(ordered_sans)}: "
-                f"{f.get('family', 'Font')} ({f.get('weight', 400)} {f.get('style', 'normal')}){cff_tag}...",
-                flush=True,
-            )
-            return process_and_open(f, "sans")
-
-        def _open_sans_italic(f):
-            cff_tag = " [CFF->TTF]" if (convert_otf and f.get("is_cff")) else ""
-            print(
-                f"[*] Synthesizing Sans italic ({f.get('weight', 400)}): "
-                f"{f.get('family', 'Font')}{cff_tag}...",
-                flush=True,
-            )
-            kw = {"lazy": False, "recalcBBoxes": False, "recalcTimestamp": False}
-            if f["font_number"] is not None:
-                kw["fontNumber"] = f["font_number"]
-            ital_f = TTFont(f["path"], **kw)
-            if getattr(ital_f, "flavor", None) is not None:
-                ital_f.flavor = None
-            synthesize_italic_font(
-                ital_f,
-                italic_angle=synthetic_italic_angle,
-                keep_hinting_tables=keep_hinting,
-                source_stem=Path(f["path"]).stem,
-            )
-            if convert_otf and ("CFF " in ital_f or "CFF2" in ital_f or getattr(ital_f, "sfntVersion", None) == "OTTO"):
-                otf_to_ttf(ital_f)
-            if not keep_hinting:
-                remove_font_hinting(ital_f)
-            if enable_tabular_digits:
-                equalize_clock_digits(ital_f)
-            if freeze_sans:
-                freeze_font_features(ital_f, freeze_sans)
-            if enable_centered_colon:
-                inject_centered_colon(ital_f, alignment=colon_alignment, offset=colon_offset, rule=colon_rule)
-            if enable_pua_colon:
-                copy_colon_to_pua(ital_f)
-            if sanitize_names:
-                sanitize_name_table(ital_f)
-            if fix_metrics:
-                fix_font_metrics(ital_f, mode=metrics_mode)
-            return ital_f
-
-        # Process all upright (and native italic) faces concurrently, preserve order
-        if _workers > 1 and len(ordered_sans) > 1:
-            with _TPE(max_workers=_workers) as pool:
-                opened_fonts = list(pool.map(_open_sans_upright, ordered_sans))
-        else:
-            opened_fonts = [_open_sans_upright(f) for f in ordered_sans]
-
-        # Collect results in order and build XML entries
-        normal_upright_for_italic = []
-        for f, font_obj in zip(ordered_sans, opened_fonts):
-            idx_in_ttc = len(ttc_fonts)
-            ttc_fonts.append(font_obj)
-            xml_line = font_xml(output_filename, f["weight"], f["style"], index=idx_in_ttc)
+            print(f"[*] Processing Sans font {idx + 1}/{len(ordered_sans)}: {f.get('family', 'Font')} ({f.get('weight', 400)} {f.get('style', 'normal')}){cff_tag}...", flush=True)
+            ttc_fonts.append(process_and_open(f, "sans"))
+            xml_line = font_xml(output_filename, f["weight"], f["style"], index=len(ttc_fonts) - 1)
             (condensed_entries if f["condensed"] else normal_entries).append((f["weight"], f["style"], xml_line))
+
             if should_synth_static and f["style"] == "normal":
-                normal_upright_for_italic.append(f)
+                cff_tag = " [CFF->TTF]" if (convert_otf and f.get("is_cff")) else ""
+                print(f"[*] Synthesizing Sans italic ({f.get('weight', 400)}): {f.get('family', 'Font')}{cff_tag}...", flush=True)
+                kw = {"lazy": False, "recalcBBoxes": False, "recalcTimestamp": False}
+                if f["font_number"] is not None:
+                    kw["fontNumber"] = f["font_number"]
+                ital_f = TTFont(f["path"], **kw)
+                if getattr(ital_f, "flavor", None) is not None:
+                    ital_f.flavor = None
+                synthesize_italic_font(
+                    ital_f,
+                    italic_angle=synthetic_italic_angle,
+                    keep_hinting_tables=keep_hinting,
+                    source_stem=Path(f["path"]).stem,
+                )
+                if convert_otf and ("CFF " in ital_f or "CFF2" in ital_f or getattr(ital_f, "sfntVersion", None) == "OTTO"):
+                    otf_to_ttf(ital_f)
+                if not keep_hinting:
+                    remove_font_hinting(ital_f)
+                if enable_tabular_digits:
+                    equalize_clock_digits(ital_f)
+                if freeze_sans:
+                    freeze_font_features(ital_f, freeze_sans)
+                if enable_centered_colon:
+                    inject_centered_colon(ital_f, alignment=colon_alignment, offset=colon_offset, rule=colon_rule)
+                if enable_pua_colon:
+                    copy_colon_to_pua(ital_f)
+                if sanitize_names:
+                    sanitize_name_table(ital_f)
+                if fix_metrics:
+                    fix_font_metrics(ital_f, mode=metrics_mode)
 
-        # Synthesize italic faces concurrently (each reads from its own original file)
-        if normal_upright_for_italic:
-            if _workers > 1 and len(normal_upright_for_italic) > 1:
-                with _TPE(max_workers=_workers) as pool:
-                    italic_fonts = list(pool.map(_open_sans_italic, normal_upright_for_italic))
-            else:
-                italic_fonts = [_open_sans_italic(f) for f in normal_upright_for_italic]
-
-            for f, ital_f in zip(normal_upright_for_italic, italic_fonts):
                 ttc_fonts.append(ital_f)
                 xml_line_it = font_xml(output_filename, f["weight"], "italic", index=len(ttc_fonts) - 1)
                 (condensed_entries if f["condensed"] else normal_entries).append((f["weight"], "italic", xml_line_it))

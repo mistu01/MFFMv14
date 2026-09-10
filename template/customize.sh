@@ -2224,9 +2224,9 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
         _idle_count=$((_idle_count + 2))
         if [ "$_idle_count" -ge 6 ]; then
           _idle_count=0
-          _last_status=$(grep -E '^\s*\[\*\]' "$_comp_log" 2>/dev/null | tail -n 1 | sed 's/^[[:space:]]*//' | tr -d '\r')
+          _last_status=$(grep '\[\*\]' "$_comp_log" 2>/dev/null | tail -n 1 | sed -e 's/^[[:space:]]*//' -e 's/\.\.\.*$//' | tr -d '\r')
           if [ -n "$_last_status" ]; then
-            ui_print "    ${_last_status} (${_elapsed}s elapsed)..."
+            ui_print "    ${_last_status}... (${_elapsed}s elapsed)..."
           else
             ui_print "    [*] Compiling font payload on-device (${_elapsed}s elapsed)..."
           fi
