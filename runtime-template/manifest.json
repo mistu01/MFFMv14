@@ -1,6 +1,6 @@
 {
-  "version": "2026.09.10",
-  "versionCode": "260910",
+  "version": "2026.09.11",
+  "versionCode": "260911",
   "description": "MFFM Runtime - shared Python + fontTools. SHA256 pins for supply-chain verification (like zipsigner_auto.py).",
   "python_version": "3.11.16",
   "fonttools_version": "4.64.0",

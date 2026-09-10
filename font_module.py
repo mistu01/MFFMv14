@@ -428,13 +428,29 @@ log = logging.getLogger('font_module')
 def _glyphs_to_quadratic(glyphs, max_err=1.0, reverse_direction=True):
     from fontTools.pens.cu2quPen import Cu2QuPen
     from fontTools.pens.ttGlyphPen import TTGlyphPen
-    quad_glyphs = {}
-    for gname in glyphs.keys():
-        glyph = glyphs[gname]
+    from concurrent.futures import ThreadPoolExecutor
+    import os
+
+    glyph_names = list(glyphs.keys())
+
+    def _convert_one(gname):
         tt_pen = TTGlyphPen(glyphs)
         cu2qu_pen = Cu2QuPen(tt_pen, max_err, reverse_direction=reverse_direction)
-        glyph.draw(cu2qu_pen)
-        quad_glyphs[gname] = tt_pen.glyph()
+        glyphs[gname].draw(cu2qu_pen)
+        return gname, tt_pen.glyph()
+
+    workers = min(8, max(1, (os.cpu_count() or 2)))
+    quad_glyphs = {}
+
+    if workers > 1 and len(glyph_names) > 32:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for gname, quad in pool.map(_convert_one, glyph_names):
+                quad_glyphs[gname] = quad
+    else:
+        for gname in glyph_names:
+            _, quad = _convert_one(gname)
+            quad_glyphs[gname] = quad
+
     return quad_glyphs
 
 
@@ -449,6 +465,17 @@ def _otf_to_ttf(tt_font, post_format=2.0, max_err=1.0, reverse_direction=True):
     from fontTools.ttLib import newTable
     assert tt_font.sfntVersion == "OTTO"
     assert "CFF " in tt_font or "CFF2" in tt_font
+
+    cff_tag = "CFF2" if "CFF2" in tt_font else "CFF "
+    if cff_tag in tt_font:
+        try:
+            from fontTools.cffLib.transforms import desubroutinize, remove_hints
+            cff_table = tt_font[cff_tag].cff
+            desubroutinize(cff_table)
+            remove_hints(cff_table)
+        except Exception:
+            pass
+
     glyph_order = tt_font.getGlyphOrder()
     tt_font["loca"] = newTable("loca")
     tt_font["glyf"] = glyf = newTable("glyf")
