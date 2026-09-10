@@ -1845,6 +1845,8 @@ def inspect_face(path: str, font_num: int | None = None) -> dict:
             for axis in font["fvar"].axes:
                 axes[axis.axisTag] = (float(axis.minValue), float(axis.defaultValue), float(axis.maxValue))
 
+        is_cff = bool("CFF " in font or "CFF2" in font or getattr(font, "sfntVersion", None) == "OTTO")
+
         return {
             "path": path,
             "font_number": font_num,
@@ -1855,6 +1857,7 @@ def inspect_face(path: str, font_num: int | None = None) -> dict:
             "condensed": condensed,
             "variable": bool(axes),
             "axes": axes,
+            "is_cff": is_cff,
         }
 
 
@@ -2042,6 +2045,51 @@ def compile_bundle(
     mode = "variable" if primary["variable"] else "static"
     family_name = primary["family"] or "Custom Font"
 
+    def dedupe_static(faces):
+        grouped = {}
+        for f in faces:
+            k = (f["condensed"], f["style"], f["weight"])
+            grouped.setdefault(k, []).append(f)
+        return [max(group, key=face_preference_score) for group in grouped.values()]
+
+    total_cff = 0
+    if convert_otf:
+        if mode == "variable":
+            upright_cand = next((f for f in sans_faces if f["style"] == "normal" and not f["condensed"]), sans_faces[0])
+            if upright_cand.get("is_cff"):
+                total_cff += 1
+            ital_cand = next((f for f in sans_faces if f["style"] == "italic" and not f["condensed"]), None)
+            if ital_cand and ital_cand["path"] != upright_cand["path"] and ital_cand.get("is_cff"):
+                total_cff += 1
+            elif ital_cand is None and enable_synthetic_italic and not any(tag in upright_cand.get("axes", {}) for tag in ("slnt", "ital")) and upright_cand.get("is_cff"):
+                total_cff += 1
+        else:
+            ordered_sans_pre = dedupe_static(sans_faces)
+            total_cff += sum(1 for f in ordered_sans_pre if f.get("is_cff"))
+            if enable_synthetic_italic and not any(f["style"] == "italic" for f in ordered_sans_pre):
+                total_cff += sum(1 for f in ordered_sans_pre if f["style"] == "normal" and f.get("is_cff"))
+
+        for fam_faces in (mono_faces, serif_faces, bengali_faces):
+            if not fam_faces:
+                continue
+            var_up = next((f for f in fam_faces if f["variable"] and "wght" in f["axes"]), None)
+            if var_up:
+                if var_up.get("is_cff"):
+                    total_cff += 1
+                var_it = next((f for f in fam_faces if f["style"] == "italic" and f["variable"] and "wght" in f["axes"]), None)
+                if var_it and var_it["path"] != var_up["path"] and var_it.get("is_cff"):
+                    total_cff += 1
+            else:
+                deduped_fam = dedupe_static(fam_faces)
+                total_cff += sum(1 for f in deduped_fam if f.get("is_cff"))
+
+    if total_cff > 0:
+        print(
+            f"[*] Notice: Detected {total_cff} PostScript (CFF/OTF) face{'s' if total_cff > 1 else ''}. "
+            f"Converting Bezier curves to TrueType on-device (this may take several minutes on mobile CPUs)...",
+            flush=True,
+        )
+
     ttc_fonts = []
     output_filename = "DroidSans.ttf"
 
@@ -2106,17 +2154,20 @@ def compile_bundle(
         upright = next((f for f in sans_faces if f["style"] == "normal" and not f["condensed"]), sans_faces[0])
         italic = next((f for f in sans_faces if f["style"] == "italic" and not f["condensed"]), None)
 
-        print(f"[*] Processing variable Sans upright: {upright.get('family', 'Font')}...", flush=True)
+        cff_tag = " [CFF->TTF]" if (convert_otf and upright.get("is_cff")) else ""
+        print(f"[*] Processing variable Sans upright: {upright.get('family', 'Font')}{cff_tag}...", flush=True)
         upright_idx = len(ttc_fonts)
         ttc_fonts.append(process_and_open(upright, "sans"))
 
         italic_idx = upright_idx
         if italic and italic["path"] != upright["path"]:
-            print(f"[*] Processing variable Sans italic: {italic.get('family', 'Font')}...", flush=True)
+            cff_tag = " [CFF->TTF]" if (convert_otf and italic.get("is_cff")) else ""
+            print(f"[*] Processing variable Sans italic: {italic.get('family', 'Font')}{cff_tag}...", flush=True)
             italic_idx = len(ttc_fonts)
             ttc_fonts.append(process_and_open(italic, "sans"))
         elif italic is None and enable_synthetic_italic and not any(tag in upright.get("axes", {}) for tag in ("slnt", "ital")):
-            print(f"[*] Synthesizing variable Sans italic (angle: {synthetic_italic_angle}°)...", flush=True)
+            cff_tag = " [CFF->TTF]" if (convert_otf and upright.get("is_cff")) else ""
+            print(f"[*] Synthesizing variable Sans italic (angle: {synthetic_italic_angle}°){cff_tag}...", flush=True)
             kw = {"lazy": False, "recalcBBoxes": False, "recalcTimestamp": False}
             if upright["font_number"] is not None:
                 kw["fontNumber"] = upright["font_number"]
@@ -2158,13 +2209,6 @@ def compile_bundle(
         sans_xml_str = "\n".join(x for _, _, x in sans_entries)
         condensed_xml_str = sans_xml_str
     else:
-        def dedupe_static(faces):
-            grouped = {}
-            for f in faces:
-                k = (f["condensed"], f["style"], f["weight"])
-                grouped.setdefault(k, []).append(f)
-            return [max(group, key=face_preference_score) for group in grouped.values()]
-
         ordered_sans = dedupe_static(sans_faces)
         ordered_sans.sort(key=lambda f: (int(f["condensed"]), int(f["style"] == "italic"), f["weight"]))
 
@@ -2172,13 +2216,15 @@ def compile_bundle(
         should_synth_static = enable_synthetic_italic and not has_any_italic
 
         for idx, f in enumerate(ordered_sans):
-            print(f"[*] Processing Sans font {idx + 1}/{len(ordered_sans)}: {f.get('family', 'Font')} ({f.get('weight', 400)} {f.get('style', 'normal')})...", flush=True)
+            cff_tag = " [CFF->TTF]" if (convert_otf and f.get("is_cff")) else ""
+            print(f"[*] Processing Sans font {idx + 1}/{len(ordered_sans)}: {f.get('family', 'Font')} ({f.get('weight', 400)} {f.get('style', 'normal')}){cff_tag}...", flush=True)
             ttc_fonts.append(process_and_open(f, "sans"))
             xml_line = font_xml(output_filename, f["weight"], f["style"], index=len(ttc_fonts) - 1)
             (condensed_entries if f["condensed"] else normal_entries).append((f["weight"], f["style"], xml_line))
 
             if should_synth_static and f["style"] == "normal":
-                print(f"[*] Synthesizing Sans italic ({f.get('weight', 400)}): {f.get('family', 'Font')}...", flush=True)
+                cff_tag = " [CFF->TTF]" if (convert_otf and f.get("is_cff")) else ""
+                print(f"[*] Synthesizing Sans italic ({f.get('weight', 400)}): {f.get('family', 'Font')}{cff_tag}...", flush=True)
                 kw = {"lazy": False, "recalcBBoxes": False, "recalcTimestamp": False}
                 if f["font_number"] is not None:
                     kw["fontNumber"] = f["font_number"]
@@ -2226,14 +2272,16 @@ def compile_bundle(
         first_idx = None
         var_upright = next((f for f in faces if f["variable"] and "wght" in f["axes"]), None)
         if var_upright:
-            print(f"[*] Processing variable {cat_name} upright: {var_upright.get('family', 'Font')}...", flush=True)
+            cff_tag = " [CFF->TTF]" if (convert_otf and var_upright.get("is_cff")) else ""
+            print(f"[*] Processing variable {cat_name} upright: {var_upright.get('family', 'Font')}{cff_tag}...", flush=True)
             idx = len(ttc_fonts)
             first_idx = idx
             ttc_fonts.append(process_and_open(var_upright, cat_name))
             var_italic = next((f for f in faces if f["style"] == "italic" and f["variable"] and "wght" in f["axes"]), None)
             ital_idx = idx
             if var_italic and var_italic["path"] != var_upright["path"]:
-                print(f"[*] Processing variable {cat_name} italic: {var_italic.get('family', 'Font')}...", flush=True)
+                cff_tag = " [CFF->TTF]" if (convert_otf and var_italic.get("is_cff")) else ""
+                print(f"[*] Processing variable {cat_name} italic: {var_italic.get('family', 'Font')}{cff_tag}...", flush=True)
                 ital_idx = len(ttc_fonts)
                 ttc_fonts.append(process_and_open(var_italic, cat_name))
             for st, vf, f_i in (("normal", var_upright, idx), ("italic", var_italic or var_upright, ital_idx)):
@@ -2242,15 +2290,11 @@ def compile_bundle(
                     if ax:
                         f_lines.append(font_xml(output_filename, w, st, index=f_i, axes=ax))
         else:
-            grouped_static = {}
-            for f in faces:
-                slot_key = (f["weight"], f["style"], f["condensed"])
-                grouped_static.setdefault(slot_key, []).append(f)
-
-            deduped = [max(group, key=face_preference_score) for group in grouped_static.values()]
+            deduped = dedupe_static(faces)
             sorted_faces = sorted(deduped, key=lambda f: (int(f["condensed"]), int(f["style"] == "italic"), f["weight"]))
             for idx, f in enumerate(sorted_faces):
-                print(f"[*] Processing {cat_name} font {idx + 1}/{len(sorted_faces)}: {f.get('family', 'Font')} ({f.get('weight', 400)} {f.get('style', 'normal')})...", flush=True)
+                cff_tag = " [CFF->TTF]" if (convert_otf and f.get("is_cff")) else ""
+                print(f"[*] Processing {cat_name} font {idx + 1}/{len(sorted_faces)}: {f.get('family', 'Font')} ({f.get('weight', 400)} {f.get('style', 'normal')}){cff_tag}...", flush=True)
                 if first_idx is None: first_idx = len(ttc_fonts)
                 ttc_fonts.append(process_and_open(f, cat_name))
                 f_lines.append(font_xml(output_filename, f["weight"], f["style"], index=len(ttc_fonts) - 1))

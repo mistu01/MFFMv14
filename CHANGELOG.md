@@ -3,6 +3,18 @@
 All notable changes to MFFMv14 are documented here. Dates use the `YYYY.MM.DD`
 versioning scheme the modules themselves carry.
 
+## 2026.09.10
+
+### Added
+- **Live On-Device Font Compilation Progress Streaming**:
+  - Replaced static heartbeat polling timer in `template/customize.sh` with a real-time progress streamer.
+  - Automatically captures and prints newly emitted status lines from the background compilation helper (`compile-bundle`) directly to the root manager terminal (`ui_print`).
+  - Implemented keepalive heartbeat fallback every 6 seconds during intensive per-glyph Bézier computations, including the current active font and elapsed time (e.g. `[*] Processing Sans font 3/18: SF Pro Text (300 normal) [CFF->TTF]... (24s elapsed)...`), keeping the root manager terminal pipe active and preventing Android Cached App Freezer timeouts.
+- **On-Device PostScript (CFF/OTF) Conversion Notice & Step Tagging**:
+  - Added automatic CFF/OTF outline detection (`is_cff`) across all font families in `runtime_helper.py`.
+  - When compiling bundles containing CFF/OTF faces on-device with `convert_otf=True`, emits an immediate advisory notice informing users of intensive Bezier curve conversion on mobile CPUs (`[*] Notice: Detected X PostScript (CFF/OTF) faces...`).
+  - Tags processing steps for CFF fonts with `[CFF->TTF]` in real-time logs so users have full visibility into why specific fonts take longer to convert.
+
 ## 2026.09.09
 
 ### Added

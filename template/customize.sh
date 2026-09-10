@@ -2193,14 +2193,64 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
     _comp_pid=$!
 
     # Heartbeat loop keeps terminal pipe and UI active during compilation
+    # Streams live progress lines from compilation log and sends periodic keepalive
     _elapsed=0
+    _last_line=0
+    _idle_count=0
     while kill -0 "$_comp_pid" 2>/dev/null; do
-      sleep 3
-      _elapsed=$((_elapsed + 3))
-      ui_print "    [*] Compiling font payload on-device (${_elapsed}s elapsed)..."
+      sleep 2
+      _elapsed=$((_elapsed + 2))
+      _total_lines=$(wc -l < "$_comp_log" 2>/dev/null)
+      _total_lines=${_total_lines:-0}
+      _has_new=0
+      if [ "$_total_lines" -gt "$_last_line" ]; then
+        _start_l=$((_last_line + 1))
+        _new_lines=$(sed -n "${_start_l},${_total_lines}p" "$_comp_log" 2>/dev/null)
+        _last_line=$_total_lines
+        if [ -n "$_new_lines" ]; then
+          _has_new=1
+          _idle_count=0
+          _old_ifs=$IFS
+          IFS='
+'
+          for _nline in $_new_lines; do
+            [ -z "$_nline" ] && continue
+            ui_print "    $_nline"
+          done
+          IFS=$_old_ifs
+        fi
+      fi
+      if [ "$_has_new" = "0" ]; then
+        _idle_count=$((_idle_count + 2))
+        if [ "$_idle_count" -ge 6 ]; then
+          _idle_count=0
+          _last_status=$(grep -E '^\s*\[\*\]' "$_comp_log" 2>/dev/null | tail -n 1 | sed 's/^[[:space:]]*//' | tr -d '\r')
+          if [ -n "$_last_status" ]; then
+            ui_print "    ${_last_status} (${_elapsed}s elapsed)..."
+          else
+            ui_print "    [*] Compiling font payload on-device (${_elapsed}s elapsed)..."
+          fi
+        fi
+      fi
     done
     wait "$_comp_pid"
     _compile_ret=$?
+    _total_lines=$(wc -l < "$_comp_log" 2>/dev/null)
+    _total_lines=${_total_lines:-0}
+    if [ "$_total_lines" -gt "$_last_line" ]; then
+      _start_l=$((_last_line + 1))
+      _new_lines=$(sed -n "${_start_l},${_total_lines}p" "$_comp_log" 2>/dev/null)
+      if [ -n "$_new_lines" ]; then
+        _old_ifs=$IFS
+        IFS='
+'
+        for _nline in $_new_lines; do
+          [ -z "$_nline" ] && continue
+          ui_print "    $_nline"
+        done
+        IFS=$_old_ifs
+      fi
+    fi
     cat "$_comp_log" >> "$LOG_FILE" 2>/dev/null
 
     if [ "$_compile_ret" = "0" ]; then
