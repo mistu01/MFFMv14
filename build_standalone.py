@@ -13,7 +13,7 @@ import time
 import zipfile
 from pathlib import Path
 
-from font_module import (
+from font_module_standalone import (
     WEIGHT_NAMES,
     compile_fonts,
     copy_template,
@@ -25,18 +25,19 @@ from font_module import (
 from zipsigner_auto import ZipSignerError, sign_zip
 
 ROOT = Path(__file__).resolve().parent
-TEMPLATE_DIR = ROOT / "template"
+TEMPLATE_DIR = ROOT / "template-standalone"
 PAYLOAD_NAMES = (
     "module.prop", "customize.sh", "service.sh", "action.sh", "uninstall.sh", "post-mount.sh",
-    "META-INF", "Files",
+    "font-config.sh", "META-INF", "Files",
 )
 
 BUILD_CONFIG_NAME = ".mffm-build.json"
 BUILD_CONFIG_KEYS = (
     "fonts_dir", "mode", "name", "version", "version_code", "output_dir",
     "keep_hinting", "no_prefix", "features", "mono_features", "serif_features",
-    "bengali_features", "centered_colon", "pua_colon", "synthetic_italic",
-    "synthetic_italic_angle", "interactive",
+    "bengali_features", "centered_colon", "colon_offset", "colon_shift",
+    "colon_alignment", "colon_rule", "equalize_digits", "pua_colon",
+    "synthetic_italic", "synthetic_italic_angle", "interactive",
 )
 
 
@@ -60,18 +61,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-interactive", action="store_false", dest="interactive", help="disable interactive feature prompt")
     parser.add_argument("--centered-colon", action="store_true", default=None, help="force centered colon generation/injection for digits (12:30)")
     parser.add_argument("--no-centered-colon", action="store_false", dest="centered_colon", help="disable centered colon injection")
-    parser.add_argument("--pua-colon", action="store_true", default=None, help="force mapping colon to Android lockscreen clock PUA (U+EE01, U+2236, U+2982)")
-    parser.add_argument("--no-pua-colon", action="store_false", dest="pua_colon", help="disable Android lockscreen clock PUA mapping")
-    parser.add_argument("--synthetic-italic", action="store_true", default=None, help="synthesize Sans-serif italic companion faces if missing")
-    parser.add_argument("--no-synthetic-italic", action="store_false", dest="synthetic_italic", help="disable synthetic italic generation")
-    parser.add_argument("--synthetic-italic-angle", type=float, default=-12.0, help="slant angle in degrees for synthetic italic (default: -12.0)")
+    parser.add_argument("--colon-offset", "--colon-shift", dest="colon_offset", type=int, default=0, help="vertical offset in font units (+/-) for centered colon (clock colon shift, e.g. +20, -30)")
+    parser.add_argument("--colon-alignment", choices=("center", "cap_height", "x_height"), default="center", help="alignment target for centered colon: center, cap_height, or x_height (default: center)")
+    parser.add_argument("--colon-rule", choices=("between_digits", "after_digit", "always"), default="between_digits", help="contextual rule for centered colon substitution (default: between_digits)")
+    parser.add_argument("--equalize-digits", action="store_true", default=False, help="equalize advance widths of digits (0-9) and center contours for wobble-free clocks")
+    parser.add_argument("--pua-colon", action="store_true", default=False, help="copy colon glyph to Android PUA (U+EE01) for lockscreen clocks")
+    parser.add_argument("--synthetic-italic", action="store_true", default=False, help="synthesize italic style for Sans-serif if missing")
+    parser.add_argument("--synthetic-italic-angle", type=float, default=-12.0, help="slant angle for synthetic italic (default: -12.0)")
     parser.add_argument("--config", type=Path, help=f"build config file to load (default: {BUILD_CONFIG_NAME} in the project root, when present)")
     parser.add_argument("--no-config", action="store_true", help="ignore any build config file")
     parser.add_argument("--save-config", action="store_true", help=f"save the effective build options to the config file (default: {BUILD_CONFIG_NAME})")
     parser.add_argument("--inspect", action="store_true", help="report detected fonts, weights and modes without building")
-    parser.add_argument("--template", action="store_true", help="package MFFMv14-Source-Template.zip (excluding RELEASE_POST.txt)")
-    parser.add_argument("--standalone-template", action="store_true", help="package MFFMv14-Standalone-Template.zip")
-    parser.add_argument("--runtime", action="store_true", help="build MFFM Runtime module ZIP (shared Python + fontTools)")
+    parser.add_argument("--template", action="store_true", help="package MFFMv14-Standalone-Template.zip")
     return parser.parse_args()
 
 
@@ -114,8 +115,12 @@ def apply_build_config(args: argparse.Namespace, config: dict | None, source: st
         for key in BUILD_CONFIG_KEYS:
             if getattr(args, key, None) is None and key in config:
                 setattr(args, key, config[key])
+        if getattr(args, "colon_offset", None) is None and "colon_shift" in config:
+            args.colon_offset = config["colon_shift"]
         if source:
             print(f"Build config    : loaded {source}")
+    if (getattr(args, "colon_offset", None) or getattr(args, "colon_shift", None)) and args.centered_colon is None:
+        args.centered_colon = True
     if args.fonts_dir is not None:
         args.fonts_dir = _config_path(args.fonts_dir)
     else:
@@ -150,9 +155,13 @@ def save_build_config(path: Path, args: argparse.Namespace) -> None:
         "serif_features": args.serif_features,
         "bengali_features": args.bengali_features,
         "centered_colon": args.centered_colon,
-        "pua_colon": args.pua_colon,
-        "synthetic_italic": args.synthetic_italic,
-        "synthetic_italic_angle": args.synthetic_italic_angle,
+        "colon_offset": args.colon_offset,
+        "colon_alignment": args.colon_alignment,
+        "colon_rule": args.colon_rule,
+        "equalize_digits": bool(args.equalize_digits),
+        "pua_colon": bool(args.pua_colon),
+        "synthetic_italic": bool(args.synthetic_italic),
+        "synthetic_italic_angle": float(args.synthetic_italic_angle or -12.0),
         "interactive": args.interactive,
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -244,9 +253,13 @@ def build_module(args: argparse.Namespace) -> Path | None:
             bengali_features=args.bengali_features,
             interactive_features=args.interactive,
             centered_colon=args.centered_colon,
-            pua_colon=args.pua_colon,
-            synthetic_italic=args.synthetic_italic,
-            synthetic_italic_angle=args.synthetic_italic_angle,
+            colon_offset=int(args.colon_offset or 0),
+            colon_alignment=str(args.colon_alignment or "center"),
+            colon_rule=str(args.colon_rule or "between_digits"),
+            equalize_digits=bool(args.equalize_digits),
+            pua_colon=bool(args.pua_colon),
+            synthetic_italic=bool(args.synthetic_italic),
+            synthetic_italic_angle=float(args.synthetic_italic_angle or -12.0),
         )
         display_name = display_name_for_mode(args.name or result.family, result.mode)
         props = update_module_metadata(
@@ -257,8 +270,6 @@ def build_module(args: argparse.Namespace) -> Path | None:
             version=args.version,
             version_code=args.version_code,
             applied_features=result.applied_features,
-            injected_colon=result.injected_colon,
-            synthesized_italic=result.synthesized_italic,
         )
         print("=" * 60)
         print("MFFMv14 module compiled")
@@ -332,22 +343,102 @@ def build_module(args: argparse.Namespace) -> Path | None:
             shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def package_standalone_template_zip(output_dir: Path) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out_zip = output_dir / "MFFMv14-Standalone-Template.zip"
+    timestamp = zip_timestamp()
+
+    root_tools = (
+        ("build_standalone.py", True),
+        ("font_module_standalone.py", False),
+        ("runtime_helper.py", False),
+        ("zipsigner_auto.py", True),
+        ("termux-build.sh", True),
+        ("requirements.txt", False),
+        ("USAGE_GUIDE_STANDALONE.md", False),
+        ("CHANGELOG_STANDALONE.md", False),
+        ("ReadMe.md", False),
+    )
+
+    empty_dirs = (
+        "template-standalone/Files",
+        "Fonts/Sans",
+        "Fonts/Monospace",
+        "Fonts/Serif",
+        "Fonts/Bengali",
+        "dist",
+    )
+
+    with zipfile.ZipFile(out_zip, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        # 1. Package template-standalone directory files
+        if TEMPLATE_DIR.exists():
+            for path in sorted(TEMPLATE_DIR.rglob("*")):
+                if path.is_file() and not path.name.startswith(".git"):
+                    rel_path = path.relative_to(ROOT).as_posix()
+                    info = zipfile.ZipInfo(rel_path, timestamp)
+                    executable = path.name.endswith(".sh") or path.name == "update-binary"
+                    info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    archive.writestr(info, path.read_bytes())
+
+        # 2. Package root build tools and documentation
+        for filename, is_exec in root_tools:
+            src_file = ROOT / filename
+            if src_file.is_file():
+                info = zipfile.ZipInfo(filename, timestamp)
+                info.external_attr = ((0o755 if is_exec else 0o644) & 0xFFFF) << 16
+                info.compress_type = zipfile.ZIP_DEFLATED
+                archive.writestr(info, src_file.read_bytes())
+
+        # 2b. Write standalone guide and changelog as USAGE_GUIDE.md and CHANGELOG.md in template root
+        guide_standalone = ROOT / "USAGE_GUIDE_STANDALONE.md"
+        if guide_standalone.is_file():
+            info_guide = zipfile.ZipInfo("USAGE_GUIDE.md", timestamp)
+            info_guide.external_attr = (0o644 & 0xFFFF) << 16
+            info_guide.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info_guide, guide_standalone.read_bytes())
+
+        changelog_standalone = ROOT / "CHANGELOG_STANDALONE.md"
+        if changelog_standalone.is_file():
+            info_cl = zipfile.ZipInfo("CHANGELOG.md", timestamp)
+            info_cl.external_attr = (0o644 & 0xFFFF) << 16
+            info_cl.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info_cl, changelog_standalone.read_bytes())
+
+        # 3. Add build.py convenience wrapper
+        build_py_wrapper = (
+            "#!/usr/bin/env python3\n"
+            '"""Build entry point for MFFMv14 Standalone Module."""\n'
+            "from build_standalone import main\n\n"
+            'if __name__ == "__main__":\n'
+            "    raise SystemExit(main())\n"
+        )
+        info_build_py = zipfile.ZipInfo("build.py", timestamp)
+        info_build_py.external_attr = (0o755 & 0xFFFF) << 16
+        info_build_py.compress_type = zipfile.ZIP_DEFLATED
+        archive.writestr(info_build_py, build_py_wrapper.encode("utf-8"))
+
+        # 4. Add empty directory structures and .gitkeep files
+        for folder in empty_dirs:
+            info = zipfile.ZipInfo(f"{folder}/", timestamp)
+            info.external_attr = (0o755 & 0xFFFF) << 16
+            archive.writestr(info, "")
+            keep_info = zipfile.ZipInfo(f"{folder}/.gitkeep", timestamp)
+            keep_info.external_attr = (0o644 & 0xFFFF) << 16
+            keep_info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(keep_info, "")
+
+    print("=" * 60)
+    print("MFFMv14 Standalone Template Packaged")
+    print("=" * 60)
+    print(f"Output        : {out_zip}")
+    print("Contents      : Standalone builder tools, template payload, Termux script, and Fonts skeleton")
+    return out_zip
+
+
 def main() -> int:
     args = parse_args()
-    if args.runtime:
-        from build_runtime import build_runtime
-        if args.output_dir is None:
-            args.output_dir = ROOT / "dist"
-        else:
-            args.output_dir = _config_path(args.output_dir)
-        build_runtime(args)
-        return 0
     if args.template:
-        from package_template import build_template_zip
-        build_template_zip(args.output_dir if args.output_dir is not None else ROOT / "dist")
-        return 0
-    if args.standalone_template:
-        from build_standalone import package_standalone_template_zip
         package_standalone_template_zip(args.output_dir if args.output_dir is not None else ROOT / "dist")
         return 0
     config, config_source = load_config_for(args)

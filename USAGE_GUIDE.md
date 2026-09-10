@@ -3,6 +3,13 @@
 
 ---
 
+> [!TIP]
+> ### 📖 Standalone Module Handbook Available
+> Building a standalone font module with **zero on-device dependencies** (no Python, no `mffm-runtime` needed)?
+> Please see the dedicated **[USAGE_GUIDE_STANDALONE.md](USAGE_GUIDE_STANDALONE.md)** and **[CHANGELOG_STANDALONE.md](CHANGELOG_STANDALONE.md)**.
+
+---
+
 > [!IMPORTANT]
 > ### ⚠️ Mandatory Prerequisite: Install MFFM Runtime First!
 > Before flashing any MFFMv14 font module, you **MUST** first install the standalone **`mffm-runtime-YYYY.MM.DD.zip`** module in your root manager (**Magisk**, **KernelSU**, or **APatch**).
@@ -49,8 +56,8 @@ You can build an MFFMv14 font module either directly on your phone using any fil
 
 ---
 
-### Method 2: PC Build Script (`build.py`)
-> **Best for:** Font designers, power users, and developers on Windows, macOS, or Linux.
+### Method 2: PC Build Script (`build.py`) — Runtime-Oriented
+> **Best for:** Font designers and power users who want dynamic on-device re-configuration with the shared `mffm-runtime` engine.
 
 1. Clone or download this repository.
 2. Install dependencies:
@@ -63,6 +70,44 @@ You can build an MFFMv14 font module either directly on your phone using any fil
    python build.py
    ```
 5. Your signed, flashable module ZIP will be generated in `dist/`.
+
+---
+
+### Method 3: Standalone / Readymade Builder (`build_standalone.py`) — Zero Runtime Prerequisite
+> **Best for:** Generating self-contained font modules where all font compilation (`DroidSans.ttf`, OpenType feature freezing, metrics harmonization, and XML fragments) is performed upfront at build time.
+> - **No Runtime Needed:** The resulting module does **not** require `mffm-runtime` or Python on the device.
+> - **Instant Flash:** Installation completes in 1–2 seconds with zero on-device processing.
+
+1. Place your fonts in `Fonts/Sans/` (and optionally `Fonts/Monospace/`, `Fonts/Serif/`, `Fonts/Bengali/`).
+2. Run the standalone builder:
+   ```sh
+   python build_standalone.py
+   ```
+3. The pre-compiled, self-contained module ZIP is generated in `dist/` and is immediately flashable in Magisk, KernelSU, or APatch.
+
+> [!NOTE]
+> **External Fonts Standard in Standalone Modules (`/sdcard/MFFM/`):**
+> If you provide external fonts on your device in `/sdcard/MFFM/` (or its subdirectories `Serif/`, `Bengali/`, `Monospace/`), the standalone installer applies standard fallback face counts with zero on-device Python/TTC overhead:
+> - **Serif**: 4 faces standard (`NotoSerif-Regular.ttf`, `NotoSerif-Italic.ttf`, `NotoSerif-Bold.ttf`, `NotoSerif-BoldItalic.ttf`).
+> - **Bengali**: 2 faces standard (`NotoSansBengali-VF.ttf` 400 Regular, `NotoSansBengaliUI-VF.ttf` 700 Bold).
+> - **Monospace**: 1 face standard (`DroidSansMono.ttf` / `CutiveMono.ttf` 400 Regular).
+> - **Variable Fonts (VF)**: Automatically scanned for variation axes (`fvar`), generating full 100–900 weight mapping XML and creating/updating `/sdcard/MFFM/*.conf` automatically.
+
+---
+
+### Method 4: Mobile Termux One-Shot Builder (`termux-build.sh`)
+> **Best for:** Users building font modules directly on Android via the **Termux** terminal app without a PC.
+
+1. Install [Termux](https://github.com/termux/termux-app/releases) on your phone.
+2. Clone or copy MFFMv14 into your Termux home directory (`~/MFFMv14`).
+3. Place your fonts in `Fonts/Sans/` (or specify `--fonts-dir` pointing to `/sdcard/...`).
+4. Run:
+   ```sh
+   sh termux-build.sh
+   ```
+   - Automatically installs required dependencies (`python`, `fonttools`, `brotli`, `openssl`).
+   - Compiles a readymade standalone module via `build_standalone.py` (or pass `--runtime` to build a dynamic module via `build.py`).
+   - Automatically prompts to flash the finished ZIP using your active root manager (`magisk`, `ksud`, or `apd`) via `su`.
 
 ---
 
@@ -217,3 +262,68 @@ MFFMv14 provides automated dual-layer defense:
 /sdcard/MFFM/mffmv14_debug_<TIMESTAMP>.log
 ```
 These logs record every command, detected weights, metric calculations, and fontTools output for easy troubleshooting.
+
+---
+
+## ⚡ Standalone Module Builder (`build_standalone.py`)
+
+For users who want a **completely Python- and fontTools-free** installation experience on Android, MFFMv14 provides the **Standalone Module Builder**.
+
+### Key Differences
+| Feature | Standalone Module (`build_standalone.py`) | Dynamic Runtime Module (`build.py`) |
+| :--- | :--- | :--- |
+| **Android Dependency** | **100% Dependency-Free** (No Python, fontTools, or `mffm-runtime` needed on phone) | Requires `mffm-runtime` module installed on phone |
+| **Processing Point** | Processed during build time on PC/Termux | Processed dynamically on-device during module flash |
+| **Variable Font Tuning**| Full axis control via `/sdcard/MFFM/*.conf` using native shell & `awk` | Full axis control via `/sdcard/MFFM/*.conf` using Python |
+| **Flash Speed** | Instantaneous (< 3 seconds) | Fast (~10–30 seconds depending on phone CPU) |
+
+### CLI Options for Standalone Builder
+```bash
+python build_standalone.py [OPTIONS]
+```
+- `--fonts-dir DIR`: Directory containing source fonts (default: `./Fonts`).
+- `--mode {auto,static,variable}`: Font mode detection (default: `auto`).
+- `--colon-offset OFFSET` / `--colon-shift OFFSET`: Upward (+) or downward (-) vertical shift in font units for centered clock colon (e.g. `--colon-offset 20` or `--colon-offset -15`).
+- `--colon-alignment {center,cap_height,x_height}`: Reference baseline for centered colon (default: `center`).
+- `--colon-rule {between_digits,after_digit,always}`: OpenType contextual substitution rule (default: `between_digits`).
+- `--equalize-digits`: Center and equalize digit widths (`0`–`9`) for wobble-free clock digits.
+- `--pua-colon`: Map colon glyph to Android lockscreen clock PUA (`U+EE01`) and ratio symbols.
+- `--features TAGS`: Freeze OpenType features for Sans-serif (e.g. `--features zero,ss01`).
+- `--mono-features TAGS`, `--serif-features TAGS`, `--bengali-features TAGS`: Freeze features per family.
+- `--synthetic-italic`: Synthesize companion italic outlines if missing.
+- `--synthetic-italic-angle ANGLE`: Slant angle for synthetic italics (default: `-12.0`).
+- `--template`: Package `MFFMv14-Standalone-Template.zip` into `./dist`.
+
+### External Static Font Standards (Standalone Installer)
+When dropping static font files into `/sdcard/MFFM/`, the standalone installer automatically selects and configures:
+- **Serif**: **4 faces default** (`Regular 400`, `Italic 400`, `Bold 700`, `BoldItalic 700`).
+- **Bengali**: **2 faces default** (`Regular 400`, `Bold 700`).
+- **Monospace**: **1 face default** (`Regular 400`).
+- **Variable Fonts**: Auto-scans axes and creates a dedicated `/sdcard/MFFM/*.conf` using pure shell and `awk`.
+
+### Building Directly in Mobile Termux (`termux-build.sh`)
+Run `termux-build.sh` in the Termux environment:
+```bash
+./termux-build.sh
+```
+- By default, it runs `build_standalone.py` to create a lightweight, dependency-free module.
+- Pass `--runtime` to build the dynamic runtime module instead:
+  ```bash
+  ./termux-build.sh --runtime
+  ```
+
+### Standalone Template Archive (`MFFMv14-Standalone-Template.zip`)
+To package a fully self-contained standalone build environment for distribution:
+```bash
+python build_standalone.py --template
+# or: python build.py --standalone-template
+# or: python package_template.py --standalone
+```
+This produces `dist/MFFMv14-Standalone-Template.zip` containing:
+- **Build Tools**: `build_standalone.py`, `font_module_standalone.py`, `runtime_helper.py`, `zipsigner_auto.py`, `termux-build.sh`, `requirements.txt`, and convenience wrapper `build.py`.
+- **Standalone Module Template**: Complete `template-standalone/` payload (`customize.sh`, `action.sh`, `font-config.sh`, `module.prop`, `post-mount.sh`, `service.sh`, `uninstall.sh`, `META-INF/`, `Files/`).
+- **Font Directory Skeleton**: `Fonts/Sans`, `Fonts/Monospace`, `Fonts/Serif`, `Fonts/Bengali`, and `dist/`.
+- **Documentation**: `USAGE_GUIDE.md`, `CHANGELOG.md`, `ReadMe.md`.
+
+Anyone extracting this archive on PC or Termux can immediately drop fonts into `Fonts/Sans/` and run `python build.py` or `sh termux-build.sh` without cloning the entire git repository.
+

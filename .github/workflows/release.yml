@@ -6,16 +6,22 @@ on:
       - main
     paths:
       - 'template/**'
+      - 'template-standalone/**'
       - 'runtime-template/**'
       - 'runtime_helper.py'
       - 'build_runtime.py'
       - 'prepare_runtime.py'
       - 'package_template.py'
       - 'build.py'
+      - 'build_standalone.py'
       - 'font_module.py'
+      - 'font_module_standalone.py'
+      - 'termux-build.sh'
       - 'zipsigner_auto.py'
       - 'CHANGELOG.md'
+      - 'CHANGELOG_STANDALONE.md'
       - 'USAGE_GUIDE.md'
+      - 'USAGE_GUIDE_STANDALONE.md'
       - '.github/workflows/release.yml'
   workflow_dispatch:
     inputs:
@@ -65,9 +71,9 @@ jobs:
         run: |
           python build_runtime.py --output-dir dist/
 
-      - name: Package MFFMv14 Source Template ZIP
+      - name: Package MFFMv14 Source & Standalone Template ZIPs
         run: |
-          python package_template.py
+          python package_template.py --all
 
       - name: Generate SHA256 Checksums
         run: |
@@ -106,7 +112,8 @@ jobs:
           ## 🚀 MFFMv14 Release v{version}
 
           ### 📦 Release Assets
-          - **`MFFMv14-Source-Template.zip`**: Complete flashable template for creating custom font modules directly on Android (via file managers) or PC.
+          - **`MFFMv14-Standalone-Template.zip`**: Complete self-contained standalone build environment (PC & mobile Termux) to create **100% Python-free, instant-flashing** font modules with zero on-device prerequisites.
+          - **`MFFMv14-Source-Template.zip`**: Dynamic font module template for on-device creation (via file managers) or PC, utilizing the shared MFFM Runtime.
           - **`{runtime_name}`**: Standalone MFFM Runtime module (portable Python + fontTools). Flash once in Magisk / KernelSU / APatch.
           - **`SHA256SUMS.txt`**: Cryptographic verification checksums for all release packages.
 
@@ -134,6 +141,7 @@ jobs:
           name: ${{ steps.release_meta.outputs.title }}
           body_path: release_body.md
           files: |
+            dist/MFFMv14-Standalone-Template.zip
             dist/MFFMv14-Source-Template.zip
             dist/mffm-runtime-*.zip
             dist/SHA256SUMS.txt

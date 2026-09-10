@@ -5,13 +5,43 @@ versioning scheme the modules themselves carry.
 
 ## 2026.09.11
 
-### Performance
-- **Faster On-Device OTF→TTF (CFF/PostScript) Conversion** (`runtime_helper.py`):
-  - **Concurrent glyph conversion** (`glyphs_to_quadratic`): Each glyph's cubic→quadratic (cu2qu) conversion is now run in a `ThreadPoolExecutor` with up to 4 workers. Glyph conversions are fully independent, and the CFF charstring decode step inside `glyph.draw()` releases the GIL, enabling real parallelism on multi-core ARM big.LITTLE clusters. Fonts with fewer than 32 glyphs fall back to the sequential path to avoid thread-pool overhead.
-  - **CFF pre-processing before cu2qu** (`otf_to_ttf`): Two new pre-pass steps are applied to the CFF table before the quadratic conversion loop:
-    1. `desubroutinize()` — flattens all CFF subroutine call-stacks into each charstring so the concurrent draw loop runs with no subr-lookup overhead.
-    2. `remove_hints()` — strips all hinting operators (`hstem`, `vstem`, `hintmask`, `cntrmask`) which are completely irrelevant after TTF conversion. Cuts charstring payload 30–50% on heavily-hinted fonts (e.g. Apple SF Pro). Both operations degrade gracefully with a `try/except` guard for unusual CFF edge cases.
-  - **Concurrent static font-file processing** (`compile_bundle`): The sequential per-face loop in static-font mode is replaced with a `ThreadPoolExecutor` that opens, CFF-converts, and post-processes all upright font files concurrently. Synthetic italic generation runs in a second concurrent wave after upright processing completes. TTC index order is preserved by collecting futures in the original sorted order. Combined with the per-glyph threading above, this delivers an estimated **2–3× wall-clock speedup** on a 4-core ARM device for large static families (e.g. 19-face Apple SF Pro: ~7 min → ~2–3 min).
+### Added
+- **Standalone Readymade Module Builder (`build_standalone.py` & `template-standalone/`)**:
+  - Re-introduced a dedicated standalone builder workflow for users who prefer pre-compiled font packages over dynamic on-device compilation.
+  - All font transformations (TTC bundling, `DroidSans.ttf`, OpenType feature freezing, metrics harmonization, PUA colon, synthetic italic, and XML fragments) are executed upfront at build time on PC or Termux.
+  - Generates completely self-contained modules that require **zero** on-device Python or `mffm-runtime` prerequisite and install in 1–2 seconds.
+  - Backed by dedicated `template-standalone/` payload and `font_module_standalone.py`.
+  - **Standardized External Static Fallback Faces**:
+    - **Serif**: 4 faces default (`NotoSerif-Regular.ttf` 400 normal, `NotoSerif-Italic.ttf` 400 italic, `NotoSerif-Bold.ttf` 700 normal, `NotoSerif-BoldItalic.ttf` 700 italic).
+    - **Bengali**: 2 faces default (`NotoSansBengali-VF.ttf` / `Regular` 400, `NotoSansBengaliUI-VF.ttf` / `Bold` 700).
+    - **Monospace**: 1 face default (`DroidSansMono.ttf` / `CutiveMono.ttf` 400 normal).
+    - Pure shell execution with zero on-device TTC bundling or Python dependencies for external static fonts.
+  - **100% Python & fontTools Dependency-Free Module Installer**:
+    - Completely decoupled the standalone module (`template-standalone/customize.sh`) from `python`, `python3`, `pip`, and `fonttools`.
+    - Implemented a high-speed, binary `fvar` table parser in pure POSIX shell and `awk` using `od -tx1`, enabling autonomous variable font axis scanning for external fonts dropped into `/sdcard/MFFM` without any runtime dependencies.
+  - **Enhanced Centered Clock Colon & Build-Time Processing Parity**:
+    - Integrated full feature set into `build_standalone.py` and `font_module_standalone.py`:
+      - **Vertical Colon Shift**: Added `--colon-offset` / `--colon-shift` to adjust colon height upward (+) or downward (-) in font units when default optical centering needs OEM adjustment.
+      - **Colon Alignment Target**: Added `--colon-alignment` (`center`, `cap_height`, `x_height`).
+      - **Contextual Rule Selection**: Added `--colon-rule` (`between_digits`, `after_digit`, `always`).
+      - **Digit Equalization**: Added `--equalize-digits` to eliminate lockscreen clock wobble.
+      - **PUA Colon Mapping**: Added `--pua-colon` to mirror colons to `U+EE01`, `U+2236`, and `U+2982`.
+      - **Interactive Prompts**: Interactive feature check now prompts for custom colon shift offset when approved.
+      - **Full Config Persistence**: `.mffm-build.json` saves and restores all colon, alignment, rule, and digitization flags.
+- **Mobile Termux One-Shot Builder (`termux-build.sh`)**:
+  - Brought back the mobile Termux environment builder script (`termux-build.sh`).
+  - Automatically provisions the Termux Python/fontTools toolchain, runs `build_standalone.py` (or `--runtime` for `build.py`), and prompts to flash the generated ZIP via `su` with Magisk, KernelSU, or APatch.
+- **Standalone Template Archive Packaging (`MFFMv14-Standalone-Template.zip`)**:
+  - Packaged all required standalone tools into `dist/MFFMv14-Standalone-Template.zip`.
+  - Includes `build_standalone.py`, `font_module_standalone.py`, `runtime_helper.py`, `zipsigner_auto.py`, `termux-build.sh`, `requirements.txt`, convenience `build.py` wrapper, complete `template-standalone/` payload (`customize.sh`, `action.sh`, `font-config.sh`, `module.prop`, `post-mount.sh`, `service.sh`, `uninstall.sh`, `META-INF/`, `Files/`), directory skeletons with `.gitkeep` (`Fonts/Sans`, `Fonts/Monospace`, `Fonts/Serif`, `Fonts/Bengali`, `dist`), and documentation (`USAGE_GUIDE.md`, `CHANGELOG.md`, `ReadMe.md`).
+  - Added `--standalone-template` flag to `build.py` and `--standalone` / `--all` flags to `package_template.py`.
+
+### Performance & Fixes
+- **Faster On-Device OTF→TTF (CFF/PostScript) Conversion** (`runtime_helper.py` & `font_module.py`):
+  - **Multi-core per-glyph conversion** (`glyphs_to_quadratic`): Each glyph's cubic→quadratic (cu2qu) conversion runs concurrently in a `ThreadPoolExecutor` (up to 4 workers on mobile, 8 on PC). The CFF charstring decode step inside `glyph.draw()` releases the GIL, enabling true parallel execution across CPU cores.
+  - **CFF pre-processing before cu2qu** (`otf_to_ttf`): Applies `desubroutinize()` (flattens subr call-stacks) and `remove_hints()` (strips obsolete CFF stem and counter hints) prior to curve conversion, cutting charstring bytecode by 30–50% on complex fonts.
+  - **Sequential font-by-font iteration**: Restored clean sequential font-level processing in `compile_bundle()` to prevent mobile CPU thread thrashing and ensure continuous, real-time UI progression in Magisk/KernelSU terminal output.
+  - **POSIX-compliant installer keepalive** (`template/customize.sh`): Replaced non-standard `\s` regex in `grep` with POSIX-standard `grep '\[\*\]'`, ensuring the active font status and elapsed time are reliably extracted on toybox shells.
 
 ## 2026.09.10
 

@@ -70,7 +70,7 @@ mffm-runtime-YYYY.MM.DD.zip
 4. Select all files inside the template folder, compress them into a standard **ZIP**, and flash it in **Magisk**, **KernelSU**, or **APatch**!
 5. Reboot and enjoy your new font!
 
-### Option B: On PC using Python (`build.py`)
+### Option B: On PC using Python (`build.py`) — Dynamic Runtime Module
 1. Clone this repository:
    ```sh
    git clone https://github.com/mistu01/MFFMv14.git
@@ -83,6 +83,12 @@ mffm-runtime-YYYY.MM.DD.zip
    python build.py
    ```
 4. Transfer the flashable ZIP generated in `dist/` to your phone and flash it!
+
+### Option C: Standalone Module (100% Python-Free on Phone — PC or Termux)
+1. Download and extract **`MFFMv14-Standalone-Template.zip`**.
+2. Put your font files into `Fonts/Sans/`.
+3. Run `python build.py` on PC, or run `sh termux-build.sh` in Termux.
+4. Transfer the flashable ZIP generated in `dist/` to your phone and flash it. No `mffm-runtime` or Python required on device!
 
 ---
 
@@ -126,8 +132,10 @@ SANS_FREEZE_FEATURES=ss01,zero
 
 | Document | Description |
 | :--- | :--- |
-| 📖 **[User & Configuration Guide](USAGE_GUIDE.md)** | Detailed handbook covering on-device module creation, full configuration settings guide, adding extra fonts directly on phone, and FAQ. |
+| 📖 **[User & Configuration Guide (Runtime)](USAGE_GUIDE.md)** | Detailed handbook covering on-device module creation, full configuration settings guide, adding extra fonts directly on phone, and FAQ. |
+| ⚡ **[Standalone User Guide](USAGE_GUIDE_STANDALONE.md)** | Complete handbook for building readymade standalone modules with zero on-device dependencies (PC & Termux). |
 | 📜 **[Changelog](CHANGELOG.md)** | Complete release notes and version history. |
+| 📋 **[Standalone Changelog](CHANGELOG_STANDALONE.md)** | Dedicated standalone module release history and architectural notes. |
 
 ---
 
@@ -136,20 +144,21 @@ SANS_FREEZE_FEATURES=ss01,zero
 ```
 MFFMv14/
 ├── build.py                  # PC module builder and packaging script
+├── build_standalone.py       # Standalone 100% Python-free module compiler
 ├── build_runtime.py          # MFFM Runtime module builder
-├── update.py                 # Module update and migration utility
-├── package_template.py       # Builder for MFFMv14-Source-Template.zip
+├── package_template.py       # Packager for MFFMv14 Source and Standalone templates
 ├── font_module.py            # Core font inspection and compilation engine
+├── font_module_standalone.py # Standalone font compilation engine
 ├── runtime_helper.py         # On-device helper CLI & font tools
+├── termux-build.sh           # Mobile Termux one-shot builder and installer
 ├── zipsigner_auto.py         # Automatic ZIP signer
-├── template/                 # Font module template files (flashable module skeleton)
-│   ├── customize.sh          # Installer script executed during flashing
-│   ├── service.sh            # Boot shield blocking Google Play font overrides
-│   ├── action.sh             # On-demand Action button for root managers
-│   └── META-INF/             # Android flashable ZIP binary
+├── template/                 # Dynamic runtime module template
+├── template-standalone/      # 100% Python-free standalone module template
 ├── runtime-template/         # Standalone MFFM Runtime module skeleton
-├── USAGE_GUIDE.md            # Comprehensive user manual
+├── USAGE_GUIDE.md            # Comprehensive user manual (Runtime)
+├── USAGE_GUIDE_STANDALONE.md # Comprehensive user manual (Standalone)
 ├── CHANGELOG.md              # Full version history
+├── CHANGELOG_STANDALONE.md   # Standalone version history
 └── ReadMe.md                 # Project frontpage
 ```
 
