@@ -74,7 +74,10 @@ def write_zip(module_dir: Path, output: Path) -> None:
             executable = relative.name.endswith(".sh") or relative.name == "update-binary" or relative.name in {"mffm-helper", "python3", "python"}
             info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
             info.compress_type = zipfile.ZIP_DEFLATED
-            archive.writestr(info, source.read_bytes())
+            data = source.read_bytes()
+            if relative.suffix.lower() in {".sh", ".prop", ".xml", ".json", ".conf", ".txt", ".md", ".py"} or relative.name in {"update-binary", "updater-script"}:
+                data = data.replace(b"\r\n", b"\n")
+            archive.writestr(info, data)
 
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()

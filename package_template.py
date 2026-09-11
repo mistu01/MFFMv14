@@ -31,6 +31,12 @@ def build_template_zip(output_dir: Path | None = None) -> Path:
     output_zip = target_dir / "MFFMv14-Source-Template.zip"
 
     timestamp = zip_timestamp()
+    def _read_lf_bytes(p: Path) -> bytes:
+        content = p.read_bytes()
+        if p.suffix.lower() in {".sh", ".prop", ".xml", ".json", ".conf", ".txt", ".md", ".py"} or p.name in {"update-binary", "updater-script"}:
+            return content.replace(b"\r\n", b"\n")
+        return content
+
     with zipfile.ZipFile(output_zip, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         # 1. Package template skeleton directly at root
         template_dir = ROOT / "template"
@@ -46,7 +52,7 @@ def build_template_zip(output_dir: Path | None = None) -> Path:
                     executable = path.name.endswith(".sh") or path.name == "update-binary"
                     info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
                     info.compress_type = zipfile.ZIP_DEFLATED
-                    archive.writestr(info, path.read_bytes())
+                    archive.writestr(info, _read_lf_bytes(path))
 
         # 2. Package documentation and shell builder at root
         for f_name in ROOT_EXTRA_FILES:
@@ -56,7 +62,7 @@ def build_template_zip(output_dir: Path | None = None) -> Path:
                 executable = f_name.endswith(".sh")
                 info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
                 info.compress_type = zipfile.ZIP_DEFLATED
-                archive.writestr(info, file_path.read_bytes())
+                archive.writestr(info, _read_lf_bytes(file_path))
 
         # 3. Create empty font directory entries cleanly
         for folder in EMPTY_FOLDERS:

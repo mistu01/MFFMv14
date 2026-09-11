@@ -9,9 +9,19 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Literal
+
+from runtime_helper import (
+    copy_colon_to_pua,
+    equalize_clock_digits,
+    font_has_centered_colon,
+    font_has_italic_support,
+    inject_centered_colon,
+    synthesize_italic_font,
+)
 
 Mode = Literal["static", "variable"]
 FONT_EXTENSIONS = {".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2"}
@@ -129,6 +139,7 @@ class CompileResult:
     family_faces: dict[str, tuple[SourceFace, ...]] = field(default_factory=dict)
     injected_colon: bool = False
     synthesized_italic: bool = False
+    equalized_digits: bool = False
 
 
 def require_fonttools():
@@ -513,16 +524,29 @@ def _otf_to_ttf(tt_font, post_format=2.0, max_err=1.0, reverse_direction=True):
     tt_font.sfntVersion = "\000\001\000\000"
 
 
-def _ensure_ttf(input_path: Path, output_dir: Path) -> Path:
+def _ensure_ttf(
+    input_path: Path,
+    output_dir: Path,
+    index: int | None = None,
+    total: int | None = None,
+    *,
+    quiet: bool = False,
+) -> Path:
     from fontTools.ttLib import TTFont
     output_path = output_dir / (input_path.stem + ".ttf")
+    prefix = f"[{index}/{total}] " if index is not None and total is not None else ""
+
     if input_path.suffix.lower() in {".ttc", ".otc"}:
+        if not quiet:
+            print(f"  * {prefix}Extracting TrueType Collection: {input_path.name}...", flush=True)
         TTCollection, _ = require_fonttools()
         try:
             collection = TTCollection(str(input_path))
             for i in range(len(collection.fonts)):
                 sub_path = output_dir / f"{input_path.stem}_{i}.ttf"
                 collection.fonts[i].save(str(sub_path))
+            if not quiet:
+                print(f"    -> Extracted {len(collection.fonts)} face(s) from collection [OK]", flush=True)
             return output_dir / f"{input_path.stem}_0.ttf"
         except Exception:
             shutil.copy2(input_path, output_path)
@@ -542,12 +566,22 @@ def _ensure_ttf(input_path: Path, output_dir: Path) -> Path:
 
     needs_save = False
     if font.flavor is not None:
+        if not quiet:
+            print(f"  * {prefix}Decompressing WOFF/WOFF2 font: {input_path.name}...", flush=True)
         font.flavor = None
         needs_save = True
+
     if font.sfntVersion == "OTTO":
-        log.info(f"Converting CFF outlines to TrueType outlines for {input_path.name}")
+        if not quiet:
+            print(f"  * {prefix}Converting CFF outlines to TrueType: {input_path.name}...", flush=True)
+        t0 = time.time()
         _otf_to_ttf(font)
+        elapsed = time.time() - t0
+        if not quiet:
+            print(f"    -> Converted cubic to quadratic curves ({elapsed:.1f}s) [OK]", flush=True)
         needs_save = True
+    elif not quiet and not needs_save:
+        print(f"  * {prefix}Processing TrueType font: {input_path.name}... [OK]", flush=True)
 
     if needs_save or input_path.suffix.lower() != ".ttf":
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1024,15 +1058,20 @@ def font_has_pua_colon(font_path: Path, pua_codepoints: tuple[int, ...] = (0xEE0
         font.close()
 
 
-def prompt_add_centered_colon_if_missing(font_paths: Iterable[Path], interactive: bool = False, category: str = "font") -> bool:
+def prompt_add_centered_colon_if_missing(
+    font_paths: Iterable[Path],
+    interactive: bool = False,
+    category: str = "font",
+    default_offset: int = 0,
+) -> tuple[bool, int]:
     """Check if input font(s) lack centered colon support and prompt user interactively to add it."""
     if not interactive:
-        return False
+        return False, default_offset
 
     font_list = list(font_paths)
     missing = [p for p in font_list if not font_has_centered_colon(p)]
     if not missing:
-        return False
+        return False, default_offset
 
     print("\n------------------------------------------------------------")
     print("Centered Colon Feature Check")
@@ -1041,8 +1080,13 @@ def prompt_add_centered_colon_if_missing(font_paths: Iterable[Path], interactive
     choice = input("Do you want to generate & add a vertically centered colon feature for digits/time displays? (y/N): ").strip().lower()
     if choice in ("y", "yes"):
         print("Centered colon generation approved.")
-        return True
-    return False
+        shift_str = input(f"Enter colon shift value in font units (+/- offset, e.g. +20 or -30, default {default_offset}): ").strip()
+        try:
+            offset = int(shift_str)
+        except ValueError:
+            offset = default_offset
+        return True, offset
+    return False, default_offset
 
 
 def prompt_feature_selection(available_features: dict[str, str], category_name: str = "Sans-serif") -> list[str]:
@@ -1217,326 +1261,6 @@ def freeze_font_features(font_path: Path, features: list[str] | str) -> None:
         print(f"Successfully froze features [{','.join(feature_list)}] in {font_path.name}")
 
 
-def inject_centered_colon(font_path: Path) -> bool:
-    """Inject a contextual digit colon rule (digit + colon + digit -> digit + colon.case + digit) into calt
-    so colons center automatically for clock displays (12:30) without affecting paragraph body text (note: example).
-    If the font lacks a centered colon glyph, generates colon.case dynamically.
-    """
-    _collection, TTFont = require_fonttools()
-    from fontTools.pens.transformPen import TransformPen
-    from fontTools.pens.ttGlyphPen import TTGlyphPen
-    from fontTools.ttLib.tables.otTables import ChainContextSubst, Coverage, Lookup, SingleSubst, SubstLookupRecord, FeatureRecord, Feature
-
-    try:
-        try:
-            font = TTFont(str(font_path))
-        except Exception:
-            font = TTFont(str(font_path), fontNumber=0)
-    except Exception as exc:
-        log.warning(f"Could not open {font_path.name} for centered colon injection: {exc}")
-        return False
-
-    try:
-        glyph_order = font.getGlyphOrder()
-        if "colon" not in glyph_order:
-            font.close()
-            return False
-
-        centered_glyph = None
-        for candidate in ("colon.case.tf", "colon.case", "colon.centered", "colon.cap", "colon.centered.tf"):
-            if candidate in glyph_order:
-                centered_glyph = candidate
-                break
-
-        # Dynamically generate colon.case if font lacks a pre-existing centered colon glyph
-        if not centered_glyph and "glyf" in font:
-            glyf = font["glyf"]
-            hmtx = font["hmtx"]
-
-            coords, _, _ = glyf["colon"].getCoordinates(glyf)
-            if coords:
-                y_coords = [y for _, y in coords]
-                colon_yMin, colon_yMax = min(y_coords), max(y_coords)
-                colon_center = (colon_yMin + colon_yMax) / 2
-
-                digit_y_maxes = []
-                for d in ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "0", "1", "2", "3"):
-                    if d in glyph_order:
-                        try:
-                            d_coords, _, _ = glyf[d].getCoordinates(glyf)
-                            if d_coords:
-                                digit_y_maxes.append(max(y for _, y in d_coords))
-                        except Exception:
-                            pass
-
-                cap_height = getattr(font.get("OS/2"), "sCapHeight", None) or 1400
-                target_center = (max(digit_y_maxes) / 2) if digit_y_maxes else (cap_height / 2)
-                dy = round(target_center - colon_center)
-                dy = max(0, dy)
-                pen = TTGlyphPen(font.getGlyphSet())
-                tpen = TransformPen(pen, (1, 0, 0, 1, 0, dy))
-                font.getGlyphSet()["colon"].draw(tpen)
-
-                centered_glyph = "colon.case"
-                font.setGlyphOrder(glyph_order + [centered_glyph])
-                new_glyph = pen.glyph()
-                new_glyph.recalcBounds(glyf)
-                glyf[centered_glyph] = new_glyph
-                hmtx[centered_glyph] = hmtx["colon"]
-                if "vmtx" in font:
-                    vmtx = font["vmtx"]
-                    if "colon" in getattr(vmtx, "metrics", {}):
-                        vmtx[centered_glyph] = vmtx["colon"]
-                    else:
-                        vmtx[centered_glyph] = (0, 0)
-                glyph_order = font.getGlyphOrder()
-                log.info(f"Dynamically generated [{centered_glyph}] with vertical offset dy=+{dy} for {font_path.name}")
-
-        if not centered_glyph:
-            font.close()
-            return False
-
-        # Ensure GSUB table exists (fontTools newTable wrapper + inner otTables structure)
-        if "GSUB" not in font or font["GSUB"].table is None:
-            from fontTools.ttLib import newTable
-            from fontTools.ttLib.tables.otTables import GSUB, FeatureList, LookupList, ScriptList
-            gsub_wrapper = newTable("GSUB")
-            gsub = GSUB()
-            gsub.Version = 0x00010000
-            gsub.ScriptList = ScriptList()
-            gsub.FeatureList = FeatureList()
-            gsub.LookupList = LookupList()
-            gsub.ScriptList.ScriptRecord = []
-            gsub.FeatureList.FeatureRecord = []
-            gsub.LookupList.Lookup = []
-            gsub_wrapper.table = gsub
-            font["GSUB"] = gsub_wrapper
-
-        gsub = font["GSUB"].table
-        if gsub.FeatureList is None:
-            gsub.FeatureList = FeatureList()
-        if gsub.FeatureList.FeatureRecord is None:
-            gsub.FeatureList.FeatureRecord = []
-        if gsub.LookupList is None:
-            gsub.LookupList = LookupList()
-        if gsub.LookupList.Lookup is None:
-            gsub.LookupList.Lookup = []
-
-        records = {rec.FeatureTag: rec.Feature for rec in gsub.FeatureList.FeatureRecord if rec.FeatureTag}
-        calt_rec_idx = None
-        for idx, rec in enumerate(gsub.FeatureList.FeatureRecord):
-            if rec.FeatureTag == "calt":
-                calt_rec_idx = idx
-                target_feat = rec.Feature
-                break
-
-        if calt_rec_idx is None:
-            new_rec = FeatureRecord()
-            new_rec.FeatureTag = "calt"
-            new_rec.Feature = Feature()
-            new_rec.Feature.LookupListIndex = []
-            new_rec.Feature.FeatureParams = None
-            gsub.FeatureList.FeatureRecord.append(new_rec)
-            calt_rec_idx = len(gsub.FeatureList.FeatureRecord) - 1
-            target_feat = new_rec.Feature
-
-        # Ensure calt_rec_idx is registered in ScriptList for DFLT and latn scripts
-        if gsub.ScriptList and gsub.ScriptList.ScriptRecord:
-            for srec in gsub.ScriptList.ScriptRecord:
-                script = srec.Script
-                lang_sys_list = []
-                if script.DefaultLangSys:
-                    lang_sys_list.append(script.DefaultLangSys)
-                if script.LangSysRecord:
-                    for lrec in script.LangSysRecord:
-                        lang_sys_list.append(lrec.LangSys)
-
-                for lsys in lang_sys_list:
-                    if calt_rec_idx not in lsys.FeatureIndex:
-                        lsys.FeatureIndex.append(calt_rec_idx)
-        elif gsub.ScriptList is not None:
-            # No scripts defined (font had no GSUB): create DFLT + latn so the calt feature applies
-            from fontTools.ttLib.tables.otTables import DefaultLangSys, Script, ScriptRecord
-            for script_tag in ("DFLT", "latn"):
-                srec = ScriptRecord()
-                srec.ScriptTag = script_tag
-                srec.Script = Script()
-                srec.Script.DefaultLangSys = DefaultLangSys()
-                srec.Script.DefaultLangSys.ReqFeatureIndex = 0xFFFF
-                srec.Script.DefaultLangSys.FeatureIndex = [calt_rec_idx]
-                srec.Script.LangSysRecord = []
-                gsub.ScriptList.ScriptRecord.append(srec)
-
-        # 1. SingleSubst lookup: colon -> centered_glyph
-        s_lookup = Lookup()
-        s_lookup.LookupType = 1
-        s_lookup.LookupFlag = 0
-        st1 = SingleSubst()
-        st1.Format = 1
-        st1.mapping = {}
-        if "colon" in glyph_order:
-            st1.mapping["colon"] = centered_glyph
-        if "colon.tf" in glyph_order and "colon.case.tf" in glyph_order:
-            st1.mapping["colon.tf"] = "colon.case.tf"
-
-        st1.mapping = dict(sorted(st1.mapping.items(), key=lambda item: font.getGlyphID(item[0])))
-        s_lookup.SubTable = [st1]
-        gsub.LookupList.Lookup.append(s_lookup)
-        s_lidx = len(gsub.LookupList.Lookup) - 1
-
-        # 2. ChainContextSubst lookup matching digit + colon + digit
-        c_lookup = Lookup()
-        c_lookup.LookupType = 6
-        c_lookup.LookupFlag = 0
-
-        st6 = ChainContextSubst()
-        st6.Format = 3
-
-        pure_digits: set[str] = set()
-        cmap = font.getBestCmap()
-        for codepoint, gname in cmap.items():
-            if (0x0030 <= codepoint <= 0x0039) or (0xFF10 <= codepoint <= 0xFF19) or (0x0660 <= codepoint <= 0x0669) or (0x0966 <= codepoint <= 0x096F):
-                pure_digits.add(gname)
-
-        exact_digit_bases = {"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
-        for g in glyph_order:
-            parts = g.split(".")
-            if parts[0].lower() in exact_digit_bases:
-                pure_digits.add(g)
-
-        sorted_digits = sorted(list(pure_digits), key=lambda g: font.getGlyphID(g))
-
-        bcov = Coverage()
-        bcov.glyphs = sorted_digits
-        icov = Coverage()
-        icov.glyphs = sorted([g for g in ("colon", "colon.tf") if g in glyph_order], key=lambda g: font.getGlyphID(g))
-        lcov = Coverage()
-        lcov.glyphs = sorted_digits
-
-        st6.BacktrackGlyphCount = 1
-        st6.BacktrackCoverage = [bcov]
-        st6.InputGlyphCount = 1
-        st6.InputCoverage = [icov]
-        st6.LookAheadGlyphCount = 1
-        st6.LookAheadCoverage = [lcov]
-
-        srec = SubstLookupRecord()
-        srec.SequenceIndex = 0
-        srec.LookupListIndex = s_lidx
-        st6.SubstLookupRecord = [srec]
-
-        c_lookup.SubTable = [st6]
-
-        space_glyphs = [g for g in ("space", "uni0020", "u0020", "thinspace", "uni2009", "u2009") if g in glyph_order]
-        if space_glyphs:
-            scov = Coverage()
-            scov.glyphs = sorted(space_glyphs, key=lambda g: font.getGlyphID(g))
-
-            # digit + space + colon + space + digit ("12 : 30")
-            st_space = ChainContextSubst()
-            st_space.Format = 3
-            st_space.BacktrackGlyphCount = 2
-            st_space.BacktrackCoverage = [scov, bcov]
-            st_space.InputGlyphCount = 1
-            st_space.InputCoverage = [icov]
-            st_space.LookAheadGlyphCount = 2
-            st_space.LookAheadCoverage = [scov, lcov]
-            st_space.SubstLookupRecord = [srec]
-            c_lookup.SubTable.append(st_space)
-
-            # digit + colon + space + digit ("12: 30")
-            st_lead = ChainContextSubst()
-            st_lead.Format = 3
-            st_lead.BacktrackGlyphCount = 1
-            st_lead.BacktrackCoverage = [bcov]
-            st_lead.InputGlyphCount = 1
-            st_lead.InputCoverage = [icov]
-            st_lead.LookAheadGlyphCount = 2
-            st_lead.LookAheadCoverage = [scov, lcov]
-            st_lead.SubstLookupRecord = [srec]
-            c_lookup.SubTable.append(st_lead)
-
-            # digit + space + colon + digit ("12 :30")
-            st_trail = ChainContextSubst()
-            st_trail.Format = 3
-            st_trail.BacktrackGlyphCount = 2
-            st_trail.BacktrackCoverage = [scov, bcov]
-            st_trail.InputGlyphCount = 1
-            st_trail.InputCoverage = [icov]
-            st_trail.LookAheadGlyphCount = 1
-            st_trail.LookAheadCoverage = [lcov]
-            st_trail.SubstLookupRecord = [srec]
-            c_lookup.SubTable.append(st_trail)
-
-        gsub.LookupList.Lookup.append(c_lookup)
-        c_lidx = len(gsub.LookupList.Lookup) - 1
-
-        if c_lidx not in target_feat.LookupListIndex:
-            target_feat.LookupListIndex.append(c_lidx)
-            log.info(f"Injected contextual digit colon lookup [{c_lidx}] into default active layout feature for {font_path.name}")
-
-        font.save(str(font_path))
-        font.close()
-        return True
-    except Exception as exc:
-        log.warning(f"Failed to inject contextual centered colon into {font_path.name}: {exc}")
-        return False
-
-
-def copy_colon_to_pua(font_path: Path, codepoints: tuple[int, ...] = LOCKSCREEN_COLON_CODEPOINTS) -> bool:
-    """Copy/map the colon (or centered colon) glyph to Android lockscreen clock colon PUA (U+EE01) and symbols (U+2236, U+2982)."""
-    _collection, TTFont = require_fonttools()
-
-    try:
-        font = TTFont(str(font_path))
-    except Exception:
-        return False
-
-    try:
-        glyph_order = font.getGlyphOrder()
-        cmap = font.getBestCmap() if hasattr(font, "getBestCmap") else {}
-        if not cmap and "cmap" in font:
-            cmap = font["cmap"].getBestCmap() or {}
-
-        # Determine the best colon glyph to map
-        # Prefer centered colon if one was created or exists, otherwise standard colon
-        target_glyph = None
-        for candidate in ("colon.case.tf", "colon.case", "colon.centered", "colon.cap", "colon.centered.tf", "colon_centered"):
-            if candidate in glyph_order:
-                target_glyph = candidate
-                break
-
-        if not target_glyph:
-            if 0x003A in cmap and cmap[0x003A] in glyph_order:
-                target_glyph = cmap[0x003A]
-            elif "colon" in glyph_order:
-                target_glyph = "colon"
-
-        if not target_glyph or "cmap" not in font:
-            font.close()
-            return False
-
-        changed = False
-        for table in font["cmap"].tables:
-            if table.isUnicode():
-                for cp in codepoints:
-                    if table.cmap.get(cp) != target_glyph:
-                        table.cmap[cp] = target_glyph
-                        changed = True
-
-        if changed:
-            font.save(str(font_path))
-        font.close()
-        return changed
-    except Exception as exc:
-        log.warning(f"copy_colon_to_pua error for {font_path.name}: {exc}")
-        try:
-            font.close()
-        except Exception:
-            pass
-        return False
-
-
 def _separate_faces_by_category(all_faces: list[SourceFace]) -> dict[str, list[SourceFace]]:
     """Split discovered faces per category, with legacy fallbacks preserved:
     optional families are deduped, and when no Sans face exists the Sans slot
@@ -1567,7 +1291,7 @@ def inspect_fonts(fonts_dir: Path, requested_mode: str = "auto") -> dict[str, ob
         for path, category in _collect_source_entries(fonts_dir):
             sub_dir = temp_fonts_dir / category
             sub_dir.mkdir(parents=True, exist_ok=True)
-            _ensure_ttf(path, sub_dir)
+            _ensure_ttf(path, sub_dir, quiet=True)
 
         separated = _separate_faces_by_category(discover_faces(temp_fonts_dir))
         notes: list[str] = []
@@ -1630,6 +1354,10 @@ def compile_fonts(
     bengali_features: list[str] | str | None = None,
     interactive_features: bool | None = None,
     centered_colon: bool | None = None,
+    colon_offset: int = 0,
+    colon_alignment: str = "center",
+    colon_rule: str = "between_digits",
+    equalize_digits: bool = False,
     pua_colon: bool | None = None,
     synthetic_italic: bool | None = None,
     synthetic_italic_angle: float = -12.0,
@@ -1646,10 +1374,31 @@ def compile_fonts(
     temp_fonts_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        for path, category in _collect_source_entries(fonts_dir):
+        source_entries = _collect_source_entries(fonts_dir)
+        if not source_entries:
+            expected = ", ".join(f"'{fonts_dir / FONT_CATEGORIES[key].default_dir}'" for key in CATEGORY_ORDER)
+            raise SystemExit(
+                f"No font files found in {expected}.\n"
+                f"Please place your primary body font file(s) into '{fonts_dir / FONT_CATEGORIES['sans'].default_dir}'."
+            )
+
+        print("[1/4] Scanning Source Fonts...", flush=True)
+        for key in CATEGORY_ORDER:
+            cat_entries = [p for p, c in source_entries if c == key]
+            if cat_entries:
+                print(f"  - {FONT_CATEGORIES[key].label:<12}: {len(cat_entries)} font file(s)", flush=True)
+                for p in cat_entries:
+                    print(f"      * {p.name}", flush=True)
+            else:
+                print(f"  - {FONT_CATEGORIES[key].label:<12}: not provided", flush=True)
+        print(flush=True)
+
+        total_sources = len(source_entries)
+        print(f"[2/4] Preparing Font Outlines ({total_sources} file(s))...", flush=True)
+        for idx, (path, category) in enumerate(source_entries, 1):
             sub_dir = temp_fonts_dir / category
             sub_dir.mkdir(parents=True, exist_ok=True)
-            _ensure_ttf(path, sub_dir)
+            _ensure_ttf(path, sub_dir, index=idx, total=total_sources)
 
         all_faces = discover_faces(temp_fonts_dir)
         separated = _separate_faces_by_category(all_faces)
@@ -1659,6 +1408,35 @@ def compile_fonts(
         mono_ttf_paths = sorted({face.path for face in mono_faces})
         serif_ttf_paths = sorted({face.path for face in serif_faces})
         bengali_ttf_paths = sorted({face.path for face in bengali_faces})
+
+        primary_faces = faces or bengali_faces or serif_faces or mono_faces
+        if not primary_faces:
+            raise SystemExit("No valid font faces were found in input subdirectories.")
+        mode = detect_mode(primary_faces, requested_mode)
+        family = transform_family_name(next(iter({face.family for face in primary_faces}))) if prefix_family else next(iter({face.family for face in primary_faces}))
+
+        print(flush=True)
+        print(f"  * Detected Family : {family}", flush=True)
+        print(f"  * Detected Mode   : {mode}", flush=True)
+        print(flush=True)
+
+        print("[3/4] Applying Typography & Clock Enhancements...", flush=True)
+        has_enhancements = False
+
+        italic_synthesized = False
+        if synthetic_italic:
+            has_ital = any(font_has_italic_support(p) for p in sans_ttf_paths)
+            if not has_ital and sans_ttf_paths:
+                has_enhancements = True
+                print(f"  * Synthesizing companion italic faces ({synthetic_italic_angle:.1f}° slant)...", flush=True)
+                for font_path in list(sans_ttf_paths):
+                    out_ital_path = font_path.parent / f"{font_path.stem}-Italic{font_path.suffix}"
+                    print(f"    -> Slanting {font_path.name}...", flush=True)
+                    synthesize_italic_font(font_path, out_ital_path, angle=synthetic_italic_angle or -12.0)
+                    if out_ital_path.exists() and out_ital_path not in sans_ttf_paths:
+                        sans_ttf_paths.append(out_ital_path)
+                italic_synthesized = True
+                print("    -> Companion italics synthesized successfully [OK]", flush=True)
 
         applied_features: list[str] = []
         category_paths = tuple(
@@ -1670,7 +1448,8 @@ def compile_fonts(
                 ("bengali", bengali_ttf_paths),
             )
         )
-        colon_choice = {key: centered_colon for key, _paths, _label in category_paths}
+        colon_choice: dict[str, bool | None] = {key: centered_colon for key, _paths, _label in category_paths}
+        colon_offsets: dict[str, int] = {key: colon_offset for key, _paths, _label in category_paths}
         should_prompt = bool(interactive_features)
 
         if features is not None or mono_features is not None or serif_features is not None or bengali_features is not None:
@@ -1686,6 +1465,11 @@ def compile_fonts(
             serif_feats = parse_feat(serif_features) if serif_features is not None else sans_feats
             beng_feats = parse_feat(bengali_features) if bengali_features is not None else sans_feats
 
+            all_feats_to_freeze = list(dict.fromkeys(sans_feats + mono_feats + serif_feats + beng_feats))
+            if all_feats_to_freeze:
+                has_enhancements = True
+                print(f"  * Freezing OpenType feature tags [{', '.join(all_feats_to_freeze)}]...", flush=True)
+
             for p in sans_ttf_paths:
                 freeze_font_features(p, sans_feats)
             for p in mono_ttf_paths:
@@ -1695,12 +1479,14 @@ def compile_fonts(
             for p in bengali_ttf_paths:
                 freeze_font_features(p, beng_feats)
 
-            applied_features.extend(list(dict.fromkeys(sans_feats + mono_feats + serif_feats + beng_feats)))
+            applied_features.extend(all_feats_to_freeze)
+            if all_feats_to_freeze:
+                print("    -> Feature freezing complete [OK]", flush=True)
         elif should_prompt:
             for colon_key, colon_paths, colon_label in category_paths:
                 if colon_choice[colon_key] is None and colon_paths:
-                    colon_choice[colon_key] = prompt_add_centered_colon_if_missing(
-                        colon_paths, interactive=should_prompt, category=colon_label
+                    colon_choice[colon_key], colon_offsets[colon_key] = prompt_add_centered_colon_if_missing(
+                        colon_paths, interactive=should_prompt, category=colon_label, default_offset=colon_offset
                     )
 
             if sans_ttf_paths:
@@ -1740,31 +1526,46 @@ def compile_fonts(
                         applied_features.extend(feat_beng)
 
         colon_injected = False
-        for colon_key, colon_paths, _colon_label in category_paths:
+        has_colon_action = False
+        for colon_key, colon_paths, colon_label in category_paths:
             if colon_choice[colon_key] and colon_paths:
+                eff_offset = colon_offsets.get(colon_key, colon_offset)
+                shift_label = f"{eff_offset:+d} font units" if eff_offset else "optical center (0)"
+                print(f"  * Injecting centered clock colon in {colon_label} ({len(colon_paths)} face(s))...", flush=True)
+                print(f"    -> Target: {colon_alignment} | Shift: {shift_label} | Rule: {colon_rule}", flush=True)
                 for font_path in colon_paths:
-                    inject_centered_colon(font_path)
-                    colon_injected = True
+                    inject_centered_colon(
+                        font_path,
+                        alignment=colon_alignment,
+                        offset=eff_offset,
+                        rule=colon_rule,
+                    )
+                colon_injected = True
+                has_colon_action = True
+                has_enhancements = True
+        if has_colon_action:
+            print("    -> Centered colon injected successfully [OK]", flush=True)
+
+        if equalize_digits:
+            has_enhancements = True
+            print(f"  * Equalizing digit advance widths (0-9) across {len(sans_ttf_paths)} Sans face(s)...", flush=True)
+            for font_path in sans_ttf_paths:
+                equalize_clock_digits(font_path)
+            print("    -> Digit advance widths equalized and contours centered [OK]", flush=True)
 
         if pua_colon:
+            has_enhancements = True
+            print("  * Mapping clock colon to lockscreen PUA codepoints (U+EE01, U+2236, U+2982)...", flush=True)
             for font_path in sans_ttf_paths:
                 copy_colon_to_pua(font_path)
+            print("    -> PUA codepoints mapped across cmap tables [OK]", flush=True)
 
-        italic_synthesized = False
-        if synthetic_italic:
-            from runtime_helper import font_has_italic_support, synthesize_italic_font
-            has_ital = any(font_has_italic_support(p) for p in sans_ttf_paths)
-            if not has_ital and sans_ttf_paths:
-                for font_path in list(sans_ttf_paths):
-                    out_ital_path = font_path.parent / f"{font_path.stem}-Italic{font_path.suffix}"
-                    synthesize_italic_font(font_path, out_ital_path, angle=synthetic_italic_angle or -12.0)
-                    italic_synthesized = True
+        if not has_enhancements:
+            print("  * Standard typography layout (no extra overrides requested)", flush=True)
 
         all_faces = discover_faces(temp_fonts_dir)
         separated = _separate_faces_by_category(all_faces)
         faces, mono_faces, serif_faces, bengali_faces = (separated[key] for key in CATEGORY_ORDER)
-        # When Sans is missing, _separate_faces_by_category already routed every
-        # face into the Sans slot, so the optional lists still apply alongside.
         primary_faces = faces or bengali_faces or serif_faces or mono_faces
         if not primary_faces:
             raise SystemExit("No valid font faces were found in input subdirectories.")
@@ -1775,51 +1576,61 @@ def compile_fonts(
         family = next(iter(families))
         if prefix_family:
             family = transform_family_name(family)
-        # Save prepared source fonts into categorized subfolders under Files/
+
+        print(flush=True)
+        print("[4/4] Compiling Module Payload & Packaging Fonts...", flush=True)
         sans_files_dir = files_dir / "Sans"
         sans_files_dir.mkdir(parents=True, exist_ok=True)
-        for face in faces:
+        print(f"  * Packaging Sans-serif fonts ({len(faces)} face(s))...", flush=True)
+        for idx, face in enumerate(faces, 1):
             font = _open_font(face)
             try:
                 if prefix_family:
                     _apply_custom_metadata(font)
                 font.save(str(sans_files_dir / face.path.name))
+                print(f"    -> [{idx}/{len(faces)}] Saved Files/Sans/{face.path.name} [OK]", flush=True)
             finally:
                 font.close()
 
         if mono_faces:
             mono_files_dir = files_dir / "Monospace"
             mono_files_dir.mkdir(parents=True, exist_ok=True)
-            for face in mono_faces:
+            print(f"  * Packaging Monospace fonts ({len(mono_faces)} face(s))...", flush=True)
+            for idx, face in enumerate(mono_faces, 1):
                 font = _open_font(face)
                 try:
                     if prefix_family:
                         _apply_custom_metadata(font)
                     font.save(str(mono_files_dir / face.path.name))
+                    print(f"    -> [{idx}/{len(mono_faces)}] Saved Files/Monospace/{face.path.name} [OK]", flush=True)
                 finally:
                     font.close()
 
         if serif_faces:
             serif_files_dir = files_dir / "Serif"
             serif_files_dir.mkdir(parents=True, exist_ok=True)
-            for face in serif_faces:
+            print(f"  * Packaging Serif fonts ({len(serif_faces)} face(s))...", flush=True)
+            for idx, face in enumerate(serif_faces, 1):
                 font = _open_font(face)
                 try:
                     if prefix_family:
                         _apply_custom_metadata(font)
                     font.save(str(serif_files_dir / face.path.name))
+                    print(f"    -> [{idx}/{len(serif_faces)}] Saved Files/Serif/{face.path.name} [OK]", flush=True)
                 finally:
                     font.close()
 
         if bengali_faces:
             bengali_files_dir = files_dir / "Bengali"
             bengali_files_dir.mkdir(parents=True, exist_ok=True)
-            for face in bengali_faces:
+            print(f"  * Packaging Bengali fonts ({len(bengali_faces)} face(s))...", flush=True)
+            for idx, face in enumerate(bengali_faces, 1):
                 font = _open_font(face)
                 try:
                     if prefix_family:
                         _apply_custom_metadata(font)
                     font.save(str(bengali_files_dir / face.path.name))
+                    print(f"    -> [{idx}/{len(bengali_faces)}] Saved Files/Bengali/{face.path.name} [OK]", flush=True)
                 finally:
                     font.close()
 
@@ -1845,6 +1656,7 @@ def compile_fonts(
             family_faces,
             injected_colon=colon_injected,
             synthesized_italic=italic_synthesized,
+            equalized_digits=equalize_digits,
         )
     finally:
         shutil.rmtree(temp_fonts_dir, ignore_errors=True)

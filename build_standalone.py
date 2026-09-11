@@ -203,7 +203,10 @@ def write_zip(module_dir: Path, output: Path) -> None:
             executable = relative.name.endswith(".sh") or relative.name == "update-binary"
             info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
             info.compress_type = zipfile.ZIP_DEFLATED
-            archive.writestr(info, source.read_bytes())
+            data = source.read_bytes()
+            if relative.suffix.lower() in {".sh", ".prop", ".xml", ".json", ".conf", ".txt", ".md", ".py"} or relative.name in {"update-binary", "updater-script"}:
+                data = data.replace(b"\r\n", b"\n")
+            archive.writestr(info, data)
 
 
 def run_inspection(args: argparse.Namespace) -> None:
@@ -385,6 +388,12 @@ def package_standalone_template_zip(output_dir: Path) -> Path:
         "dist",
     )
 
+    def _read_lf_bytes(p: Path) -> bytes:
+        content = p.read_bytes()
+        if p.suffix.lower() in {".sh", ".prop", ".xml", ".json", ".conf", ".txt", ".md", ".py"} or p.name in {"update-binary", "updater-script"}:
+            return content.replace(b"\r\n", b"\n")
+        return content
+
     with zipfile.ZipFile(out_zip, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         # 1. Package template-standalone directory files
         if TEMPLATE_DIR.exists():
@@ -395,7 +404,7 @@ def package_standalone_template_zip(output_dir: Path) -> Path:
                     executable = path.name.endswith(".sh") or path.name == "update-binary"
                     info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
                     info.compress_type = zipfile.ZIP_DEFLATED
-                    archive.writestr(info, path.read_bytes())
+                    archive.writestr(info, _read_lf_bytes(path))
 
         # 2. Package root build tools and documentation
         for filename, is_exec in root_tools:
@@ -404,7 +413,7 @@ def package_standalone_template_zip(output_dir: Path) -> Path:
                 info = zipfile.ZipInfo(filename, timestamp)
                 info.external_attr = ((0o755 if is_exec else 0o644) & 0xFFFF) << 16
                 info.compress_type = zipfile.ZIP_DEFLATED
-                archive.writestr(info, src_file.read_bytes())
+                archive.writestr(info, _read_lf_bytes(src_file))
 
         # 2b. Write standalone guide and changelog as USAGE_GUIDE.md and CHANGELOG.md in template root
         guide_standalone = ROOT / "USAGE_GUIDE_STANDALONE.md"
@@ -412,14 +421,14 @@ def package_standalone_template_zip(output_dir: Path) -> Path:
             info_guide = zipfile.ZipInfo("USAGE_GUIDE.md", timestamp)
             info_guide.external_attr = (0o644 & 0xFFFF) << 16
             info_guide.compress_type = zipfile.ZIP_DEFLATED
-            archive.writestr(info_guide, guide_standalone.read_bytes())
+            archive.writestr(info_guide, _read_lf_bytes(guide_standalone))
 
         changelog_standalone = ROOT / "CHANGELOG_STANDALONE.md"
         if changelog_standalone.is_file():
             info_cl = zipfile.ZipInfo("CHANGELOG.md", timestamp)
             info_cl.external_attr = (0o644 & 0xFFFF) << 16
             info_cl.compress_type = zipfile.ZIP_DEFLATED
-            archive.writestr(info_cl, changelog_standalone.read_bytes())
+            archive.writestr(info_cl, _read_lf_bytes(changelog_standalone))
 
         # 3. Add build.py convenience wrapper
         build_py_wrapper = (

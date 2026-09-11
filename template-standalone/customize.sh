@@ -2,6 +2,54 @@
 # MFFMv14 Font Module Installer
 
 
+trap '' PIPE
+
+# --- Logging Setup (Must be first to capture all debug output) ---
+LOG_DIR=${LOG_DIR:-/sdcard/MFFM}
+mkdir -p "$LOG_DIR" 2>/dev/null
+
+# If /sdcard/MFFM is not writable (recovery, early boot, storage permission), test fallback locations
+if [ ! -d "$LOG_DIR" ] || ! : >> "$LOG_DIR/.test_write" 2>/dev/null; then
+  for _cand in /data/adb/MFFM /data/adb/modules_update/${MODID:-mffm14} /data/adb /data/local/tmp /cache /tmp; do
+    mkdir -p "$_cand" 2>/dev/null
+    if : >> "$_cand/.test_write" 2>/dev/null; then
+      rm -f "$_cand/.test_write" 2>/dev/null
+      LOG_DIR="$_cand"
+      break
+    fi
+  done
+fi
+rm -f "$LOG_DIR/.test_write" 2>/dev/null
+
+LOG_FILE=${LOG_FILE:-"$LOG_DIR/mffmv14_debug_$(date '+%Y%m%d_%H%M%S' 2>/dev/null || echo current).log"}
+: >> "$LOG_FILE" 2>/dev/null
+
+DEBUG=${DEBUG:-1}
+if [ "$DEBUG" = "1" ] && [ -f "$LOG_FILE" ]; then
+  exec 2>> "$LOG_FILE"
+  PS4='+ [${0##*/}:${LINENO:-?}] '
+  set -x
+fi
+
+# Exit trap ensuring debug log is reported and preserved on unexpected failure
+_mffm_exit_handler() {
+  local _exit_code=$?
+  if [ "$_exit_code" -ne 0 ] && [ "$_MFFM_SUCCESS" != "1" ]; then
+    ui_print ""
+    ui_print "  ! Installation aborted (exit code $_exit_code)"
+    if [ -f "$LOG_FILE" ]; then
+      ui_print "  ! Debug log: $LOG_FILE"
+      if [ -d "/sdcard" ] && [ "$LOG_DIR" != "/sdcard/MFFM" ]; then
+        mkdir -p /sdcard/MFFM 2>/dev/null
+        cp -f "$LOG_FILE" /sdcard/MFFM/ 2>/dev/null
+        ui_print "  ! Copied to: /sdcard/MFFM/${LOG_FILE##*/}"
+      fi
+    fi
+    ui_print ""
+  fi
+}
+trap '_mffm_exit_handler' EXIT
+
 if ! command -v ui_print >/dev/null 2>&1; then
   ui_print() { echo "$1"; }
 fi
@@ -16,26 +64,12 @@ if ! command -v set_perm_recursive >/dev/null 2>&1; then
   }
 fi
 
-LOG_DIR=${LOG_DIR:-/sdcard/MFFM}
-LOG_FILE=${LOG_FILE:-"$LOG_DIR/mffmv14_debug_$(date '+%Y%m%d_%H%M%S' 2>/dev/null || echo current).log"}
-mkdir -p "$LOG_DIR" 2>/dev/null
-
-# Prune old debug logs, keeping the newest few for post-mortem comparison with
-# this run's log. Only mffmv14_debug_*.log files are touched; unrelated user
-# files in LOG_DIR are left alone.
-MFFM_LOG_KEEP=${MFFM_LOG_KEEP:-3}
+# Clean old debug logs in LOG_DIR (keep current log)
 if [ -d "$LOG_DIR" ]; then
-  old_logs=$(ls -t "$LOG_DIR"/mffmv14_debug_*.log 2>/dev/null | tail -n +"$((MFFM_LOG_KEEP + 1))")
-  for old_log in $old_logs; do
-    [ -f "$old_log" ] && [ "$old_log" != "$LOG_FILE" ] && rm -f "$old_log" 2>/dev/null
+  for old_log in "$LOG_DIR"/mffmv14_debug_*.log "$LOG_DIR"/mffm_debug_*.log; do
+    [ -f "$old_log" ] || continue
+    [ "$old_log" != "$LOG_FILE" ] && rm -f "$old_log" 2>/dev/null
   done
-fi
-
-DEBUG=${DEBUG:-1}
-if [ "$DEBUG" = "1" ] && [ -d "$LOG_DIR" ] && : >> "$LOG_FILE" 2>/dev/null; then
-  exec 2>> "$LOG_FILE"
-  PS4='+ [${0##*/}:${LINENO:-?}] '
-  set -x
 fi
 
 mffm_log_line() {
@@ -62,6 +96,14 @@ fail() {
   ui_print ""
   ui_print "  [ERROR] $1"
   ui_print "  Installation stopped."
+  if [ -f "$LOG_FILE" ]; then
+    ui_print "  Debug log: $LOG_FILE"
+    if [ -d "/sdcard" ] && [ "$LOG_DIR" != "/sdcard/MFFM" ]; then
+      mkdir -p /sdcard/MFFM 2>/dev/null
+      cp -f "$LOG_FILE" /sdcard/MFFM/ 2>/dev/null
+      ui_print "  Copied to: /sdcard/MFFM/${LOG_FILE##*/}"
+    fi
+  fi
   ui_print ""
   exit 1
 }
@@ -1731,9 +1773,17 @@ if [ -d "$MFFM_DIR" ]; then
   done
 fi
 
+_MFFM_SUCCESS=1
+
 rm -rf "$FONT_DIR"
 rm -f "$MODPATH/font-config.sh"
 status_ok "Permissions and cleanup"
+
+if [ -f "$LOG_FILE" ] && [ -d "/sdcard" ] && [ "$LOG_DIR" != "/sdcard/MFFM" ]; then
+  mkdir -p /sdcard/MFFM 2>/dev/null
+  cp -f "$LOG_FILE" /sdcard/MFFM/ 2>/dev/null
+  LOG_FILE="/sdcard/MFFM/${LOG_FILE##*/}"
+fi
 
 ui_print ""
 ui_print "  +----------------------------------------+"

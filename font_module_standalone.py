@@ -1801,7 +1801,7 @@ def inspect_fonts(fonts_dir: Path, requested_mode: str = "auto") -> dict[str, ob
         for path, category in _collect_source_entries(fonts_dir):
             sub_dir = temp_fonts_dir / category
             sub_dir.mkdir(parents=True, exist_ok=True)
-            _ensure_ttf(path, sub_dir)
+            _ensure_ttf(path, sub_dir, quiet=True)
 
         separated = _separate_faces_by_category(discover_faces(temp_fonts_dir))
         notes: list[str] = []

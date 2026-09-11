@@ -35,8 +35,9 @@ BUILD_CONFIG_NAME = ".mffm-build.json"
 BUILD_CONFIG_KEYS = (
     "fonts_dir", "mode", "name", "version", "version_code", "output_dir",
     "keep_hinting", "no_prefix", "features", "mono_features", "serif_features",
-    "bengali_features", "centered_colon", "pua_colon", "synthetic_italic",
-    "synthetic_italic_angle", "interactive",
+    "bengali_features", "centered_colon", "colon_offset", "colon_shift",
+    "colon_alignment", "colon_rule", "equalize_digits", "pua_colon",
+    "synthetic_italic", "synthetic_italic_angle", "interactive",
 )
 
 
@@ -60,6 +61,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-interactive", action="store_false", dest="interactive", help="disable interactive feature prompt")
     parser.add_argument("--centered-colon", action="store_true", default=None, help="force centered colon generation/injection for digits (12:30)")
     parser.add_argument("--no-centered-colon", action="store_false", dest="centered_colon", help="disable centered colon injection")
+    parser.add_argument("--colon-offset", "--colon-shift", type=int, default=0, help="vertical offset in font units (+/-) for centered colon (clock colon shift, e.g. +20, -30)")
+    parser.add_argument("--colon-alignment", choices=("center", "cap_height", "x_height"), default="center", help="alignment target for centered colon: center, cap_height, or x_height (default: center)")
+    parser.add_argument("--colon-rule", choices=("between_digits", "after_digit", "always"), default="between_digits", help="contextual rule for centered colon substitution (default: between_digits)")
+    parser.add_argument("--equalize-digits", action="store_true", default=None, help="equalize advance widths of digits (0-9) and center contours for wobble-free clocks")
+    parser.add_argument("--no-equalize-digits", action="store_false", dest="equalize_digits", help="do not equalize digit advance widths")
     parser.add_argument("--pua-colon", action="store_true", default=None, help="force mapping colon to Android lockscreen clock PUA (U+EE01, U+2236, U+2982)")
     parser.add_argument("--no-pua-colon", action="store_false", dest="pua_colon", help="disable Android lockscreen clock PUA mapping")
     parser.add_argument("--synthetic-italic", action="store_true", default=None, help="synthesize Sans-serif italic companion faces if missing")
@@ -150,9 +156,13 @@ def save_build_config(path: Path, args: argparse.Namespace) -> None:
         "serif_features": args.serif_features,
         "bengali_features": args.bengali_features,
         "centered_colon": args.centered_colon,
-        "pua_colon": args.pua_colon,
-        "synthetic_italic": args.synthetic_italic,
-        "synthetic_italic_angle": args.synthetic_italic_angle,
+        "colon_offset": args.colon_offset,
+        "colon_alignment": args.colon_alignment,
+        "colon_rule": args.colon_rule,
+        "equalize_digits": bool(args.equalize_digits),
+        "pua_colon": bool(args.pua_colon),
+        "synthetic_italic": bool(args.synthetic_italic),
+        "synthetic_italic_angle": float(args.synthetic_italic_angle or -12.0),
         "interactive": args.interactive,
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -194,7 +204,10 @@ def write_zip(module_dir: Path, output: Path) -> None:
             executable = relative.name.endswith(".sh") or relative.name == "update-binary"
             info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
             info.compress_type = zipfile.ZIP_DEFLATED
-            archive.writestr(info, source.read_bytes())
+            data = source.read_bytes()
+            if relative.suffix.lower() in {".sh", ".prop", ".xml", ".json", ".conf", ".txt", ".md", ".py"} or relative.name in {"update-binary", "updater-script"}:
+                data = data.replace(b"\r\n", b"\n")
+            archive.writestr(info, data)
 
 
 def run_inspection(args: argparse.Namespace) -> None:
@@ -228,12 +241,37 @@ def build_module(args: argparse.Namespace) -> Path | None:
     if not (TEMPLATE_DIR / "customize.sh").exists():
         raise SystemExit(f"Template payload is incomplete: customize.sh is missing in {TEMPLATE_DIR}")
 
+    fonts_dir = (args.fonts_dir or (ROOT / "Fonts")).resolve()
+    out_dir = (args.output_dir or (ROOT / "dist")).resolve()
+
+    print("=" * 64, flush=True)
+    print("  MFFMv14 Module Builder", flush=True)
+    print("=" * 64, flush=True)
+    print(f"  Source Directory : {fonts_dir}", flush=True)
+    print(f"  Output Directory : {out_dir}", flush=True)
+    print(f"  Detection Mode   : {args.mode or 'auto'}", flush=True)
+    print(f"  TrueType Hinting : {'Preserve' if args.keep_hinting else 'Strip (Clean rendering)'}", flush=True)
+    print(f"  Family Prefix    : {'Disabled (--no-prefix)' if args.no_prefix else 'Enabled ([MFFM] / Mistu)'}", flush=True)
+    if args.features:
+        print(f"  Sans Features    : {args.features}", flush=True)
+    if args.centered_colon is not False:
+        offset_str = f" ({args.colon_offset:+d} font units)" if getattr(args, "colon_offset", 0) else ""
+        print(f"  Centered Colon   : Enabled [{getattr(args, 'colon_alignment', 'center')}, {getattr(args, 'colon_rule', 'between_digits')}{offset_str}]", flush=True)
+    if getattr(args, "equalize_digits", False):
+        print("  Digit Widths     : Equalize for wobble-free clocks", flush=True)
+    if args.pua_colon:
+        print("  Lockscreen PUA   : Map to U+EE01, U+2236, U+2982", flush=True)
+    if args.synthetic_italic:
+        print(f"  Synthetic Italic : Enabled ({args.synthetic_italic_angle or -12.0}° slant)", flush=True)
+    print("-" * 64, flush=True)
+    print(flush=True)
+
     work_dir = Path(tempfile.mkdtemp(prefix="mffm-build-"))
     module_dir = work_dir / "module"
     try:
         copy_template(TEMPLATE_DIR, module_dir)
         result = compile_fonts(
-            args.fonts_dir.resolve(),
+            fonts_dir,
             module_dir,
             requested_mode=args.mode,
             keep_hinting=bool(args.keep_hinting),
@@ -244,9 +282,13 @@ def build_module(args: argparse.Namespace) -> Path | None:
             bengali_features=args.bengali_features,
             interactive_features=args.interactive,
             centered_colon=args.centered_colon,
+            colon_offset=int(getattr(args, "colon_offset", 0) or 0),
+            colon_alignment=str(getattr(args, "colon_alignment", "center") or "center"),
+            colon_rule=str(getattr(args, "colon_rule", "between_digits") or "between_digits"),
+            equalize_digits=bool(getattr(args, "equalize_digits", False)),
             pua_colon=args.pua_colon,
             synthetic_italic=args.synthetic_italic,
-            synthetic_italic_angle=args.synthetic_italic_angle,
+            synthetic_italic_angle=float(args.synthetic_italic_angle or -12.0),
         )
         display_name = display_name_for_mode(args.name or result.family, result.mode)
         props = update_module_metadata(
@@ -260,49 +302,18 @@ def build_module(args: argparse.Namespace) -> Path | None:
             injected_colon=result.injected_colon,
             synthesized_italic=result.synthesized_italic,
         )
-        print("=" * 60)
-        print("MFFMv14 module compiled")
-        print("=" * 60)
-        print(f"Module name   : {props.get('name', display_name)}")
-        print(f"Module id     : {props.get('id', '')}")
-        print(f"Version       : {props.get('version', '')} (versionCode {props.get('versionCode', '')})")
-        print(f"Detected mode : {result.mode}")
-        print(f"Font family   : {result.family}")
-        if result.applied_features:
-            print(f"Freezer sets  : {', '.join(result.applied_features)}")
-        print(f"Source faces  : {len(result.faces)}")
-        print(f"Payload fonts : {', '.join(result.payload_files)}")
 
-        family_faces = result.family_faces or {"sans": result.faces}
-        print("Font families :")
-        for cat, label in (
-            ("sans", "Sans-serif"),
-            ("mono", "Monospace"),
-            ("serif", "Serif"),
-            ("bengali", "Bengali"),
-        ):
-            cat_faces = tuple(family_faces.get(cat, ()))
-            if not cat_faces:
-                print(f"  - {label:<10}: not provided")
-                continue
-            display_names = sorted({face.family for face in cat_faces}) or [result.family]
-            fam_display = ", ".join(display_names)
-            fam_mode = "variable" if any(face.variable for face in cat_faces) else "static"
-            source_files = sorted({face.path.name for face in cat_faces})
-            print(f"  - {label:<10}: {fam_display}")
-            print(f"      mode      : {fam_mode}")
-            print(f"      faces     : {len(cat_faces)}")
-            print(f"      source    : {', '.join(source_files)}")
-            for face in cat_faces:
-                axes = ", ".join(face.axes) if face.variable else "static"
-                weight_name = WEIGHT_NAMES.get(face.weight, str(face.weight))
-                print(
-                    f"        * {face.label}: {weight_name} {face.style}"
-                    f"{' condensed' if face.condensed else ''} [{axes}]"
-                )
+        print(flush=True)
+        print("-" * 64, flush=True)
+        print("  Packaging & Signing Flashable Module", flush=True)
+        print("-" * 64, flush=True)
+        print("  * Updating module metadata (module.prop)...", flush=True)
+        print(f"    -> Name        : {props.get('name', display_name)}", flush=True)
+        print(f"    -> ID          : {props.get('id', '')}", flush=True)
+        print(f"    -> Version     : {props.get('version', '')} (code: {props.get('versionCode', '')})", flush=True)
 
         if args.no_zip:
-            print(f"Prepared module files at: {module_dir}")
+            print(f"  * Prepared module files at: {module_dir}", flush=True)
             return None
 
         if result.applied_features and not any(f in slugify(display_name) for f in result.applied_features):
@@ -310,22 +321,44 @@ def build_module(args: argparse.Namespace) -> Path | None:
         else:
             file_slug = slugify(display_name)
 
-        output = args.output_dir.resolve() / f"mffm14-{file_slug}-{props['version']}.zip"
+        output = out_dir / f"mffm14-{file_slug}-{props['version']}.zip"
         if output.exists():
             output.unlink()
+
+        print(f"  * Compressing module archive: {output.name}...", flush=True)
         write_zip(module_dir, output)
+        size_bytes = output.stat().st_size
+        size_str = f"{size_bytes / (1024 * 1024):.2f} MB" if size_bytes >= 1024 * 1024 else f"{size_bytes / 1024:.1f} KB"
+        print(f"    -> Archive created ({size_str}) [OK]", flush=True)
 
         if not args.no_sign:
+            print("  * Signing archive with ZipSignerust...", flush=True)
             try:
                 sign_zip(output, ROOT)
+                print("    -> Signature verified successfully [OK]", flush=True)
             except ZipSignerError as exc:
                 output.unlink(missing_ok=True)
                 raise SystemExit(str(exc)) from exc
-            print("Signature     : verified")
         else:
-            print("Signature     : skipped (--no-sign)")
+            print("  * Signing skipped (--no-sign)", flush=True)
 
-        print(f"Output        : {output}")
+        print(flush=True)
+        print("=" * 64, flush=True)
+        print("  MFFMv14 Module Built Successfully!", flush=True)
+        print("=" * 64, flush=True)
+        print(f"  Module Name   : {props.get('name', display_name)}", flush=True)
+        print(f"  Module ID     : {props.get('id', '')}", flush=True)
+        print(f"  Version       : {props.get('version', '')} (code: {props.get('versionCode', '')})", flush=True)
+        print(f"  Detected Mode : {result.mode}", flush=True)
+        print(f"  Font Family   : {result.family}", flush=True)
+        if result.applied_features:
+            print(f"  Freezer Tags  : {', '.join(result.applied_features)}", flush=True)
+        print(f"  Source Faces  : {len(result.faces)}", flush=True)
+        print(f"  Payload Fonts : {', '.join(result.payload_files)}", flush=True)
+        print(f"  Output File   : {output}", flush=True)
+        print(f"  File Size     : {size_str}", flush=True)
+        print("  Status        : Ready to flash in Magisk / KernelSU / APatch", flush=True)
+        print("=" * 64, flush=True)
         return output
     finally:
         if not args.no_zip:

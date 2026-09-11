@@ -68,8 +68,49 @@ if ! command -v set_perm_recursive >/dev/null 2>&1; then
 fi
 
 LOG_DIR=${LOG_DIR:-/sdcard/MFFM}
-LOG_FILE=${LOG_FILE:-"$LOG_DIR/mffmv14_debug_$(date '+%Y%m%d_%H%M%S' 2>/dev/null || echo current).log"}
 mkdir -p "$LOG_DIR" 2>/dev/null
+
+# If /sdcard/MFFM is not writable (recovery, early boot, storage permission), test fallback locations
+if [ ! -d "$LOG_DIR" ] || ! : >> "$LOG_DIR/.test_write" 2>/dev/null; then
+  for _cand in /data/adb/MFFM /data/adb/modules_update/${MODID:-mffm14} /data/adb /data/local/tmp /cache /tmp; do
+    mkdir -p "$_cand" 2>/dev/null
+    if : >> "$_cand/.test_write" 2>/dev/null; then
+      rm -f "$_cand/.test_write" 2>/dev/null
+      LOG_DIR="$_cand"
+      break
+    fi
+  done
+fi
+rm -f "$LOG_DIR/.test_write" 2>/dev/null
+
+LOG_FILE=${LOG_FILE:-"$LOG_DIR/mffmv14_debug_$(date '+%Y%m%d_%H%M%S' 2>/dev/null || echo current).log"}
+: >> "$LOG_FILE" 2>/dev/null
+
+DEBUG=${DEBUG:-1}
+if [ "$DEBUG" = "1" ] && [ -f "$LOG_FILE" ]; then
+  exec 2>> "$LOG_FILE"
+  PS4='+ [${0##*/}:${LINENO:-?}] '
+  set -x
+fi
+
+# Exit trap ensuring debug log is reported and preserved on unexpected failure
+_mffm_exit_handler() {
+  local _exit_code=$?
+  if [ "$_exit_code" -ne 0 ] && [ "$_MFFM_SUCCESS" != "1" ]; then
+    ui_print ""
+    ui_print "  ! Installation aborted (exit code $_exit_code)"
+    if [ -f "$LOG_FILE" ]; then
+      ui_print "  ! Debug log: $LOG_FILE"
+      if [ -d "/sdcard" ] && [ "$LOG_DIR" != "/sdcard/MFFM" ]; then
+        mkdir -p /sdcard/MFFM 2>/dev/null
+        cp -f "$LOG_FILE" /sdcard/MFFM/ 2>/dev/null
+        ui_print "  ! Copied to: /sdcard/MFFM/${LOG_FILE##*/}"
+      fi
+    fi
+    ui_print ""
+  fi
+}
+trap '_mffm_exit_handler' EXIT
 
 # Clean old debug logs and action logs from previous runs in LOG_DIR (keep only current log)
 if [ -d "$LOG_DIR" ]; then
@@ -77,13 +118,6 @@ if [ -d "$LOG_DIR" ]; then
     [ -f "$old_log" ] || continue
     [ "$old_log" != "$LOG_FILE" ] && rm -f "$old_log" 2>/dev/null
   done
-fi
-
-DEBUG=${DEBUG:-1}
-if [ "$DEBUG" = "1" ] && [ -d "$LOG_DIR" ] && : >> "$LOG_FILE" 2>/dev/null; then
-  exec 2>> "$LOG_FILE"
-  PS4='+ [${0##*/}:${LINENO:-?}] '
-  set -x
 fi
 
 mffm_log_line() {
@@ -110,6 +144,14 @@ fail() {
   ui_print ""
   ui_print "  [ERROR] $1"
   ui_print "  Installation stopped."
+  if [ -f "$LOG_FILE" ]; then
+    ui_print "  Debug log: $LOG_FILE"
+    if [ -d "/sdcard" ] && [ "$LOG_DIR" != "/sdcard/MFFM" ]; then
+      mkdir -p /sdcard/MFFM 2>/dev/null
+      cp -f "$LOG_FILE" /sdcard/MFFM/ 2>/dev/null
+      ui_print "  Copied to: /sdcard/MFFM/${LOG_FILE##*/}"
+    fi
+  fi
   ui_print ""
   exit 1
 }
@@ -3369,9 +3411,17 @@ if [ -d "$MFFM_DIR" ]; then
   done
 fi
 
+_MFFM_SUCCESS=1
+
 rm -rf "$FONT_DIR"
 rm -f /dev/.mffm_stock_*.xml 2>/dev/null
 status_ok "Permissions and cleanup"
+
+if [ -f "$LOG_FILE" ] && [ -d "/sdcard" ] && [ "$LOG_DIR" != "/sdcard/MFFM" ]; then
+  mkdir -p /sdcard/MFFM 2>/dev/null
+  cp -f "$LOG_FILE" /sdcard/MFFM/ 2>/dev/null
+  LOG_FILE="/sdcard/MFFM/${LOG_FILE##*/}"
+fi
 
 ui_print ""
 ui_print "  +----------------------------------------+"
@@ -3389,3 +3439,4 @@ ui_print ""
 ui_print "    Reboot to apply the font."
 ui_print "    Debug log: $LOG_FILE"
 ui_print ""
+
