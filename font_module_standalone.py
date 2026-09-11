@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Literal
@@ -989,16 +990,29 @@ def _otf_to_ttf(tt_font, post_format=2.0, max_err=1.0, reverse_direction=True):
     tt_font.sfntVersion = "\000\001\000\000"
 
 
-def _ensure_ttf(input_path: Path, output_dir: Path) -> Path:
+def _ensure_ttf(
+    input_path: Path,
+    output_dir: Path,
+    index: int | None = None,
+    total: int | None = None,
+    *,
+    quiet: bool = False,
+) -> Path:
     from fontTools.ttLib import TTFont
     output_path = output_dir / (input_path.stem + ".ttf")
+    prefix = f"[{index}/{total}] " if index is not None and total is not None else ""
+
     if input_path.suffix.lower() in {".ttc", ".otc"}:
+        if not quiet:
+            print(f"  * {prefix}Extracting TrueType Collection: {input_path.name}...", flush=True)
         TTCollection, _ = require_fonttools()
         try:
             collection = TTCollection(str(input_path))
             for i in range(len(collection.fonts)):
                 sub_path = output_dir / f"{input_path.stem}_{i}.ttf"
                 collection.fonts[i].save(str(sub_path))
+            if not quiet:
+                print(f"    -> Extracted {len(collection.fonts)} face(s) from collection [OK]", flush=True)
             return output_dir / f"{input_path.stem}_0.ttf"
         except Exception:
             shutil.copy2(input_path, output_path)
@@ -1018,12 +1032,22 @@ def _ensure_ttf(input_path: Path, output_dir: Path) -> Path:
 
     needs_save = False
     if font.flavor is not None:
+        if not quiet:
+            print(f"  * {prefix}Decompressing WOFF/WOFF2 font: {input_path.name}...", flush=True)
         font.flavor = None
         needs_save = True
+
     if font.sfntVersion == "OTTO":
-        log.info(f"Converting CFF outlines to TrueType outlines for {input_path.name}")
+        if not quiet:
+            print(f"  * {prefix}Converting CFF outlines to TrueType: {input_path.name}...", flush=True)
+        t0 = time.time()
         _otf_to_ttf(font)
+        elapsed = time.time() - t0
+        if not quiet:
+            print(f"    -> Converted cubic to quadratic curves ({elapsed:.1f}s) [OK]", flush=True)
         needs_save = True
+    elif not quiet and not needs_save:
+        print(f"  * {prefix}Processing TrueType font: {input_path.name}... [OK]", flush=True)
 
     if needs_save or input_path.suffix.lower() != ".ttf":
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1261,30 +1285,43 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
     fonts = []
     mono_index: int | None = None
 
+    print(f"  * Mode: static ({len(ordered)} Sans face(s) selected)", flush=True)
+
     if len(ordered) == 1 and not optional_faces:
         face = ordered[0]
         output_name = "DroidSans.ttf"
+        w_name = WEIGHT_NAMES.get(face.weight, str(face.weight))
+        print(f"    -> Harmonizing metrics for single face: {w_name} {face.style} ({face.weight})...", flush=True)
         font = _open_font(face)
         try:
             _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
             font.save(str(files_dir / output_name))
         finally:
             font.close()
+        print(f"    -> Saved {output_name} to module payload [OK]", flush=True)
 
         xml = _font_xml(output_name, face.weight, face.style)
         entries = [(face.weight, face.style, xml)]
+        print("  * Writing Android system font XML manifests (sans.xml, condensed.xml, serif.xml)...", flush=True)
         _write_fragments(files_dir, entries, [])
+        print("    -> Font manifests written successfully [OK]", flush=True)
         return ordered, (output_name,), None
 
     try:
-        for face in ordered:
+        for idx, face in enumerate(ordered, 1):
+            weight_name = WEIGHT_NAMES.get(face.weight, str(face.weight))
+            cond_str = " condensed" if face.condensed else ""
+            print(f"    -> [{idx}/{len(ordered)}] Harmonizing metrics: {weight_name} {face.style}{cond_str} ({face.weight})...", flush=True)
             font = _open_font(face)
             _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
             fonts.append(font)
 
         face_idx_maps: dict[str, dict[int, int]] = {}
         for cat_key in OPTIONAL_CATEGORIES:
-            for face in optional_faces.get(cat_key, ()):
+            cat_list = optional_faces.get(cat_key, ())
+            if cat_list:
+                print(f"    -> Harmonizing {FONT_CATEGORIES[cat_key].label} ({len(cat_list)} face(s))...", flush=True)
+            for face in cat_list:
                 font = _open_font(face)
                 _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
                 idx = len(fonts)
@@ -1294,9 +1331,11 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
                 fonts.append(font)
 
         output_name = "DroidSans.ttf"
+        print(f"  * Bundling TrueType Collection: {output_name} ({len(fonts)} font face(s))...", flush=True)
         collection = TTCollection()
         collection.fonts = fonts
         collection.save(str(files_dir / output_name))
+        print(f"    -> Collection {output_name} saved to module payload [OK]", flush=True)
     finally:
         for font in fonts:
             font.close()
@@ -1316,7 +1355,9 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
     if not normal:
         normal = list(condensed)
 
+    print("  * Writing Android system font XML manifests (sans.xml, condensed.xml, serif.xml)...", flush=True)
     _write_fragments(files_dir, normal, condensed, has_custom_serif=bool(optional_faces.get("serif")))
+    print("    -> Font manifests written successfully [OK]", flush=True)
     return ordered, (output_name,), mono_index
 
 
@@ -1356,6 +1397,8 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
     var_fonts = []
     mono_index: int | None = None
 
+    print(f"  * Mode: variable", flush=True)
+    print(f"    -> Upright variable face : {upright.label}", flush=True)
     upright_font = _open_font(upright)
     _process_font(upright_font, keep_hinting=keep_hinting, prefix_family=prefix_family)
     var_fonts.append(upright_font)
@@ -1363,6 +1406,7 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
 
     italic_idx = 0
     if italic != upright:
+        print(f"    -> Italic variable face  : {italic.label}", flush=True)
         italic_font = _open_font(italic)
         _process_font(italic_font, keep_hinting=keep_hinting, prefix_family=prefix_family)
         italic_idx = len(var_fonts)
@@ -1370,7 +1414,10 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
 
     face_idx_maps: dict[str, dict[int, int]] = {}
     for cat_key in OPTIONAL_CATEGORIES:
-        for face in optional_faces.get(cat_key, ()):
+        cat_faces = optional_faces.get(cat_key) or []
+        if cat_faces:
+            print(f"    -> Harmonizing {FONT_CATEGORIES[cat_key].label} ({len(cat_faces)} face(s))...", flush=True)
+        for face in cat_faces:
             font = _open_font(face)
             _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
             idx = len(var_fonts)
@@ -1378,17 +1425,18 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
             if cat_key == "mono" and mono_index is None:
                 mono_index = idx
             var_fonts.append(font)
-        cat_faces = optional_faces.get(cat_key) or []
         if cat_faces:
             lines = _generate_full_family_xml(cat_faces, output_name, lambda f, ck=cat_key: face_idx_maps[ck][id(f)])
             (files_dir / FONT_CATEGORIES[cat_key].fragment_name).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
+    print(f"  * Saving variable font collection: {output_name} ({len(var_fonts)} face(s))...", flush=True)
     collection = TTCollection()
     collection.fonts = var_fonts
     collection.save(str(files_dir / output_name))
     for font in var_fonts:
         font.close()
     payload = [output_name]
+    print(f"    -> Collection {output_name} saved to module payload [OK]", flush=True)
 
     entries: list[tuple[int, str, str]] = []
     for style, face, idx in (("normal", upright, upright_idx), ("italic", italic, italic_idx)):
@@ -1400,7 +1448,9 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
     if not entries:
         raise SystemExit("The variable font has no usable wght axis values between 100 and 900")
 
+    print("  * Writing Android system font XML manifests (sans.xml, condensed.xml, serif.xml)...", flush=True)
     _write_fragments(files_dir, entries, [], has_custom_serif=bool(optional_faces.get("serif")))
+    print("    -> Font manifests written successfully [OK]", flush=True)
     return [upright] + ([italic] if italic != upright else []), tuple(payload), mono_index
 
 
@@ -1834,10 +1884,31 @@ def compile_fonts(
     temp_fonts_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        for path, category in _collect_source_entries(fonts_dir):
+        source_entries = _collect_source_entries(fonts_dir)
+        if not source_entries:
+            expected = ", ".join(f"'{fonts_dir / FONT_CATEGORIES[key].default_dir}'" for key in CATEGORY_ORDER)
+            raise SystemExit(
+                f"No font files found in {expected}.\n"
+                f"Please place your primary body font file(s) into '{fonts_dir / FONT_CATEGORIES['sans'].default_dir}'."
+            )
+
+        print("[1/4] Scanning Source Fonts...", flush=True)
+        for key in CATEGORY_ORDER:
+            cat_entries = [p for p, c in source_entries if c == key]
+            if cat_entries:
+                print(f"  - {FONT_CATEGORIES[key].label:<12}: {len(cat_entries)} font file(s)", flush=True)
+                for p in cat_entries:
+                    print(f"      * {p.name}", flush=True)
+            else:
+                print(f"  - {FONT_CATEGORIES[key].label:<12}: not provided", flush=True)
+        print(flush=True)
+
+        total_sources = len(source_entries)
+        print(f"[2/4] Preparing Font Outlines ({total_sources} file(s))...", flush=True)
+        for idx, (path, category) in enumerate(source_entries, 1):
             sub_dir = temp_fonts_dir / category
             sub_dir.mkdir(parents=True, exist_ok=True)
-            _ensure_ttf(path, sub_dir)
+            _ensure_ttf(path, sub_dir, index=idx, total=total_sources)
 
         all_faces = discover_faces(temp_fonts_dir)
         separated = _separate_faces_by_category(all_faces)
@@ -1848,14 +1919,32 @@ def compile_fonts(
         serif_ttf_paths = sorted({face.path for face in serif_faces})
         bengali_ttf_paths = sorted({face.path for face in bengali_faces})
 
+        primary_faces = faces or bengali_faces or serif_faces or mono_faces
+        if not primary_faces:
+            raise SystemExit("No valid font faces were found in input subdirectories.")
+        mode = detect_mode(primary_faces, requested_mode)
+        family = transform_family_name(next(iter({face.family for face in primary_faces}))) if prefix_family else next(iter({face.family for face in primary_faces}))
+
+        print(flush=True)
+        print(f"  * Detected Family : {family}", flush=True)
+        print(f"  * Detected Mode   : {mode}", flush=True)
+        print(flush=True)
+
+        print("[3/4] Applying Typography & Clock Enhancements...", flush=True)
+        has_enhancements = False
+
         if synthetic_italic:
             has_ital = any(font_has_italic_support(p) for p in sans_ttf_paths)
             if not has_ital and sans_ttf_paths:
+                has_enhancements = True
+                print(f"  * Synthesizing companion italic faces ({synthetic_italic_angle:.1f}° slant)...", flush=True)
                 for font_path in list(sans_ttf_paths):
                     out_ital_path = font_path.parent / f"{font_path.stem}-Italic{font_path.suffix}"
+                    print(f"    -> Slanting {font_path.name}...", flush=True)
                     synthesize_italic_font(font_path, out_ital_path, angle=synthetic_italic_angle or -12.0)
                     if out_ital_path.exists() and out_ital_path not in sans_ttf_paths:
                         sans_ttf_paths.append(out_ital_path)
+                print("    -> Companion italics synthesized successfully [OK]", flush=True)
 
         applied_features: list[str] = []
         category_paths = tuple(
@@ -1886,6 +1975,11 @@ def compile_fonts(
             serif_feats = parse_feat(serif_features) if serif_features is not None else sans_feats
             beng_feats = parse_feat(bengali_features) if bengali_features is not None else sans_feats
 
+            all_feats_to_freeze = list(dict.fromkeys(sans_feats + mono_feats + serif_feats + beng_feats))
+            if all_feats_to_freeze:
+                has_enhancements = True
+                print(f"  * Freezing OpenType feature tags [{', '.join(all_feats_to_freeze)}]...", flush=True)
+
             for p in sans_ttf_paths:
                 freeze_font_features(p, sans_feats)
             for p in mono_ttf_paths:
@@ -1895,7 +1989,9 @@ def compile_fonts(
             for p in bengali_ttf_paths:
                 freeze_font_features(p, beng_feats)
 
-            applied_features.extend(list(dict.fromkeys(sans_feats + mono_feats + serif_feats + beng_feats)))
+            applied_features.extend(all_feats_to_freeze)
+            if all_feats_to_freeze:
+                print("    -> Feature freezing complete [OK]", flush=True)
         elif should_prompt:
             for colon_key, colon_paths, colon_label in category_paths:
                 if colon_choice[colon_key] is None and colon_paths:
@@ -1941,9 +2037,13 @@ def compile_fonts(
                             freeze_font_features(p, feat_beng)
                         applied_features.extend(feat_beng)
 
-        for colon_key, colon_paths, _colon_label in category_paths:
+        has_colon_action = False
+        for colon_key, colon_paths, colon_label in category_paths:
             if colon_choice[colon_key] and colon_paths:
                 eff_offset = colon_offsets.get(colon_key, colon_offset)
+                shift_label = f"{eff_offset:+d} font units" if eff_offset else "optical center (0)"
+                print(f"  * Injecting centered clock colon in {colon_label} ({len(colon_paths)} face(s))...", flush=True)
+                print(f"    -> Target: {colon_alignment} | Shift: {shift_label} | Rule: {colon_rule}", flush=True)
                 for font_path in colon_paths:
                     inject_centered_colon(
                         font_path,
@@ -1951,14 +2051,27 @@ def compile_fonts(
                         offset=eff_offset,
                         rule=colon_rule,
                     )
+                has_colon_action = True
+                has_enhancements = True
+        if has_colon_action:
+            print("    -> Centered colon injected successfully [OK]", flush=True)
 
         if equalize_digits:
+            has_enhancements = True
+            print(f"  * Equalizing digit advance widths (0-9) across {len(sans_ttf_paths)} Sans face(s)...", flush=True)
             for font_path in sans_ttf_paths:
                 equalize_clock_digits(font_path)
+            print("    -> Digit advance widths equalized and contours centered [OK]", flush=True)
 
         if pua_colon:
+            has_enhancements = True
+            print(f"  * Mapping clock colon to lockscreen PUA codepoints (U+EE01, U+2236, U+2982)...", flush=True)
             for font_path in sans_ttf_paths:
                 copy_colon_to_pua(font_path)
+            print("    -> PUA codepoints mapped across cmap tables [OK]", flush=True)
+
+        if not has_enhancements:
+            print("  * Standard typography layout (no extra overrides requested)", flush=True)
 
         all_faces = discover_faces(temp_fonts_dir)
         separated = _separate_faces_by_category(all_faces)
@@ -1976,6 +2089,9 @@ def compile_fonts(
         if prefix_family:
             family = transform_family_name(family)
         optional_faces = {key: separated[key] for key in OPTIONAL_CATEGORIES}
+
+        print(flush=True)
+        print("[4/4] Compiling Module Payload & Harmonizing Metrics...", flush=True)
         if mode == "static":
             selected, payload, mono_index = _compile_static(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, optional_faces=optional_faces)
         else:
@@ -2054,7 +2170,9 @@ def compile_fonts(
                         f"VF_BENGALI_WEIGHTS={shell_quote(_supported_weights(upright_beng))}",
                     )
                 )
+        print("  * Writing module configuration: font-config.sh...", flush=True)
         (module_dir / "font-config.sh").write_text("\n".join(config) + "\n", encoding="utf-8", newline="\n")
+        print("    -> font-config.sh generated successfully [OK]", flush=True)
         family_faces = {
             "sans": tuple(faces),
             "mono": tuple(mono_faces),
