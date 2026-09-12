@@ -79,20 +79,11 @@ def build_template_zip(output_dir: Path | None = None) -> Path:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Package MFFMv14 Template ZIPs")
+    parser = argparse.ArgumentParser(description="Package MFFMv14 Standalone Template ZIP")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist", help="destination directory for template ZIP")
-    parser.add_argument("--standalone", action="store_true", help="package MFFMv14-Standalone-Template.zip")
-    parser.add_argument("--all", action="store_true", help="package both source and standalone template ZIPs")
     args = parser.parse_args()
-    if args.standalone:
-        from build_standalone import package_standalone_template_zip
-        package_standalone_template_zip(args.output_dir)
-    elif args.all:
-        build_template_zip(args.output_dir)
-        from build_standalone import package_standalone_template_zip
-        package_standalone_template_zip(args.output_dir)
-    else:
-        build_template_zip(args.output_dir)
+    from build import package_standalone_template_zip
+    package_standalone_template_zip(args.output_dir)
     return 0
 
 

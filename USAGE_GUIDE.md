@@ -1,329 +1,302 @@
-# MFFMv14 — User & Configuration Guide
-### Complete Handbook for Creating, Flashing, and Customizing Android Font Modules
+# MFFMv14 Standalone Module — User & Configuration Guide
+### Complete Handbook for Building, Flashing, and Customizing Readymade Android Font Modules (Zero On-Device Dependencies)
 
 ---
-
-> [!TIP]
-> ### 📖 Standalone Module Handbook Available
-> Building a standalone font module with **zero on-device dependencies** (no Python, no `mffm-runtime` needed)?
-> Please see the dedicated **[USAGE_GUIDE_STANDALONE.md](USAGE_GUIDE_STANDALONE.md)** and **[CHANGELOG_STANDALONE.md](CHANGELOG_STANDALONE.md)**.
-
----
-
-> [!IMPORTANT]
-> ### ⚠️ Mandatory Prerequisite: Install MFFM Runtime First!
-> Before flashing any MFFMv14 font module, you **MUST** first install the standalone **`mffm-runtime-YYYY.MM.DD.zip`** module in your root manager (**Magisk**, **KernelSU**, or **APatch**).
-> - **Why is it required?** The runtime supplies the on-device font transformation engine (`fontTools`, `brotli`, `cu2qu`, metrics fixers, and TTC generator).
-> - **Install Once**: You only install `mffm-runtime` once. All subsequent MFFMv14 font modules utilize this shared engine.
-> - **Fatal Requirement**: Font module installation will strictly abort with an alert if the MFFM Runtime is missing.
-> - **Download**: Official releases are available on GitHub at **[github.com/mistu01/MFFMv14/releases](https://github.com/mistu01/MFFMv14/releases)**.
-
----
-
-## ⚡ Quick Start: Creating Your Font Module
-
-You can build an MFFMv14 font module either directly on your phone using any file manager, on your PC with standard ZIP tools, or using the PC Python build script.
-
----
-
-### Method 1: On-Device / File Manager (Easiest — No Tools or Python Needed)
-> **Best for:** Anyone on Android using a file manager like **MiXplorer**, **MT Manager**, **ZArchiver**, or **Solid Explorer**, or on PC/Mac using standard ZIP archive tools.
-
-1. **Verify Runtime**: Confirm **`mffm-runtime`** is installed and active in Magisk, KernelSU, or APatch.
-2. **Download Template**: Extract **`MFFMv14-Source-Template.zip`** into a folder on your phone or PC.
-3. **Add Primary Font**: Place your font file(s) into the **`Files/Sans/`** directory.
-   - *Supported formats:* `.ttf`, `.otf`, `.ttc`, `.otc`, `.woff`, `.woff2`.
-   - *Single variable font:* e.g. `Files/Sans/MyFont[wght].ttf`.
-   - *Static family weights:* e.g. `Files/Sans/Regular.ttf`, `Files/Sans/Bold.ttf`, `Files/Sans/Italic.ttf`, etc.
-4. **Add Optional Families (Optional)**:
-   - Monospace/Coding font: place into `Files/Monospace/`
-   - Serif font: place into `Files/Serif/`
-   - Bengali font: place into `Files/Bengali/`
-5. **Customize Details (Optional)**: Open **`module.prop`** in any text editor:
-   ```ini
-   id=mffm14_myfont
-   name=[MFFMv14] My Font Name
-   version=2026.09.08
-   versionCode=260908
-   author=Your Name
-   description=Custom font module powered by MFFMv14 engine.
-   ```
-6. **Package and Flash**:
-   - Select all files and folders inside the extracted folder:
-     `Files`, `META-INF`, `customize.sh`, `module.prop`, `service.sh`, `action.sh`, `post-mount.sh`, `uninstall.sh`.
-   - Compress them into a standard **ZIP** file. *(Note: No external configuration scripts or helper files are needed — MFFMv14 discovers font properties autonomously).*
-   - Flash the ZIP directly in **Magisk**, **KernelSU**, or **APatch**, then reboot!
-
----
-
-### Method 2: PC Build Script (`build.py`) — Runtime-Oriented
-> **Best for:** Font designers and power users who want dynamic on-device re-configuration with the shared `mffm-runtime` engine.
-
-1. Clone or download this repository.
-2. Install dependencies:
-   ```sh
-   pip install -r requirements.txt
-   ```
-3. Place your fonts in `Fonts/Sans/` (or `Files/Sans/`). Optional families go in `Fonts/Monospace/`, `Fonts/Serif/`, `Fonts/Bengali/`.
-4. Run the builder:
-   ```sh
-   python build.py
-   ```
-5. Your signed, flashable module ZIP will be generated in `dist/`.
-
----
-
-### Method 3: Standalone / Readymade Builder (`build_standalone.py`) — Zero Runtime Prerequisite
-> **Best for:** Generating self-contained font modules where all font compilation (`DroidSans.ttf`, OpenType feature freezing, metrics harmonization, and XML fragments) is performed upfront at build time.
-> - **No Runtime Needed:** The resulting module does **not** require `mffm-runtime` or Python on the device.
-> - **Instant Flash:** Installation completes in 1–2 seconds with zero on-device processing.
-
-1. Place your fonts in `Fonts/Sans/` (and optionally `Fonts/Monospace/`, `Fonts/Serif/`, `Fonts/Bengali/`).
-2. Run the standalone builder:
-   ```sh
-   python build_standalone.py
-   ```
-3. The pre-compiled, self-contained module ZIP is generated in `dist/` and is immediately flashable in Magisk, KernelSU, or APatch.
 
 > [!NOTE]
-> **External Fonts Standard in Standalone Modules (`/sdcard/MFFM/`):**
-> If you provide external fonts on your device in `/sdcard/MFFM/` (or its subdirectories `Serif/`, `Bengali/`, `Monospace/`), the standalone installer applies standard fallback face counts with zero on-device Python/TTC overhead:
-> - **Serif**: 4 faces standard (`NotoSerif-Regular.ttf`, `NotoSerif-Italic.ttf`, `NotoSerif-Bold.ttf`, `NotoSerif-BoldItalic.ttf`).
-> - **Bengali**: 2 faces standard (`NotoSansBengali-VF.ttf` 400 Regular, `NotoSansBengaliUI-VF.ttf` 700 Bold).
-> - **Monospace**: 1 face standard (`DroidSansMono.ttf` / `CutiveMono.ttf` 400 Regular).
-> - **Variable Fonts (VF)**: Automatically scanned for variation axes (`fvar`), generating full 100–900 weight mapping XML and creating/updating `/sdcard/MFFM/*.conf` automatically.
+> ### ⚡ 100% Dependency-Free Experience
+> Unlike the dynamic runtime workflow, the **MFFMv14 Standalone Module** requires **NO on-device Python**, **NO fontTools**, and **NO `mffm-runtime` prerequisite** on your Android device.
+> - All font processing, TrueType Collection (TTC) bundling, OpenType feature freezing, metrics harmonization, and system XML fragment generation are performed **upfront at build time** on your PC or in mobile Termux.
+> - The generated module installs in **under 2 seconds** and is ready immediately upon reboot.
 
 ---
 
-### Method 4: Mobile Termux One-Shot Builder (`termux-build.sh`)
-> **Best for:** Users building font modules directly on Android via the **Termux** terminal app without a PC.
+## 📑 Table of Contents
+1. [Quick Start: Building Your Standalone Module](#-quick-start-building-your-standalone-module)
+   - [Method 1: PC Builder (Recommended)](#method-1-pc-builder-recommended)
+   - [Method 2: Mobile Termux One-Shot Builder](#method-2-mobile-termux-one-shot-builder)
+2. [Font Directory Structure & Categories](#-font-directory-structure--categories)
+3. [Compiler CLI Options & Customization](#-compiler-cli-options--customization)
+   - [Clock Colon Customization & Shift](#clock-colon-customization--shift)
+   - [Digit Equalization (Wobble-Free Clocks)](#digit-equalization-wobble-free-clocks)
+   - [Lockscreen Clock PUA Colon](#lockscreen-clock-pua-colon)
+   - [OpenType Feature Freezing](#opentype-feature-freezing)
+   - [Synthetic Italics](#synthetic-italics)
+4. [External Fonts on Device (`/sdcard/MFFM/`)](#-external-fonts-on-device-sdcardmffm)
+   - [Standard Face Counts for External Static Fonts](#standard-face-counts-for-external-static-fonts)
+   - [External Variable Font Tuning (`.conf`)](#external-variable-font-tuning-conf)
+5. [Root Manager Compatibility](#-root-manager-compatibility)
+6. [Troubleshooting & FAQ](#-troubleshooting--faq)
 
-1. Install [Termux](https://github.com/termux/termux-app/releases) on your phone.
-2. Clone or copy MFFMv14 into your Termux home directory (`~/MFFMv14`).
-3. Place your fonts in `Fonts/Sans/` (or specify `--fonts-dir` pointing to `/sdcard/...`).
-4. Run:
-   ```sh
+---
+
+## 🚀 Quick Start: Building Your Standalone Module
+
+You can compile a standalone MFFMv14 module on a PC (Windows, macOS, Linux) or directly on an Android device using the Termux terminal.
+
+---
+
+### Method 1: PC Builder (Recommended)
+> **Best for:** Designers and users who want high compilation speed, advanced CLI switches, and automated zip signing.
+
+1. **Prerequisites**: Ensure Python 3.8+ is installed on your system.
+2. **Install Dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+   *(Installs `fonttools`, `cryptography`, `brotli`, and `opentype-feature-freezer`).*
+3. **Add Your Fonts**: Place your font files into the **`Fonts/Sans/`** directory.
+   - *Variable Font:* e.g. `Fonts/Sans/Inter[opsz,wght].ttf`
+   - *Static Family:* e.g. `Fonts/Sans/Regular.ttf`, `Fonts/Sans/Bold.ttf`, `Fonts/Sans/Italic.ttf`, etc.
+   - *Optional Categories:*
+     - Monospace / Coding font: place in `Fonts/Monospace/`
+     - Serif font: place in `Fonts/Serif/`
+     - Bengali font: place in `Fonts/Bengali/`
+4. **Compile the Module**:
+   ```bash
+   python build.py
+   # or: python build_standalone.py
+   ```
+5. **Flash the Output**:
+   The signed, flashable ZIP is written to `dist/` (e.g., `dist/mffm14-inter-2026.09.11.zip`). Transfer it to your device and flash it directly in **Magisk**, **KernelSU**, or **APatch**, then reboot.
+
+---
+
+### Method 2: Mobile Termux One-Shot Builder
+> **Best for:** Users building directly on Android without access to a computer.
+
+1. Install [Termux](https://github.com/termux/termux-app/releases) from GitHub or F-Droid.
+2. Extract `MFFMv14-Standalone-Template.zip` into your Termux home directory:
+   ```bash
+   cd ~
+   unzip MFFMv14-Standalone-Template.zip -d MFFMv14
+   cd MFFMv14
+   ```
+3. Copy your font files into `Fonts/Sans/` (e.g., from `/sdcard/Download/`):
+   ```bash
+   cp ~/storage/shared/Download/MyFont*.ttf Fonts/Sans/
+   ```
+4. Run the builder script:
+   ```bash
    sh termux-build.sh
    ```
-   - Automatically installs required dependencies (`python`, `fonttools`, `brotli`, `openssl`).
-   - Compiles a readymade standalone module via `build_standalone.py` (or pass `--runtime` to build a dynamic module via `build.py`).
-   - Automatically prompts to flash the finished ZIP using your active root manager (`magisk`, `ksud`, or `apd`) via `su`.
+   - Automatically installs the required Python and fontTools packages in Termux.
+   - Builds the standalone font module.
+   - Prompts to install the module directly via root (`su`) with Magisk, KernelSU, or APatch.
 
 ---
 
-## 🎛️ On-Device Tuning: Customizing `/sdcard/MFFM/*.conf`
+## 📂 Font Directory Structure & Categories
 
-Every time you flash an MFFMv14 font module, an editable configuration file is created or updated at:
+The builder automatically categorizes and routes fonts based on their folder or file naming:
+
 ```
-/sdcard/MFFM/MFFMv14_<FontFamily>_<ID>.conf
+MFFMv14/
+├── Fonts/
+│   ├── Sans/         <-- Primary system font (Required)
+│   ├── Monospace/    <-- Terminal & code font (Optional)
+│   ├── Serif/        <-- Serif / news font (Optional)
+│   └── Bengali/      <-- Regional Bengali font (Optional)
+├── dist/             <-- Output flashable ZIP modules
+├── build.py          <-- CLI entrypoint
+├── build_standalone.py
+├── termux-build.sh
+└── requirements.txt
 ```
 
-> [!TIP]
-> **Do I have to edit this file?**
-> **No!** All settings are 100% optional. The module works out of the box with safe, production-tuned defaults.
-> If you wish to customize features (such as enabling a centered clock colon, slashed zero, or equalizing clock digits), edit this file with any text editor (such as MiXplorer, MT Manager, or QuickEdit) and **re-flash the font module ZIP** in your root manager.
+### Supported Font Formats
+The standalone builder natively accepts:
+- TrueType fonts (`.ttf`)
+- OpenType fonts (`.otf` — CFF/PostScript outlines are automatically converted to TrueType quadratics)
+- TrueType Collections (`.ttc`, `.otc`)
+- Web fonts (`.woff`, `.woff2`)
 
 ---
 
-### Configuration Parameters Reference
+## ⚙️ Compiler CLI Options & Customization
 
-| Parameter | Default | Recommended | Description / Purpose |
+The standalone builder provides powerful options to customize font rendering and behavior:
+
+```bash
+python build.py [OPTIONS]
+# or: python build_standalone.py [OPTIONS]
+```
+
+### General Options
+- `--fonts-dir DIR`: Path to custom fonts directory (default: `./Fonts`).
+- `--mode {auto,static,variable}`: Force font mode detection (default: `auto`).
+- `--name NAME`: Override module display name.
+- `--version VER`: Override module version string (default: `YYYY.MM.DD`).
+- `--version-code CODE`: Override numeric `versionCode` (default: `YYMMDD`).
+- `--output-dir DIR`: Custom directory for generated ZIP (default: `./dist`).
+- `--no-sign`: Create an unsigned ZIP (skips ZipSignerust).
+- `--keep-hinting`: Preserve TrueType hinting instructions (by default, hinting is stripped for cleaner rendering and smaller file size).
+- `--no-prefix`: Do not prepend `MFFM` or `Mistu` to internal font family names.
+- `--inspect`: Report detected fonts, weights, and axes without building.
+
+---
+
+### Clock Colon Customization & Shift
+
+Many modern clock widgets (lockscreen, status bar, and always-on display) display the time as `12:30`. MFFMv14 can automatically generate and inject an optically centered colon between digits (`between_digits`).
+
+- **Vertical Colon Shift / Offset**:
+  If the default centered colon sits slightly too high or too low for your device's clock layout:
+  ```bash
+  python build.py --colon-offset 25   # Shift colon UP by 25 font units
+  python build.py --colon-offset -30  # Shift colon DOWN by 30 font units
+  ```
+  *(Alias: `--colon-shift`)*
+- **Colon Alignment Reference**:
+  ```bash
+  python build.py --colon-alignment center      # Mathematical center of digit bounding box (default)
+  python build.py --colon-alignment cap_height  # Aligned to font Cap Height
+  python build.py --colon-alignment x_height    # Aligned to font x-Height
+  ```
+- **Contextual Rule**:
+  ```bash
+  python build.py --colon-rule between_digits   # Replace only between numbers (e.g. 12:30) (default)
+  python build.py --colon-rule after_digit      # Replace after any number (e.g. 12:)
+  python build.py --colon-rule always           # Always replace colon everywhere
+  ```
+- **Disable Centered Colon**:
+  ```bash
+  python build.py --no-centered-colon
+  ```
+
+---
+
+### Digit Equalization (Wobble-Free Clocks)
+
+Some proportional fonts have digits with differing advance widths (for instance, `1` is much narrower than `8`). As the clock ticks from `11:59` to `12:00`, the clock numbers can wobble or shift horizontally.
+
+To solve this, enable digit equalization:
+```bash
+python build.py --equalize-digits
+```
+- Equalizes advance widths of all digits (`0`–`9`) to the widest digit.
+- Centers each digit outline optically within its new advance slot.
+- Ensures stable, wobble-free lockscreen and status bar clocks.
+
+---
+
+### Lockscreen Clock PUA Colon
+
+Certain OEM custom skins (HyperOS, One UI, OxygenOS, Nothing OS, Google Pixel) query Private Use Area (PUA) codepoints (`U+EE01`) or ratio symbols (`U+2236`, `U+2982`) for lockscreen clocks.
+
+Enable PUA colon mapping:
+```bash
+python build.py --pua-colon
+```
+This maps the colon glyph across all font cmap tables to `U+EE01`, `U+2236`, and `U+2982`.
+
+---
+
+### OpenType Feature Freezing
+
+Permanently freeze OpenType features into the font glyph tables (e.g., slashed zero `zero`, tabular numbers `tnum`, stylistic sets `ss01`, `cv01`):
+
+```bash
+python build.py --features zero,ss01
+```
+
+Family-specific feature freezing:
+- `--mono-features TAGS`: Monospace font family.
+- `--serif-features TAGS`: Serif font family.
+- `--bengali-features TAGS`: Bengali font family.
+
+---
+
+### Synthetic Italics
+
+If your primary Sans-serif font only provides upright weights and lacks italic faces:
+```bash
+python build.py --synthetic-italic
+```
+- Automatically generates slanted companion italic faces for all available upright weights.
+- Adjust angle using `--synthetic-italic-angle` (default: `-12.0` degrees).
+
+---
+
+### Saving and Loading Build Configurations
+
+Save your favorite build options into `.mffm-build.json` for repeated builds:
+```bash
+python build.py --features zero,tnum --colon-offset 20 --equalize-digits --save-config
+```
+Future runs will automatically read `.mffm-build.json` without needing CLI arguments.
+
+---
+
+## 📱 External Fonts on Device (`/sdcard/MFFM/`)
+
+Even though the standalone module is pre-compiled, you can dynamically override fonts after installation by placing custom font files directly into `/sdcard/MFFM/` on your phone!
+
+### Standard Face Counts for External Static Fonts
+When the standalone installer detects external static fonts in `/sdcard/MFFM/`, it configures them using standardized face counts without requiring any on-device Python or TTC bundling:
+
+| Category | Target Directory | Standard Face Count | Selected Faces |
 | :--- | :--- | :--- | :--- |
-| `ENABLE_CENTERED_COLON` | `no` | `yes` (if clock colon looks low) | Injects a vertically centered colon glyph for clock times (`12:30`) on status bars and lockscreens. *(Omitted if font already has one).* |
-| `COLON_ALIGNMENT` | `center` | `center` | Target height alignment: `center` (digits midpoint), `cap_height` (capitals), or `x_height` (lowercase). |
-| `COLON_OFFSET` | `0` | `0` | Fine vertical offset in font units (+/-) for OEM lockscreens. |
-| `COLON_RULE` | `between_digits` | `between_digits` | Rule condition: `between_digits` (`12:30`), `after_digit` (for stacked 2-line clocks `12:` / `30`), or `always`. |
-| `ENABLE_LOCKSCREEN_COLON_PUA` | `false` | `false` (or `true` if lockscreen shows `[?]`) | Maps the colon / centered colon glyph to Android lockscreen clock PUA codepoints (`U+EE01`, `U+2236`, `U+2982`) to resolve missing glyph boxes on OEM lockscreens. *(Omitted if font already has them).* |
-| `ENABLE_SYNTHETIC_ITALIC` | `false` | `true` (if font lacks italics) | Algorithmically synthesizes and bundles slanted italic companion faces for Sans-serif if the supplied font has no native italic faces or slant axes. *(Omitted if font already has italics).* |
-| `SYNTHETIC_ITALIC_ANGLE` | `-12` | `-12` | Slant angle in degrees for synthetic italic (negative slants forward to the right). |
-| `ENABLE_TABULAR_CLOCK_DIGITS` | `no` | `yes` (if clock wobbles) | Equalizes digit widths (0–9) so lockscreen clocks never jump horizontally as minutes or seconds change. |
-| `METRICS_MODE` | `compact` | `compact` | Vertical metrics: `compact` forces tight FFIX3; `safe` prevents accent clipping with zero monospace inflation; `preserve` leaves original metrics untouched. |
-| `*_FREEZE_FEATURES` | *(empty)* | `ss01,zero` (user choice) | Freezes OpenType layout features (like slashed zero `0` or stylistic sets) permanently into default characters. |
-| `SANS_WGHT` / `SANS_WDTH` | *(auto)* | Leave unless custom | Explicit numeric weights (100–900) mapped to Android system font weight slots. |
+| **Serif** | `/sdcard/MFFM/Serif/` | **4 faces** | `Regular` (400 normal), `Italic` (400 italic), `Bold` (700 normal), `BoldItalic` (700 italic) |
+| **Bengali** | `/sdcard/MFFM/Bengali/` | **2 faces** | `Regular` (400 normal), `Bold` (700 normal) |
+| **Monospace**| `/sdcard/MFFM/Monospace/` | **1 face** | `Regular` (400 normal) |
 
 ---
 
-### Detailed Feature Guides
+### External Variable Font Tuning (`.conf`)
 
-#### 1. 🕒 Centered Clock Colon (`ENABLE_CENTERED_COLON`)
-- **The Problem**: Standard fonts only provide a punctuation colon (`:`), designed to sit low near the baseline for sentence punctuation (e.g. `"Note: Hello"`). On lockscreens and status bars, clocks like `12:30` appear sunken and uneven.
-- **Intelligent Auto-Detection**: The installer automatically performs an exhaustive audit of your font for existing centered colons (OpenType substitutions, vertical shifts, and glyph geometry). If your font already has a native centered colon, MFFM leaves it intact and automatically omits all colon settings from your `.conf` file to keep your configuration clean.
-- **How to Use (if your font does not have one)**:
-  - Set `ENABLE_CENTERED_COLON=yes` in your `.conf`.
-  - `COLON_ALIGNMENT=center`: Aligns the colon dots with the vertical midpoint of numerals.
-  - `COLON_OFFSET=0`: Adjust by `+20` or `-20` to fine-tune height if needed.
-  - `COLON_RULE=between_digits`: Standard setting. The centered colon only triggers when typed between numbers (`12:30`), leaving normal text punctuation completely untouched.
-  - `COLON_RULE=after_digit`: Use this if your phone's lockscreen displays a stacked two-line clock (where `12:` is on line 1 and `30` is on line 2).
+When an external variable font is placed in `/sdcard/MFFM/`, the standalone installer automatically scans its variation axes (`fvar`) using an ultra-fast, binary table parser written in **pure shell and `awk`** (100% Python-free).
 
-#### 2. 📱 Android Lockscreen Clock Colon PUA (`ENABLE_LOCKSCREEN_COLON_PUA`)
-- **The Problem**: Several OEM Android skins and custom ROMs (Google Pixel, Xiaomi HyperOS, Samsung One UI, OnePlus OxygenOS, Nothing OS) do not look up standard ASCII `:` on the lockscreen clock. Instead, their SystemUI clock components specifically query Private Use Area (PUA) codepoints (`U+EE01`) or mathematical ratio symbols (`U+2236`, `U+2982`) present in stock fonts like Google Sans Clock or Roboto. When a custom font lacks these codepoints, the lockscreen clock displays a broken tofu box `[?]` or question mark.
-- **Intelligent Auto-Detection**: The installer scans your Sans-serif font at install time. If `U+EE01` is already mapped and drawn in the font, this option is automatically stripped from `.conf`.
-- **How to Use**:
-  - Set `ENABLE_LOCKSCREEN_COLON_PUA=true` in your `.conf`.
-  - The runtime maps the font's colon (or newly injected centered colon) directly to `U+EE01`, `U+2236`, and `U+2982` across all Unicode cmap tables, guaranteeing flawless lockscreen clock rendering with zero broken glyphs.
+It automatically creates an axis configuration file at:
+```
+/sdcard/MFFM/MFFMv14_<FAMILY_SLUG>.conf
+```
 
-#### 3. 📐 Synthetic Italic / Oblique (`ENABLE_SYNTHETIC_ITALIC`)
-- **The Problem**: Many custom display and web fonts (e.g. Readex Pro, Outfit, Google Sans) only supply upright faces and lack native italic styles or variable slant (`slnt`/`ital`) axes. On Android, when an app or browser requests italic text, the system cannot find an italic face in the font family.
-- **Intelligent Auto-Detection**: The installer scans your Sans-serif font family. If native italic styles or `slnt`/`ital` axes already exist, MFFM automatically omits this category from your `.conf`. It only populates when no native italic support is present!
-- **How to Use**:
-  - Set `ENABLE_SYNTHETIC_ITALIC=true` in your `.conf`.
-  - `SYNTHETIC_ITALIC_ANGLE=-12`: Slant angle in degrees (default `-12°`).
-  - Re-flash the module: The runtime algorithmically shears outlines (`glyf`, `gvar`, `CFF`/`CFF2`), recalculates metrics, updates `post.italicAngle`, `head.macStyle`, `OS/2.fsSelection`, and builds companion italic faces into the unified `DroidSans.ttf` collection and XML mappings.
-  - *Constraint*: Strictly dedicated to Sans-serif; other families remain untouched.
+You can open this `.conf` file in any text editor on Android to adjust weights:
+```sh
+# MFFMv14 Standalone Variable Font Axis Configuration
+VF_SANS_AXIS_TAG="wght"
+VF_SANS_AXIS_MIN="100"
+VF_SANS_AXIS_MAX="900"
+VF_SANS_AXIS_DEF="400"
 
-#### 4. ⏱️ Tabular Clock Digits (`ENABLE_TABULAR_CLOCK_DIGITS`)
-- **The Problem**: Proportional fonts assign different widths to different numbers (e.g., `1` is much narrower than `0` or `8`). When your lockscreen clock changes from `11:59` to `12:00`, or if you have a ticking seconds display, the digits jump horizontally and create visible jitter.
-- **How to Use**:
-  - Set `ENABLE_TABULAR_CLOCK_DIGITS=yes`.
-  - The runtime equalizes the horizontal advance width across all digits `0` through `9` and centers their contours within the standardized bounding box.
+# Target weight coordinates
+WEIGHT_THIN="100"
+WEIGHT_LIGHT="300"
+WEIGHT_REGULAR="400"
+WEIGHT_MEDIUM="500"
+WEIGHT_BOLD="700"
+WEIGHT_BLACK="900"
+```
 
-#### 5. 🛡️ Decoupled Safe Metrics (`METRICS_MODE`)
-- **The Problem**: In status bars, app toolbars, and notification headers, tall diacritics (Vietnamese `ế`, `Ậ`, Devanagari, Thai, Arabic, or display letters `Å`, `Ŵ`) can get clipped if vertical metrics are too tight. Conversely, older scripts that blindly expanded line heights caused code editors and terminal emulators to experience severe (+41%) vertical line-height ballooning.
-- **Options**:
-  - `METRICS_MODE=compact` (Default & Recommended): Forces classic ultra-tight FFIX3 metrics ($2128 / -550$). Delivers maximum notification and UI compactness.
-  - `METRICS_MODE=safe`: Decoupled safe metrics. Ascent and descent expand independently based on actual glyph boundaries. Tall accents never clip, descenders remain clear, and UI elements stay centered and compact.
-  - `METRICS_MODE=preserve`: Leaves the font designer's original metric tables unaltered.
-
-#### 6. 🎨 OpenType Feature Freezing (`*_FREEZE_FEATURES`)
-- **The Problem**: Many professional fonts feature alternate characters (slashed zeros, curved lowercase `l`, single-story `a` and `g`, or geometric glyphs) hidden behind OpenType tags (`zero`, `ss01`–`ss20`, `cv01`–`cv99`). Android apps lack menus to activate these.
-- **How to Use**:
-  - Check the discovered features list commented directly in your `.conf` file.
-  - Add desired feature tags separated by commas:
-    ```sh
-    SANS_FREEZE_FEATURES=ss01,zero
-    MONO_FREEZE_FEATURES=zero
-    ```
-  - Re-flash the font module ZIP to bake these alternates into the default glyphs system-wide!
-
-#### 7. ⚖️ Variable Font Weight Tuning
-- For variable fonts, fine-tune the exact numeric weight mapped to each of Android's system weight tiers (100–900):
-  ```sh
-  SANS_WGHT="100 200 300 400 500 600 700 800 900"
-  SANS_WDTH="100 100 100 100 100 100 100 100 100"
-  ```
-
-#### 8. 🌐 Adding Extra Fonts Directly on Your Phone
-- You can augment an installed module with additional language or style families without repacking the ZIP on PC:
-  - Place extra fonts into `/sdcard/MFFM/<FontFamily>/`:
-    - `/sdcard/MFFM/<FontFamily>/Bengali/`
-    - `/sdcard/MFFM/<FontFamily>/Monospace/`
-    - `/sdcard/MFFM/<FontFamily>/Serif/`
-  - Re-flash your font module — it will scan the directory, optimize the fonts, and package them into the system collection automatically!
-
-#### 9. 🏷️ Active Feature Badges in Module Description
-- Whenever you activate typography enhancements in your `.conf` file, the installer automatically updates the module description visible in Magisk, KernelSU, APatch, or MMRL:
-  ```
-  [MFFMv14] Readex Pro VF [Active: Synthetic Italic (-12°), Metrics: compact]
-  ```
-  This lets you verify at a glance which features are active without digging into config files.
+Re-flashing the standalone module instantly applies your custom weight mapping in seconds!
 
 ---
 
-## 🛡️ Anti-Google Font Update Protection
+## 🛡️ Root Manager Compatibility
 
-Google Play System updates silently push fonts (such as `NotoSansCJK-Regular.ttc`) to `/data/fonts/files/`, overriding user font modules without warning.
+The standalone module payload (`template-standalone/`) is engineered for universal compatibility across all modern Android root solutions:
 
-MFFMv14 provides automated dual-layer defense:
-1. **Boot Daemon (`service.sh`)**: Runs early during boot to neutralize Google Font cache updates before apps launch. Operation logs are saved to `/sdcard/MFFM/font_service.log`.
-2. **On-Demand Action Button (`action.sh`)**: For **KernelSU**, **APatch**, and **MMRL** users, tap the "Action" button in your root manager interface to immediately clear any newly downloaded Google Font updates without rebooting.
-
----
-
-## 📦 Supported Font Formats & Technical Rules
-
-- **Input Formats**: TrueType (`.ttf`), OpenType (`.otf`), TrueType Collection (`.ttc`), OpenType Collection (`.otc`), Web Open Font Format (`.woff`, `.woff2`).
-- **Automatic Decompression**: Web fonts (`.woff`, `.woff2`) are automatically decompressed and converted into native TrueType tables.
-- **Outline Conversion**: Cubic PostScript outlines (`.otf`) are automatically converted to quadratic TrueType outlines (`cu2qu`) during collection packaging.
-- **Weight Resolution**: Weights are resolved through deep inspection of OS/2 `usWeightClass` and typographic name table records, ensuring accurate mapping even with arbitrary filenames.
-- **Multi-400 Face Deduplication**: If multiple 400-weight normal faces exist (such as `Regular`, `Book`, `Normal`), `Regular` is strictly prioritized.
+- **Magisk**: v20.4 to v28+
+- **KernelSU**: v0.9.0 to v1.0+
+- **APatch**: v0.10.0 to v0.11+
+- **Action WebUI**: Trigger font reconfiguration directly from the KernelSU/APatch WebUI action button (`action.sh`).
 
 ---
 
-## ❓ Frequently Asked Questions & Troubleshooting
+## ❓ Troubleshooting & FAQ
 
-### Q: Why did the module installation fail with an MFFM Runtime error?
-**A:** MFFMv14 modules require the standalone **`mffm-runtime`** module to be installed first. Download `mffm-runtime-YYYY.MM.DD.zip` from [GitHub Releases](https://github.com/mistu01/MFFMv14/releases), flash it in Magisk/KernelSU/APatch, and then install your font module.
+### Q: Does the standalone module require `mffm-runtime`?
+**A:** No. Standalone modules are 100% independent. You do **NOT** need `mffm-runtime` installed on your device.
 
-### Q: How do I apply my changes after editing `/sdcard/MFFM/*.conf`?
-**A:** Simply flash your font module ZIP again in Magisk, KernelSU, or APatch. You do not need to uninstall it first; flashing over the existing module reads the updated configuration file and regenerates the fonts.
+### Q: Why did the build script say "OTF to TTF conversion"?
+**A:** Android's native font rendering stack requires TrueType (`glyf` / quadratic) outlines for variable font variation tables and proper lockscreen clock scaling. The builder automatically converts PostScript (`CFF`) outlines to TrueType curves during the build.
 
-### Q: My clock colon is still low on a 2-line vertical lockscreen clock.
-**A:** Open your `.conf` file and set `COLON_RULE=after_digit`. Standard `between_digits` requires digits on both sides (`12:30`), whereas `after_digit` supports clocks that place the hours and minutes on separate lines (`12:` on top, `30` on bottom).
+### Q: Why is my lockscreen clock colon not centered?
+**A:** Re-build the module with `--colon-offset` (e.g. `python build.py --colon-offset 20` or `-20`) to tune the height to your OEM's specific lockscreen layout.
 
-### Q: Why is `ENABLE_SYNTHETIC_ITALIC` not showing in my `.conf` file?
-**A:** MFFMv14 automatically audits your Sans-serif font at installation time. If your font already provides native italic faces or variable slant (`slnt` / `ital`) axes, MFFM hides the synthetic italic category to keep your configuration clean and concise. The setting only populates when your Sans font truly lacks italic support.
-
-### Q: Why does my lockscreen clock show a missing tofu box `[?]` instead of a colon?
-**A:** Certain OEM skins and custom ROMs (HyperOS, One UI, OxygenOS, Nothing OS, Google Pixel) query Private Use Area codepoint `U+EE01` or ratio symbols (`U+2236`, `U+2982`) for their lockscreen clock colon. If your font lacks these codepoints, open your `.conf` file, set `ENABLE_LOCKSCREEN_COLON_PUA=true`, and re-flash the module to map the colon to these codepoints across all cmap tables.
-
-### Q: Where can I find installation and error logs?
-**A:** The installer retains the 3 most recent detailed diagnostic logs at:
+### Q: Where are installation logs stored?
+**A:** The standalone installer stores detailed installation logs at:
 ```
 /sdcard/MFFM/mffmv14_debug_<TIMESTAMP>.log
 ```
-These logs record every command, detected weights, metric calculations, and fontTools output for easy troubleshooting.
-
----
-
-## ⚡ Standalone Module Builder (`build_standalone.py`)
-
-For users who want a **completely Python- and fontTools-free** installation experience on Android, MFFMv14 provides the **Standalone Module Builder**.
-
-### Key Differences
-| Feature | Standalone Module (`build_standalone.py`) | Dynamic Runtime Module (`build.py`) |
-| :--- | :--- | :--- |
-| **Android Dependency** | **100% Dependency-Free** (No Python, fontTools, or `mffm-runtime` needed on phone) | Requires `mffm-runtime` module installed on phone |
-| **Processing Point** | Processed during build time on PC/Termux | Processed dynamically on-device during module flash |
-| **Variable Font Tuning**| Full axis control via `/sdcard/MFFM/*.conf` using native shell & `awk` | Full axis control via `/sdcard/MFFM/*.conf` using Python |
-| **Flash Speed** | Instantaneous (< 3 seconds) | Fast (~10–30 seconds depending on phone CPU) |
-
-### CLI Options for Standalone Builder
-```bash
-python build_standalone.py [OPTIONS]
-```
-- `--fonts-dir DIR`: Directory containing source fonts (default: `./Fonts`).
-- `--mode {auto,static,variable}`: Font mode detection (default: `auto`).
-- `--colon-offset OFFSET` / `--colon-shift OFFSET`: Upward (+) or downward (-) vertical shift in font units for centered clock colon (e.g. `--colon-offset 20` or `--colon-offset -15`).
-- `--colon-alignment {center,cap_height,x_height}`: Reference baseline for centered colon (default: `center`).
-- `--colon-rule {between_digits,after_digit,always}`: OpenType contextual substitution rule (default: `between_digits`).
-- `--equalize-digits`: Center and equalize digit widths (`0`–`9`) for wobble-free clock digits.
-- `--pua-colon`: Map colon glyph to Android lockscreen clock PUA (`U+EE01`) and ratio symbols.
-- `--features TAGS`: Freeze OpenType features for Sans-serif (e.g. `--features zero,ss01`).
-- `--mono-features TAGS`, `--serif-features TAGS`, `--bengali-features TAGS`: Freeze features per family.
-- `--synthetic-italic`: Synthesize companion italic outlines if missing.
-- `--synthetic-italic-angle ANGLE`: Slant angle for synthetic italics (default: `-12.0`).
-- `--template`: Package `MFFMv14-Standalone-Template.zip` into `./dist`.
-
-### External Static Font Standards (Standalone Installer)
-When dropping static font files into `/sdcard/MFFM/`, the standalone installer automatically selects and configures:
-- **Serif**: **4 faces default** (`Regular 400`, `Italic 400`, `Bold 700`, `BoldItalic 700`).
-- **Bengali**: **2 faces default** (`Regular 400`, `Bold 700`).
-- **Monospace**: **1 face default** (`Regular 400`).
-- **Variable Fonts**: Auto-scans axes and creates a dedicated `/sdcard/MFFM/*.conf` using pure shell and `awk`.
-
-### Building Directly in Mobile Termux (`termux-build.sh`)
-Run `termux-build.sh` in the Termux environment:
-```bash
-./termux-build.sh
-```
-- By default, it runs `build_standalone.py` to create a lightweight, dependency-free module.
-- Pass `--runtime` to build the dynamic runtime module instead:
-  ```bash
-  ./termux-build.sh --runtime
-  ```
-
-### Standalone Template Archive (`MFFMv14-Standalone-Template.zip`)
-To package a fully self-contained standalone build environment for distribution:
-```bash
-python build_standalone.py --template
-# or: python build.py --standalone-template
-# or: python package_template.py --standalone
-```
-This produces `dist/MFFMv14-Standalone-Template.zip` containing:
-- **Build Tools**: `build_standalone.py`, `font_module_standalone.py`, `runtime_helper.py`, `zipsigner_auto.py`, `termux-build.sh`, `requirements.txt`, and convenience wrapper `build.py`.
-- **Standalone Module Template**: Complete `template-standalone/` payload (`customize.sh`, `action.sh`, `font-config.sh`, `module.prop`, `post-mount.sh`, `service.sh`, `uninstall.sh`, `META-INF/`, `Files/`).
-- **Font Directory Skeleton**: `Fonts/Sans`, `Fonts/Monospace`, `Fonts/Serif`, `Fonts/Bengali`, and `dist/`.
-- **Documentation**: `USAGE_GUIDE.md`, `CHANGELOG.md`, `ReadMe.md`.
-
-Anyone extracting this archive on PC or Termux can immediately drop fonts into `Fonts/Sans/` and run `python build.py` or `sh termux-build.sh` without cloning the entire git repository.
-
