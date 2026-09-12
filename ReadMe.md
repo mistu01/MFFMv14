@@ -62,33 +62,32 @@ mffm-runtime-YYYY.MM.DD.zip
 
 ## 🚀 Step 2: Create & Flash Your Font
 
-### Option A: On Your Phone (No PC Needed)
-1. Download and extract **`MFFMv14-Source-Template.zip`** using any file manager (like MiXplorer, MT Manager, or ZArchiver).
-2. Put your font file(s) into the **`Files/Sans/`** folder.  
-   *(Optional: put coding fonts into `Files/Monospace/`, serif fonts into `Files/Serif/`, or Bengali fonts into `Files/Bengali/`)*.
-3. Open **`module.prop`** and change the font name/author if you like.
-4. Select all files inside the template folder, compress them into a standard **ZIP**, and flash it in **Magisk**, **KernelSU**, or **APatch**!
-5. Reboot and enjoy your new font!
-
-### Option B: On PC using Python (`build.py`) — Dynamic Runtime Module
+### Method 1: On PC using Python (`build.py`) — Recommended
 1. Clone this repository:
    ```sh
    git clone https://github.com/mistu01/MFFMv14.git
    cd MFFMv14
    pip install -r requirements.txt
    ```
-2. Put your font files into `Fonts/Sans/`.
+2. Put your source fonts into `Fonts/Sans/`  
+   *(Optional: put coding fonts into `Fonts/Monospace/`, serif fonts into `Fonts/Serif/`, or Bengali fonts into `Fonts/Bengali/`)*.
 3. Run the builder:
    ```sh
    python build.py
    ```
-4. Transfer the flashable ZIP generated in `dist/` to your phone and flash it!
+4. Transfer the flashable ZIP generated in `dist/` to your phone and flash it in **Magisk**, **KernelSU**, or **APatch**!
 
-### Option C: Standalone Module (100% Python-Free on Phone — PC or Termux)
-1. Download and extract **`MFFMv14-Standalone-Template.zip`**.
-2. Put your font files into `Fonts/Sans/`.
-3. Run `python build.py` on PC, or run `sh termux-build.sh` in Termux.
-4. Transfer the flashable ZIP generated in `dist/` to your phone and flash it. No `mffm-runtime` or Python required on device!
+### Method 2: On Your Phone (No PC Needed)
+1. Download and extract **`MFFMv14-Source-Template.zip`** from [GitHub Releases](https://github.com/mistu01/MFFMv14/releases) using any file manager (like MiXplorer, MT Manager, or ZArchiver).
+2. Put your font file(s) into the **`Files/Sans/`** folder.  
+   *(Optional: put coding fonts into `Files/Monospace/`, serif fonts into `Files/Serif/`, or Bengali fonts into `Files/Bengali/`)*.
+3. Open **`module.prop`** and customize the font name/author if you wish.
+4. Select all files inside the template folder, compress them into a standard **ZIP**, and flash it in **Magisk**, **KernelSU**, or **APatch**!
+5. Reboot to enjoy your new system font!
+
+> [!NOTE]
+> **Looking for the Standalone (100% Python-Free) Edition?**  
+> If you prefer readymade modules that flash in under 2 seconds without requiring `mffm-runtime` on your device, check out the dedicated **[`standalone`](https://github.com/mistu01/MFFMv14/tree/standalone)** branch.
 
 ---
 
@@ -132,33 +131,27 @@ SANS_FREEZE_FEATURES=ss01,zero
 
 | Document | Description |
 | :--- | :--- |
-| 📖 **[User & Configuration Guide (Runtime)](USAGE_GUIDE.md)** | Detailed handbook covering on-device module creation, full configuration settings guide, adding extra fonts directly on phone, and FAQ. |
-| ⚡ **[Standalone User Guide](USAGE_GUIDE_STANDALONE.md)** | Complete handbook for building readymade standalone modules with zero on-device dependencies (PC & Termux). |
+| 📖 **[User & Configuration Guide](USAGE_GUIDE.md)** | Detailed handbook covering on-device module creation, full configuration settings guide, adding extra fonts directly on phone, and FAQ. |
 | 📜 **[Changelog](CHANGELOG.md)** | Complete release notes and version history. |
-| 📋 **[Standalone Changelog](CHANGELOG_STANDALONE.md)** | Dedicated standalone module release history and architectural notes. |
+| ⚡ **[Standalone Edition](https://github.com/mistu01/MFFMv14/tree/standalone)** | Dedicated branch for building readymade standalone modules with zero on-device dependencies. |
 
 ---
 
 ## 📂 Repository Structure
 
 ```
-MFFMv14/
+MFFMv14/ (main branch)
 ├── build.py                  # PC module builder and packaging script
-├── build_standalone.py       # Standalone 100% Python-free module compiler
-├── build_runtime.py          # MFFM Runtime module builder
-├── package_template.py       # Packager for MFFMv14 Source and Standalone templates
 ├── font_module.py            # Core font inspection and compilation engine
-├── font_module_standalone.py # Standalone font compilation engine
+├── build_runtime.py          # MFFM Runtime module builder
+├── prepare_runtime.py        # Runtime payload assembler
+├── package_template.py       # Source template packager (MFFMv14-Source-Template.zip)
 ├── runtime_helper.py         # On-device helper CLI & font tools
-├── termux-build.sh           # Mobile Termux one-shot builder and installer
 ├── zipsigner_auto.py         # Automatic ZIP signer
 ├── template/                 # Dynamic runtime module template
-├── template-standalone/      # 100% Python-free standalone module template
 ├── runtime-template/         # Standalone MFFM Runtime module skeleton
-├── USAGE_GUIDE.md            # Comprehensive user manual (Runtime)
-├── USAGE_GUIDE_STANDALONE.md # Comprehensive user manual (Standalone)
+├── USAGE_GUIDE.md            # Comprehensive user manual
 ├── CHANGELOG.md              # Full version history
-├── CHANGELOG_STANDALONE.md   # Standalone version history
 └── ReadMe.md                 # Project frontpage
 ```
 
