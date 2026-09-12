@@ -40,18 +40,19 @@ shell_quote() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
-BUILD_SCRIPT="build.py"
+BUILD_SCRIPT="build_standalone.py"
 
 usage() {
   cat <<'EOF'
 usage: sh termux-build.sh [options] [-- build options...]
 
+  --runtime     build runtime-based module via build.py (dynamic on-device compilation)
   --no-deps     skip package installation (use an already prepared environment)
   --no-flash    build only; do not install the module with su
   --yes, -y     do not ask for confirmation before flashing
   -h, --help    show this help
 
-Builds a 100% Python-free standalone readymade font module via build.py.
+By default, builds a standalone readymade module via build_standalone.py.
 Anything after -- is passed to the build script, for example:
   sh termux-build.sh -- --mode variable --fonts-dir ~/storage/shared/Download/MyFont
 EOF

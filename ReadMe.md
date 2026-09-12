@@ -1,4 +1,4 @@
-# MFFMv14 — Standalone Font Module Builder
+# MFFMv14 — Universal Android Font Module Framework
 
 <div align="center">
 
@@ -8,90 +8,159 @@
 [![APatch](https://img.shields.io/badge/APatch-v0.11.0+-90CAF9?style=for-the-badge&logo=android&logoColor=black)](https://github.com/bmax121/APatch)
 [![Telegram](https://img.shields.io/badge/Telegram-MFFMMain-0088CC?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/MFFMMain)
 
-**100% Python-free, instant-flashing font modules for rooted Android devices.**  
-*Compile custom fonts on PC or mobile Termux into self-contained root modules that flash in under 2 seconds with zero on-device dependencies.*
+**The easy, universal system font engine for rooted Android devices.**  
+*Use any font you love system-wide on Magisk, KernelSU, and APatch — with automatic fixes for lockscreens, clocks, and accents.*
 
 </div>
 
 ---
 
-## 📖 What is MFFMv14 Standalone?
+## 📖 What is MFFMv14?
 
-The **MFFMv14 Standalone Edition** performs all heavy typography processing, metric harmonization, outline conversion, and font packaging during build time (on your PC or in Termux).
+**MFFMv14** turns your favorite fonts into clean, flashable root modules. 
 
-The resulting flashable module is **100% readymade**:
-- ⚡ **Installs in < 2 seconds** on Magisk, KernelSU, and APatch.
-- 🚫 **Zero Python / fontTools requirements** on your phone (no `mffm-runtime` module needed).
-- 🎛️ **Full Variable Font Axis Control** via `/sdcard/MFFM/*.conf` using native shell-level fvar table parsing.
-- 🕒 **Centered Lockscreen Clock Colon & Typography Enhancements** baked directly into the font payload during build.
+Unlike old font modules that only copy static font files, MFFMv14 automatically tunes your fonts directly on your phone. It fixes the common annoyances of custom fonts on Android — such as sunken clock colons, jittery lockscreen numbers, and cut-off accents — without requiring any technical knowledge.
 
 ---
 
-## 🚀 Quick Start: Building a Module
+## ✨ Why Use MFFMv14?
 
-### On PC (Windows / Linux / macOS)
-1. Install Python dependencies:
+- 🕒 **Centered Lockscreen Clock Colon**  
+  Standard fonts place the colon (`:`) low on the baseline for sentences. MFFM automatically lifts the colon in `12:30` on your lockscreen and status bar to look perfectly centered, while keeping normal sentence punctuation untouched.
+- 📱 **Lockscreen Colon Missing Glyph Fix (PUA `U+EE01`)**  
+  Resolves broken tofu boxes (`[?]`) on OEM lockscreens (Google Pixel, Xiaomi HyperOS, Samsung One UI, OnePlus OxygenOS, Nothing OS) by mapping the colon to Android system clock Private Use Area codepoints.
+- 📐 **Synthetic Italic Companion Generator**  
+  If your favorite font only comes in upright styles and has no italics, MFFM can algorithmically synthesize and bundle slanted italic companion faces on-the-fly, keeping variable axes, glyph outlines, and layout anchors intact.
+- ⏱️ **Jitter-Free Clock Numbers**  
+  Numbers in many fonts have different widths (for example, `1` is narrower than `0`). MFFM equalizes digit widths so your lockscreen clock doesn't wobble or jump sideways every time a second ticks or a minute changes.
+- 🛡️ **Zero Text Clipping (Safe Metrics)**  
+  Tall accents (like Vietnamese `ế`, `Ậ`, Devanagari, Thai, Arabic, or `Å`) often get cut off at the top or bottom of notifications and status bars. MFFM ensures all characters fit comfortably without inflating line spacing or breaking app layouts.
+- 🎨 **Slashed Zeros & Style Alternates**  
+  Easily activate font features you want system-wide, like slashed zeros (`0`), curved lowercase `l`, or alternate letter designs.
+- 🛑 **Anti-Google Font Override Shield**  
+  Android often silently overrides custom fonts during Google Play System updates. MFFM includes a built-in shield that blocks Google from reverting your font back to stock Roboto.
+- 🌐 **Multi-Family Support**  
+  Apply custom fonts for your main system font (**Sans**), coding/terminal font (**Monospace**), book font (**Serif**), and **Bengali** script all in the same module.
+- 📦 **Works with Any Font File**  
+  Accepts `.ttf`, `.otf`, `.ttc`, `.otc`, `.woff`, and `.woff2`, including variable and static fonts.
+
+---
+
+## ⚠️ Step 1: Install MFFM Runtime First (One-Time Setup)
+
+Before flashing any MFFMv14 font module, install the standalone **MFFM Runtime** module once in your root manager:
+
+```
+mffm-runtime-YYYY.MM.DD.zip
+```
+
+- **Why is it needed?** It gives your phone the tools required to adjust metrics, align clock colons, and package fonts on-device.
+- **Install Once**: You only flash it once. All your current and future MFFMv14 font modules will use it automatically.
+- **Download**: Grab the latest `mffm-runtime-*.zip` from **[GitHub Releases](https://github.com/mistu01/MFFMv14/releases)**.
+
+---
+
+## 🚀 Step 2: Create & Flash Your Font
+
+### Option A: On Your Phone (No PC Needed)
+1. Download and extract **`MFFMv14-Source-Template.zip`** using any file manager (like MiXplorer, MT Manager, or ZArchiver).
+2. Put your font file(s) into the **`Files/Sans/`** folder.  
+   *(Optional: put coding fonts into `Files/Monospace/`, serif fonts into `Files/Serif/`, or Bengali fonts into `Files/Bengali/`)*.
+3. Open **`module.prop`** and change the font name/author if you like.
+4. Select all files inside the template folder, compress them into a standard **ZIP**, and flash it in **Magisk**, **KernelSU**, or **APatch**!
+5. Reboot and enjoy your new font!
+
+### Option B: On PC using Python (`build.py`) — Dynamic Runtime Module
+1. Clone this repository:
    ```sh
+   git clone https://github.com/mistu01/MFFMv14.git
+   cd MFFMv14
    pip install -r requirements.txt
    ```
-2. Place your source fonts into `Fonts/Sans/`  
-   *(Optional: coding fonts into `Fonts/Monospace/`, serif fonts into `Fonts/Serif/`, or Bengali fonts into `Fonts/Bengali/`)*.
+2. Put your font files into `Fonts/Sans/`.
 3. Run the builder:
    ```sh
    python build.py
    ```
-4. Transfer the flashable ZIP generated in `dist/` to your phone and flash it in **Magisk**, **KernelSU**, or **APatch**!
+4. Transfer the flashable ZIP generated in `dist/` to your phone and flash it!
 
-### On Android Phone (via Termux)
-1. Install Termux and clone this branch:
-   ```sh
-   git clone -b standalone https://github.com/mistu01/MFFMv14.git
-   cd MFFMv14
-   ```
-2. Put your fonts into `Fonts/Sans/` (or pass `--fonts-dir /sdcard/Download/MyFont`).
-3. Run the automated Termux builder:
-   ```sh
-   sh termux-build.sh
-   ```
-   *The script automatically installs required packages, builds the module, and optionally flashes it directly using root permissions (`su`).*
+### Option C: Standalone Module (100% Python-Free on Phone — PC or Termux)
+1. Download and extract **`MFFMv14-Standalone-Template.zip`**.
+2. Put your font files into `Fonts/Sans/`.
+3. Run `python build.py` on PC, or run `sh termux-build.sh` in Termux.
+4. Transfer the flashable ZIP generated in `dist/` to your phone and flash it. No `mffm-runtime` or Python required on device!
 
 ---
 
-## 🎛️ Variable Font Customization (`.conf`)
+## 🎛️ How to Customize Your Font (`.conf`)
 
-For variable font modules, an axis configuration file is generated upon installation at:
+Whenever you install a font module, a simple settings file is created on your internal storage at:
 ```
-/sdcard/MFFM/<ModuleName>_axes.conf
+/sdcard/MFFM/MFFMv14_<FontFamily>_<ID>.conf
 ```
-You can edit font weights, optical sizes, and design axes directly in any text editor, then re-flash to apply your changes!
+
+> [!TIP]
+> **Do you have to change anything?**  
+> **No!** Everything works out of the box with safe, beautiful defaults.
+
+If you want to tweak settings, open the file in any text editor, change what you want, and re-flash your module ZIP:
+
+```sh
+# 1. Centered colon for lockscreen & status bar clocks (12:30)
+ENABLE_CENTERED_COLON=yes
+
+# 2. Fix broken glyph box [?] on OEM lockscreen clocks (PUA U+EE01)
+ENABLE_LOCKSCREEN_COLON_PUA=false
+
+# 3. Synthesize italic companion faces if the font lacks them (Sans-serif only)
+ENABLE_SYNTHETIC_ITALIC=false
+SYNTHETIC_ITALIC_ANGLE=-12
+
+# 4. Equalize clock numbers so the clock doesn't wobble
+ENABLE_TABULAR_CLOCK_DIGITS=yes
+
+# 5. Metric mode: compact (default tight UI), safe (zero accent clipping), or preserve
+METRICS_MODE=compact
+
+# 6. Activate cool font features (like slashed zero or stylistic sets)
+SANS_FREEZE_FEATURES=ss01,zero
+```
 
 ---
 
-## 📚 Documentation
+## 📚 Documentation Index
 
 | Document | Description |
 | :--- | :--- |
-| ⚡ **[User & Configuration Guide](USAGE_GUIDE.md)** | Complete handbook for building readymade standalone modules, command-line arguments, typography features, and FAQs. |
-| 📜 **[Changelog](CHANGELOG.md)** | Standalone module release history and architectural notes. |
+| 📖 **[User & Configuration Guide (Runtime)](USAGE_GUIDE.md)** | Detailed handbook covering on-device module creation, full configuration settings guide, adding extra fonts directly on phone, and FAQ. |
+| ⚡ **[Standalone User Guide](USAGE_GUIDE_STANDALONE.md)** | Complete handbook for building readymade standalone modules with zero on-device dependencies (PC & Termux). |
+| 📜 **[Changelog](CHANGELOG.md)** | Complete release notes and version history. |
+| 📋 **[Standalone Changelog](CHANGELOG_STANDALONE.md)** | Dedicated standalone module release history and architectural notes. |
 
 ---
 
 ## 📂 Repository Structure
 
 ```
-MFFMv14/ (standalone branch)
-├── build.py                  # Standalone module compiler (main build entry point)
-├── font_module.py            # Standalone font compilation engine & typography processor
-├── runtime_helper.py         # TrueType outline conversion & font tools
-├── termux-build.sh           # Termux one-shot builder and installer
+MFFMv14/
+├── build.py                  # PC module builder and packaging script
+├── build_standalone.py       # Standalone 100% Python-free module compiler
+├── build_runtime.py          # MFFM Runtime module builder
+├── package_template.py       # Packager for MFFMv14 Source and Standalone templates
+├── font_module.py            # Core font inspection and compilation engine
+├── font_module_standalone.py # Standalone font compilation engine
+├── runtime_helper.py         # On-device helper CLI & font tools
+├── termux-build.sh           # Mobile Termux one-shot builder and installer
 ├── zipsigner_auto.py         # Automatic ZIP signer
-├── package_template.py       # Standalone template packager (MFFMv14-Standalone-Template.zip)
-├── template/                 # Lightweight 100% Python-free module template
-├── USAGE_GUIDE.md            # Standalone user & configuration manual
-├── CHANGELOG.md              # Standalone version history
+├── template/                 # Dynamic runtime module template
+├── template-standalone/      # 100% Python-free standalone module template
+├── runtime-template/         # Standalone MFFM Runtime module skeleton
+├── USAGE_GUIDE.md            # Comprehensive user manual (Runtime)
+├── USAGE_GUIDE_STANDALONE.md # Comprehensive user manual (Standalone)
+├── CHANGELOG.md              # Full version history
+├── CHANGELOG_STANDALONE.md   # Standalone version history
 └── ReadMe.md                 # Project frontpage
 ```
-
 
 ---
 
