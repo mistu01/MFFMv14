@@ -54,8 +54,8 @@ You can compile a standalone MFFMv14 module on a PC (Windows, macOS, Linux) or d
      - Bengali font: place in `Fonts/Bengali/`
 4. **Compile the Module**:
    ```bash
-   python build.py
-   # or: python build_standalone.py
+   python build_standalone.py
+   # In extracted MFFMv14-Standalone-Template.zip, you can also run: python build.py
    ```
 5. **Flash the Output**:
    The signed, flashable ZIP is written to `dist/` (e.g., `dist/mffm14-inter-2026.09.11.zip`). Transfer it to your device and flash it directly in **Magisk**, **KernelSU**, or **APatch**, then reboot.
