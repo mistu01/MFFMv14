@@ -160,7 +160,7 @@ MFFMv14/
 ## 📱 Compatibility
 
 - **Root Managers**: Magisk v20.4+, KernelSU v0.9.4+, APatch v0.11.0+, MMRL.
-- **Android Versions**: Android 8.0 (Oreo) through Android 15.
+- **Android Versions**: Android 15+.
 - **Architectures**: ARM64 (`arm64-v8a`) and x86_64.
 
 ---
