@@ -6,6 +6,14 @@ Dates follow the `YYYY.MM.DD` versioning format carried by the modules.
 
 ---
 
+## 2026.09.23
+
+### Added
+- **SemiBold-as-Medium Fallback for External Static Bengali & Serif Fonts (`template-standalone/customize.sh` & `font_module_standalone.py`)**:
+  - Automatically maps SemiBold (600) to Medium (500) when external static Bengali or Serif fonts provide SemiBold but lack a native Medium weight face.
+  - Expands static Bengali fallback to 3 faces (`Regular`, `SemiBold-as-Medium`, `Bold`) and static Serif fallback to up to 6 faces (`Regular`, `Italic`, `SemiBold-as-Medium`, `MediumItalic`, `Bold`, `BoldItalic`).
+  - Emits `<font weight="500">` XML definitions pointing directly to the SemiBold face index in `DroidSans.ttf` or standalone font files with zero overhead.
+
 ## 2026.09.11
 
 ### Initial Standalone Architecture Release

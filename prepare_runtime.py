@@ -266,11 +266,11 @@ def build_abi_payload(abi: str, work: Path) -> Path:
     return out_tar
 
 
-def update_manifest(shas: dict[str, str]) -> None:
+def update_manifest(shas: dict[str, str], version: str | None = None, version_code: str | None = None) -> None:
     data = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     now = dt.datetime.now()
-    data["version"] = now.strftime("%Y.%m.%d")
-    data["versionCode"] = now.strftime("%y%m%d")
+    data["version"] = version or now.strftime("%Y.%m.%d")
+    data["versionCode"] = version_code or now.strftime("%y%m%d")
     data["python_version"] = PYTHON_VERSION
     data["fonttools_version"] = FONTTOOLS_VERSION
     data["python_release_tag"] = PYTHON_RELEASE_TAG
@@ -297,6 +297,8 @@ def main() -> int:
                         help="ABI to build (repeatable; default: all supported)")
     parser.add_argument("--no-strip", action="store_true", help="skip binary stripping")
     parser.add_argument("--keep-work", action="store_true", help="keep intermediate work dir")
+    parser.add_argument("--version", help="override manifest version (default: YYYY.MM.DD)")
+    parser.add_argument("--version-code", help="override manifest versionCode (default: YYMMDD)")
     args = parser.parse_args()
 
     abis = args.abi or ["aarch64", "x64"]
@@ -306,7 +308,7 @@ def main() -> int:
         for abi in abis:
             out_tar = build_abi_payload(abi, work)
             shas[abi] = sha256_file(out_tar)
-        update_manifest(shas)
+        update_manifest(shas, version=args.version, version_code=args.version_code)
         print("\nRuntime payloads ready. Next: python build_runtime.py")
         return 0
     finally:
