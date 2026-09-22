@@ -131,10 +131,11 @@ release_notes.md
 release_version.txt
 
 # Keep folder skeletons via .gitkeep
-Fonts/*
-!Fonts/.gitkeep
+!Fonts/
+!Fonts/**/
 !Fonts/**/.gitkeep
-Files/*
-!Files/.gitkeep
+!Files/
+!Files/**/
+!Files/**/.gitkeep
 Old Modules/*
 !Old Modules/.gitkeep
