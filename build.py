@@ -38,6 +38,7 @@ BUILD_CONFIG_KEYS = (
     "bengali_features", "centered_colon", "colon_offset", "colon_shift",
     "colon_alignment", "colon_rule", "equalize_digits", "pua_colon",
     "synthetic_italic", "synthetic_italic_angle", "interactive",
+    "metrics_mode",
 )
 
 
@@ -71,6 +72,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--synthetic-italic", action="store_true", default=None, help="synthesize Sans-serif italic companion faces if missing")
     parser.add_argument("--no-synthetic-italic", action="store_false", dest="synthetic_italic", help="disable synthetic italic generation")
     parser.add_argument("--synthetic-italic-angle", type=float, default=-12.0, help="slant angle in degrees for synthetic italic (default: -12.0)")
+    parser.add_argument("--metrics-mode", choices=("compact", "safe", "preserve"), default=None, help="vertical metrics mode: compact (default tight FFIX3), safe (decoupled zero-clipping), or preserve (original font metrics)")
     parser.add_argument("--config", type=Path, help=f"build config file to load (default: {BUILD_CONFIG_NAME} in the project root, when present)")
     parser.add_argument("--no-config", action="store_true", help="ignore any build config file")
     parser.add_argument("--save-config", action="store_true", help=f"save the effective build options to the config file (default: {BUILD_CONFIG_NAME})")
@@ -164,6 +166,7 @@ def save_build_config(path: Path, args: argparse.Namespace) -> None:
         "synthetic_italic": bool(args.synthetic_italic),
         "synthetic_italic_angle": float(args.synthetic_italic_angle or -12.0),
         "interactive": args.interactive,
+        "metrics_mode": getattr(args, "metrics_mode", "compact") or "compact",
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(f"Build config    : saved {path}")

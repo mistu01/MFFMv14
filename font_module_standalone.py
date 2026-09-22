@@ -885,21 +885,90 @@ def _set_font_metric(font, table_name: str, field_name: str, value: int) -> None
         setattr(table, field_name, value)
 
 
-def _fix_metrics(font) -> None:
+def _fix_metrics(font, mode: str = "compact") -> None:
     head = font.get("head")
     os2 = font.get("OS/2")
+    hhea = font.get("hhea")
     if head is None:
         return
 
     units_per_em = int(getattr(head, "unitsPerEm", FFIX3_REFERENCE_UPM))
-    for table_name, field_name, reference_value in FFIX3_METRICS:
-        _set_font_metric(font, table_name, field_name, _scale_ffix3_value(reference_value, units_per_em))
+    mode_lower = (mode or "compact").strip().lower()
 
-    if os2 is None:
+    if mode_lower == "preserve":
+        if os2 is not None:
+            os2.fsSelection = int(getattr(os2, "fsSelection", 0)) & 0b01111111
+            if "fvar" in font:
+                os2.usWeightClass = 400
         return
-    os2.fsSelection = int(getattr(os2, "fsSelection", 0)) & 0b01111111
-    if "fvar" in font:
-        os2.usWeightClass = 400
+
+    base_ascent = int(round(2128 * units_per_em / FFIX3_REFERENCE_UPM))
+    base_descent = int(round(-550 * units_per_em / FFIX3_REFERENCE_UPM))
+
+    actual_y_max = None
+    actual_y_min = None
+
+    if mode_lower == "safe":
+        if "glyf" in font and hasattr(font["glyf"], "glyphs"):
+            for g in font["glyf"].glyphs.values():
+                if hasattr(g, "numberOfContours") and g.numberOfContours != 0:
+                    if hasattr(g, "yMax"):
+                        if actual_y_max is None or g.yMax > actual_y_max:
+                            actual_y_max = g.yMax
+                    if hasattr(g, "yMin"):
+                        if actual_y_min is None or g.yMin < actual_y_min:
+                            actual_y_min = g.yMin
+
+        head_y_max = getattr(head, "yMax", None)
+        head_y_min = getattr(head, "yMin", None)
+        if head_y_max is not None:
+            if actual_y_max is None or head_y_max > actual_y_max:
+                actual_y_max = head_y_max
+        if head_y_min is not None:
+            if actual_y_min is None or head_y_min < actual_y_min:
+                actual_y_min = head_y_min
+
+        k_ascent = (actual_y_max / base_ascent) if (actual_y_max is not None and base_ascent > 0) else 1.0
+        k_descent = (abs(actual_y_min) / abs(base_descent)) if (actual_y_min is not None and base_descent < 0) else 1.0
+        ascent = int(round(max(1.0, k_ascent) * base_ascent))
+        descent = int(round(-max(1.0, k_descent) * abs(base_descent)))
+    else:  # compact mode
+        ascent = base_ascent
+        descent = base_descent
+
+    # 1. hhea
+    if hhea is not None:
+        hhea.ascent = ascent
+        hhea.descent = descent
+        hhea.lineGap = 0
+
+    # 2. OS/2
+    if os2 is not None:
+        os2.sTypoAscender = ascent
+        os2.sTypoDescender = descent
+        os2.sTypoLineGap = 0
+
+        win_ascent = max(ascent, actual_y_max) if actual_y_max is not None else ascent
+        win_descent = max(abs(descent), abs(actual_y_min)) if actual_y_min is not None else abs(descent)
+        os2.usWinAscent = int(win_ascent)
+        os2.usWinDescent = int(win_descent)
+
+        if hasattr(os2, "sCapHeight"):
+            os2.sCapHeight = int(round(1456 * units_per_em / FFIX3_REFERENCE_UPM))
+        if hasattr(os2, "sxHeight"):
+            os2.sxHeight = int(round(1082 * units_per_em / FFIX3_REFERENCE_UPM))
+
+        os2.fsSelection = int(getattr(os2, "fsSelection", 0)) & 0b01111111
+        if "fvar" in font:
+            os2.usWeightClass = 400
+
+    # 3. head
+    if hasattr(head, "yMax"):
+        curr_max = getattr(head, "yMax", 0)
+        head.yMax = max(curr_max, ascent, actual_y_max if actual_y_max is not None else ascent)
+    if hasattr(head, "yMin"):
+        curr_min = getattr(head, "yMin", 0)
+        head.yMin = min(curr_min, descent, actual_y_min if actual_y_min is not None else descent)
 
 
 def _glyphs_to_quadratic(glyphs, max_err=1.0, reverse_direction=True):
@@ -1110,10 +1179,10 @@ def _apply_custom_metadata(font) -> None:
     _set_name(font, 8, "Mistu @ MFFM Inc.")
 
 
-def _process_font(font, *, keep_hinting: bool, prefix_family: bool) -> None:
+def _process_font(font, *, keep_hinting: bool, prefix_family: bool, metrics_mode: str = "compact") -> None:
     if not keep_hinting:
         _remove_hinting(font)
-    _fix_metrics(font)
+    _fix_metrics(font, mode=metrics_mode)
     if prefix_family:
         _apply_custom_metadata(font)
 
@@ -1291,23 +1360,23 @@ def _write_fragments(files_dir: Path, normal: list[tuple[int, str, str]], conden
         (files_dir / "serif.xml").write_text(_serif_fragment(normal) + "\n", encoding="utf-8", newline="\n")
 
 
-def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, optional_faces: dict[str, list[SourceFace]] | None = None) -> tuple[list[SourceFace], tuple[str, ...], int | None]:
+def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, optional_faces: dict[str, list[SourceFace]] | None = None, metrics_mode: str = "compact") -> tuple[list[SourceFace], tuple[str, ...], int | None]:
     TTCollection, _font = require_fonttools()
     optional_faces = {key: list(value) for key, value in (optional_faces or {}).items() if value}
     ordered = _dedupe_static(faces)
     fonts = []
     mono_index: int | None = None
 
-    print(f"  * Mode: static ({len(ordered)} Sans face(s) selected)", flush=True)
+    print(f"  * Mode: static ({len(ordered)} Sans face(s) selected) [Metrics: {metrics_mode}]", flush=True)
 
     if len(ordered) == 1 and not optional_faces:
         face = ordered[0]
         output_name = "DroidSans.ttf"
         w_name = WEIGHT_NAMES.get(face.weight, str(face.weight))
-        print(f"    -> Harmonizing metrics for single face: {w_name} {face.style} ({face.weight})...", flush=True)
+        print(f"    -> Harmonizing metrics ({metrics_mode}) for single face: {w_name} {face.style} ({face.weight})...", flush=True)
         font = _open_font(face)
         try:
-            _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
+            _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family, metrics_mode=metrics_mode)
             font.save(str(files_dir / output_name))
         finally:
             font.close()
@@ -1324,19 +1393,19 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
         for idx, face in enumerate(ordered, 1):
             weight_name = WEIGHT_NAMES.get(face.weight, str(face.weight))
             cond_str = " condensed" if face.condensed else ""
-            print(f"    -> [{idx}/{len(ordered)}] Harmonizing metrics: {weight_name} {face.style}{cond_str} ({face.weight})...", flush=True)
+            print(f"    -> [{idx}/{len(ordered)}] Harmonizing metrics ({metrics_mode}): {weight_name} {face.style}{cond_str} ({face.weight})...", flush=True)
             font = _open_font(face)
-            _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
+            _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family, metrics_mode=metrics_mode)
             fonts.append(font)
 
         face_idx_maps: dict[str, dict[int, int]] = {}
         for cat_key in OPTIONAL_CATEGORIES:
             cat_list = optional_faces.get(cat_key, ())
             if cat_list:
-                print(f"    -> Harmonizing {FONT_CATEGORIES[cat_key].label} ({len(cat_list)} face(s))...", flush=True)
+                print(f"    -> Harmonizing {FONT_CATEGORIES[cat_key].label} ({len(cat_list)} face(s)) [Metrics: {metrics_mode}]...", flush=True)
             for face in cat_list:
                 font = _open_font(face)
-                _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
+                _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family, metrics_mode=metrics_mode)
                 idx = len(fonts)
                 face_idx_maps.setdefault(cat_key, {})[id(face)] = idx
                 if cat_key == "mono" and mono_index is None:
@@ -1393,16 +1462,16 @@ def _variable_extension(face: SourceFace) -> str:
     return ".otf" if face.sfnt_version == "OTTO" else ".ttf"
 
 
-def _save_face(face: SourceFace, output: Path, *, keep_hinting: bool, prefix_family: bool) -> None:
+def _save_face(face: SourceFace, output: Path, *, keep_hinting: bool, prefix_family: bool, metrics_mode: str = "compact") -> None:
     font = _open_font(face)
     try:
-        _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
+        _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family, metrics_mode=metrics_mode)
         font.save(str(output))
     finally:
         font.close()
 
 
-def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, optional_faces: dict[str, list[SourceFace]] | None = None) -> tuple[list[SourceFace], tuple[str, ...], int | None]:
+def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, optional_faces: dict[str, list[SourceFace]] | None = None, metrics_mode: str = "compact") -> tuple[list[SourceFace], tuple[str, ...], int | None]:
     TTCollection, _font = require_fonttools()
     optional_faces = {key: list(value) for key, value in (optional_faces or {}).items() if value}
     upright, italic = _pick_variable_faces(faces)
@@ -1410,10 +1479,10 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
     var_fonts = []
     mono_index: int | None = None
 
-    print(f"  * Mode: variable", flush=True)
+    print(f"  * Mode: variable [Metrics: {metrics_mode}]", flush=True)
     print(f"    -> Upright variable face : {upright.label}", flush=True)
     upright_font = _open_font(upright)
-    _process_font(upright_font, keep_hinting=keep_hinting, prefix_family=prefix_family)
+    _process_font(upright_font, keep_hinting=keep_hinting, prefix_family=prefix_family, metrics_mode=metrics_mode)
     var_fonts.append(upright_font)
     upright_idx = 0
 
@@ -1421,7 +1490,7 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
     if italic != upright:
         print(f"    -> Italic variable face  : {italic.label}", flush=True)
         italic_font = _open_font(italic)
-        _process_font(italic_font, keep_hinting=keep_hinting, prefix_family=prefix_family)
+        _process_font(italic_font, keep_hinting=keep_hinting, prefix_family=prefix_family, metrics_mode=metrics_mode)
         italic_idx = len(var_fonts)
         var_fonts.append(italic_font)
 
@@ -1429,10 +1498,10 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
     for cat_key in OPTIONAL_CATEGORIES:
         cat_faces = optional_faces.get(cat_key) or []
         if cat_faces:
-            print(f"    -> Harmonizing {FONT_CATEGORIES[cat_key].label} ({len(cat_faces)} face(s))...", flush=True)
+            print(f"    -> Harmonizing {FONT_CATEGORIES[cat_key].label} ({len(cat_faces)} face(s)) [Metrics: {metrics_mode}]...", flush=True)
         for face in cat_faces:
             font = _open_font(face)
-            _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family)
+            _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family, metrics_mode=metrics_mode)
             idx = len(var_fonts)
             face_idx_maps.setdefault(cat_key, {})[id(face)] = idx
             if cat_key == "mono" and mono_index is None:
@@ -1687,6 +1756,33 @@ def prompt_feature_selection(available_features: dict[str, str], category_name: 
     return selected
 
 
+def prompt_metrics_mode(default_mode: str = "compact", interactive: bool = False) -> str:
+    """Prompt user interactively to select vertical metrics harmonization mode."""
+    if not interactive:
+        return default_mode
+
+    print("\n------------------------------------------------------------")
+    print("Vertical Metrics Harmonization Mode Selection")
+    print("------------------------------------------------------------")
+    print("Choose vertical line metrics treatment for your font module:")
+    print("  [1] compact  - (Recommended) Classic tight FFIX3 metrics (maximum UI compactness)")
+    print("  [2] safe     - Decoupled safe metrics (prevents accent clipping & descender cutoff)")
+    print("  [3] preserve - Untouched original font designer metrics")
+    try:
+        choice = input(f"Select metrics mode [1=compact, 2=safe, 3=preserve] (default: {default_mode}): ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("\nUsing default metrics mode.")
+        return default_mode
+
+    if choice in ("1", "compact", "c"):
+        return "compact"
+    elif choice in ("2", "safe", "s"):
+        return "safe"
+    elif choice in ("3", "preserve", "p"):
+        return "preserve"
+    return default_mode
+
+
 def freeze_font_features(font_path: Path, features: list[str] | str) -> None:
     """Freeze OpenType features into a font file using pyftfeatfreeze for 1-to-1 cmap remappings
     and GSUB lookup promotion into default 'calt'/'liga' features for multi-glyph/contextual rules (like dlig, frac, hlig).
@@ -1884,6 +1980,7 @@ def compile_fonts(
     pua_colon: bool = False,
     synthetic_italic: bool = False,
     synthetic_italic_angle: float = -12.0,
+    metrics_mode: str = "compact",
 ) -> CompileResult:
     files_dir = module_dir / "Files"
     files_dir.mkdir(parents=True, exist_ok=True)
@@ -2104,11 +2201,11 @@ def compile_fonts(
         optional_faces = {key: separated[key] for key in OPTIONAL_CATEGORIES}
 
         print(flush=True)
-        print("[4/4] Compiling Module Payload & Harmonizing Metrics...", flush=True)
+        print(f"[4/4] Compiling Module Payload & Harmonizing Metrics (mode: {metrics_mode})...", flush=True)
         if mode == "static":
-            selected, payload, mono_index = _compile_static(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, optional_faces=optional_faces)
+            selected, payload, mono_index = _compile_static(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, optional_faces=optional_faces, metrics_mode=metrics_mode)
         else:
-            selected, payload, mono_index = _compile_variable(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, optional_faces=optional_faces)
+            selected, payload, mono_index = _compile_variable(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, optional_faces=optional_faces, metrics_mode=metrics_mode)
 
         primary = payload[0]
         has_any_vf = (mode == "variable") or any(f.variable for f in mono_faces) or any(f.variable for f in serif_faces) or any(f.variable for f in bengali_faces)
@@ -2132,6 +2229,7 @@ def compile_fonts(
             f"CLOCK_FONT={shell_quote('GoogleSansClock-Regular' + Path(primary).suffix)}",
             "VF_CONFIG_SCHEMA='2'",
             f"VF_CONFIG_ID={shell_quote(vf_id)}",
+            f"METRICS_MODE={shell_quote(metrics_mode)}",
         ]
         if mono_index is not None:
             config.append(f"MONO_INDEX={shell_quote(str(mono_index))}")

@@ -38,6 +38,7 @@ BUILD_CONFIG_KEYS = (
     "bengali_features", "centered_colon", "colon_offset", "colon_shift",
     "colon_alignment", "colon_rule", "equalize_digits", "pua_colon",
     "synthetic_italic", "synthetic_italic_angle", "interactive",
+    "metrics_mode",
 )
 
 
@@ -68,6 +69,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pua-colon", action="store_true", default=False, help="copy colon glyph to Android PUA (U+EE01) for lockscreen clocks")
     parser.add_argument("--synthetic-italic", action="store_true", default=False, help="synthesize italic style for Sans-serif if missing")
     parser.add_argument("--synthetic-italic-angle", type=float, default=-12.0, help="slant angle for synthetic italic (default: -12.0)")
+    parser.add_argument("--metrics-mode", choices=("compact", "safe", "preserve"), default=None, help="vertical metrics mode: compact (default tight FFIX3), safe (decoupled zero-clipping), or preserve (original font metrics)")
     parser.add_argument("--config", type=Path, help=f"build config file to load (default: {BUILD_CONFIG_NAME} in the project root, when present)")
     parser.add_argument("--no-config", action="store_true", help="ignore any build config file")
     parser.add_argument("--save-config", action="store_true", help=f"save the effective build options to the config file (default: {BUILD_CONFIG_NAME})")
@@ -163,6 +165,7 @@ def save_build_config(path: Path, args: argparse.Namespace) -> None:
         "synthetic_italic": bool(args.synthetic_italic),
         "synthetic_italic_angle": float(args.synthetic_italic_angle or -12.0),
         "interactive": args.interactive,
+        "metrics_mode": getattr(args, "metrics_mode", "compact") or "compact",
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(f"Build config    : saved {path}")
@@ -243,6 +246,19 @@ def build_module(args: argparse.Namespace) -> Path | None:
     fonts_dir = (args.fonts_dir or (ROOT / "Fonts")).resolve()
     out_dir = (args.output_dir or (ROOT / "dist")).resolve()
 
+    if getattr(args, "metrics_mode", None) is None:
+        should_prompt = args.interactive if args.interactive is not None else sys.stdin.isatty()
+        if should_prompt and args.interactive is not False:
+            from font_module_standalone import prompt_metrics_mode
+            args.metrics_mode = prompt_metrics_mode("compact", interactive=True)
+        else:
+            args.metrics_mode = "compact"
+    else:
+        args.metrics_mode = str(args.metrics_mode).lower().strip()
+
+    if args.metrics_mode not in ("compact", "safe", "preserve"):
+        args.metrics_mode = "compact"
+
     print("=" * 64, flush=True)
     print("  MFFMv14 Standalone Module Builder", flush=True)
     print("=" * 64, flush=True)
@@ -251,6 +267,12 @@ def build_module(args: argparse.Namespace) -> Path | None:
     print(f"  Detection Mode   : {args.mode or 'auto'}", flush=True)
     print(f"  TrueType Hinting : {'Preserve' if args.keep_hinting else 'Strip (Clean rendering)'}", flush=True)
     print(f"  Family Prefix    : {'Disabled (--no-prefix)' if args.no_prefix else 'Enabled ([MFFM] / Mistu)'}", flush=True)
+    metrics_desc = {
+        "compact": "Classic tight FFIX3 (Default)",
+        "safe": "Decoupled zero-clipping",
+        "preserve": "Untouched original metrics",
+    }.get(args.metrics_mode, "Classic tight FFIX3")
+    print(f"  Metrics Mode     : {args.metrics_mode.capitalize()} [{metrics_desc}]", flush=True)
     if args.features:
         print(f"  Sans Features    : {args.features}", flush=True)
     if args.centered_colon is not False:
@@ -288,6 +310,7 @@ def build_module(args: argparse.Namespace) -> Path | None:
             pua_colon=bool(args.pua_colon),
             synthetic_italic=bool(args.synthetic_italic),
             synthetic_italic_angle=float(args.synthetic_italic_angle or -12.0),
+            metrics_mode=args.metrics_mode,
         )
         display_name = display_name_for_mode(args.name or result.family, result.mode)
         props = update_module_metadata(

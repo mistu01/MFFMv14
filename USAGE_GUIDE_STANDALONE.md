@@ -22,6 +22,7 @@
    - [Lockscreen Clock PUA Colon](#lockscreen-clock-pua-colon)
    - [OpenType Feature Freezing](#opentype-feature-freezing)
    - [Synthetic Italics](#synthetic-italics)
+   - [Vertical Metrics Harmonization](#vertical-metrics-harmonization)
 4. [External Fonts on Device (`/sdcard/MFFM/`)](#-external-fonts-on-device-sdcardmffm)
    - [Standard Face Counts for External Static Fonts](#standard-face-counts-for-external-static-fonts)
    - [External Variable Font Tuning (`.conf`)](#external-variable-font-tuning-conf)
@@ -215,6 +216,28 @@ python build.py --synthetic-italic
 ```
 - Automatically generates slanted companion italic faces for all available upright weights.
 - Adjust angle using `--synthetic-italic-angle` (default: `-12.0` degrees).
+
+---
+
+### Vertical Metrics Harmonization
+
+Control vertical line metrics harmonization across `hhea` and `OS/2` tables:
+```bash
+python build.py --metrics-mode compact   # Classic tight FFIX3 (Default)
+python build.py --metrics-mode safe      # Decoupled safe zero-clipping metrics
+python build.py --metrics-mode preserve  # Keep original font designer metrics
+```
+
+- **`compact` (Default)**:
+  - Harmonizes line metrics using classic tight FFIX3 values (scaled to font UPM: `2128` ascent, `-550` descent, `0` lineGap at 2048 UPM).
+  - Eliminates vertical drift across Android UI elements and provides clean, compact line spacing.
+- **`safe`**:
+  - Dynamically scans true glyph contour bounds (`glyf` outlines + `head.yMax`/`yMin`).
+  - Automatically expands ascent and descent independently if tall diacritics or deep descenders exceed baseline values, while setting `usWinAscent` and `usWinDescent` safely.
+  - Recommended for fonts with large accent marks or complex scripts (e.g. Vietnamese, Arabic, Thai, Burmese) to eliminate accent and descender clipping.
+- **`preserve`**:
+  - Leaves original font designer metrics (`head`, `hhea`, `OS/2` sTypo/usWin) completely untouched.
+  - Only applies necessary Android HWUI bugfixes (clears `fsSelection` bit 7 and ensures `usWeightClass=400` on variable fonts).
 
 ---
 
