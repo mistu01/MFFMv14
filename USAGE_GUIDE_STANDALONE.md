@@ -260,8 +260,11 @@ python build.py --no-subset   # Force disable subsetting
   - Preserves essential developer glyphs and symbols: Apple logo (`0xF8FF`), Powerline status line symbols, Nerd Fonts BMP icons, Material Design Icons Plane 15 (`0xF0001–0xF1AF0`), and Web icons (`0xE900–0xEF50`).
 - **Android Noto Color Emoji Safe**:
   - Drops monochrome bitmap/outline duplicates that shadow Android's system `NotoColorEmoji` (Plane 1 pictographs `0x1F000–0x1FAFF`, Misc Symbols `0x2600–0x26FF`, Dingbats `0x2700–0x27BF`).
+- **Chinese, Japanese, and Korean (CJK) Script Removal**:
+  - Completely purges CJK ideographs (Main block `0x4E00–0x9FFF`, Ext A through H `0x3400–0x4DBF`, `0x20000–0x323AF`, Radicals, Compatibility Ideographs), Japanese Kana (Hiragana `0x3040–0x309F`, Katakana `0x30A0–0x30FF`, Kana Supplements), Korean Hangul (Syllables `0xAC00–0xD7AF`, Jamo `0x1100–0x11FF`, Extended A & B), Bopomofo, and Halfwidth/Fullwidth forms (`0xFF00–0xFFEF`).
+  - Strips tens of thousands of unneeded glyphs and megabytes of table data.
 - **Language Guard**:
-  - All spoken language scripts (Latin, Cyrillic, Greek, Arabic, Hebrew, CJK, Devanagari, Thai, Vietnamese, etc.) and diacritics are strictly guarded via Unicode category checks (`L*` letters and `M*` marks) and never dropped.
+  - All non-CJK spoken language scripts (Latin, Cyrillic, Greek, Arabic, Hebrew, Devanagari, Bengali, Thai, Vietnamese, etc.) and diacritics are strictly guarded via Unicode category checks (`L*` letters and `M*` marks) and never dropped.
 - **Full Layout & Metadata Passthrough**:
   - Preserves all OpenType layout features (`*`), scripts, variable axes (`fvar`, `gvar`, `cvar`), GPOS/GSUB tables, and font naming.
 

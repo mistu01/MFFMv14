@@ -2050,17 +2050,18 @@ prepare_variable_config() {
         fi
         {
           printf '# ------------------------------------------------------------------------------\n'
-          printf '# %s. UNIVERSAL FONT SUBSETTER (Strip Plane 16 Bloat & Noto Emoji Conflicts)\n' "$_sub_sec"
+          printf '# %s. UNIVERSAL FONT SUBSETTER (Strip Plane 16 Bloat, CJK & Noto Emoji Conflicts)\n' "$_sub_sec"
           printf '# ------------------------------------------------------------------------------\n'
           printf '# WHAT IT DOES:\n'
-          printf '#   Removes proprietary bloat (Apple SF Symbols in Plane 16, 8400+ unused icons)\n'
-          printf '#   and monochrome emoji outlines that conflict with Android NotoColorEmoji.\n'
-          printf '#   Safeguards all spoken language alphabets (Latin, Cyrillic, Greek, Arabic,\n'
-          printf '#   Hebrew, CJK, Devanagari, etc.) and developer glyphs (Powerline, Nerd Fonts).\n'
+          printf '#   Removes proprietary bloat (Apple SF Symbols in Plane 16, 8400+ unused icons),\n'
+          printf '#   Asian CJK scripts (Chinese Hanzi, Japanese Kana/Kanji, Korean Hangul), and\n'
+          printf '#   monochrome emoji outlines that conflict with Android NotoColorEmoji.\n'
+          printf '#   Safeguards spoken language alphabets (Latin, Cyrillic, Greek, Arabic,\n'
+          printf '#   Hebrew, Devanagari, Bengali, Thai, Vietnamese, etc.) and developer glyphs.\n'
           printf '#   Reduces font memory footprint and prevents out-of-memory errors on-device.\n'
           printf '#\n'
           printf '# WHEN TO CHOOSE:\n'
-          printf '#   - yes : Optimize font size and strip unused symbol bloat. %s\n' "$_subset_note"
+          printf '#   - yes : Optimize font size and strip unused symbol & CJK bloat. %s\n' "$_subset_note"
           printf '#   - no  : Retain all original glyphs and tables untouched.\n'
           printf 'ENABLE_SUBSET_FONTS=%s\n' "$_def_subset"
         } >> "$VF_CONFIG_FILE"
@@ -2255,7 +2256,7 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
       yes|YES|true|TRUE|1)
         _req_subset=1
         _extra_compile_args="$_extra_compile_args --enable-subset"
-        ui_print "    [*] Subsetting font (stripping Plane 16 bloat & emoji conflicts)..."
+        ui_print "    [*] Subsetting font (stripping Plane 16 bloat, CJK scripts & emoji conflicts)..."
         ;;
     esac
     if [ -n "$_cfg_metrics_mode" ] && [ "$_cfg_metrics_mode" != "preserve" ]; then

@@ -1187,10 +1187,11 @@ def prompt_subset_mode(large_fonts: list[tuple[Path, int]] | None = None, intera
         print(f"Large font file(s) (> 1 MB) detected: {details}")
     else:
         print("Font file(s) (> 1 MB) detected in source directory.")
-    print("Subsetting strips unused Plane 16 Apple SF Symbols (8,400+ glyphs) and")
-    print("monochrome emoji overrides that shadow Android's Noto Color Emoji, while")
-    print("strictly preserving all written languages, Powerline/Nerd/MDI icons,")
-    print("and OpenType layout features. File size is reduced by up to 50-90%.")
+    print("Subsetting strips unused Plane 16 Apple SF Symbols (8,400+ glyphs),")
+    print("Chinese, Japanese, and Korean (CJK) scripts, and monochrome emoji overrides")
+    print("that shadow Android's Noto Color Emoji, while strictly preserving spoken")
+    print("alphabets, Powerline/Nerd/MDI icons, and OpenType layout features.")
+    print("File size is reduced by up to 50-90%.")
     try:
         choice = input("Enable font subsetting? [Y/n] (default: Y): ").strip().lower()
     except (EOFError, KeyboardInterrupt):

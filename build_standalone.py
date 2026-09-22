@@ -70,7 +70,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--synthetic-italic", action="store_true", default=False, help="synthesize italic style for Sans-serif if missing")
     parser.add_argument("--synthetic-italic-angle", type=float, default=-12.0, help="slant angle for synthetic italic (default: -12.0)")
     parser.add_argument("--metrics-mode", choices=("compact", "safe", "preserve"), default=None, help="vertical metrics mode: compact (default tight FFIX3), safe (decoupled zero-clipping), or preserve (original font metrics)")
-    parser.add_argument("--subset", action="store_true", default=None, help="subset fonts (drops Plane 16 SF bloat & Noto emoji conflicts; preserves language scripts & PUA)")
+    parser.add_argument("--subset", action="store_true", default=None, help="subset fonts (drops Plane 16 SF bloat, CJK scripts & Noto emoji conflicts; preserves spoken alphabets & PUA)")
     parser.add_argument("--no-subset", action="store_false", dest="subset", help="disable font subsetting")
     parser.add_argument("--config", type=Path, help=f"build config file to load (default: {BUILD_CONFIG_NAME} in the project root, when present)")
     parser.add_argument("--no-config", action="store_true", help="ignore any build config file")

@@ -19,8 +19,9 @@ Dates follow the `YYYY.MM.DD` versioning format carried by the modules.
 - **Universal Font Subsetter & Plane 16 Bloat Pruning (`build_standalone.py`, `font_module_standalone.py`, `runtime_helper.py`)**:
   - Integrated universal font subsetter into standalone font compilation.
   - **Smart PUA Preservation**: Preserves Apple logo (`0xF8FF`), Powerline, Nerd Fonts BMP, Material Design Icons (`0xF0001–0xF1AF0`), and Web icons (`0xE900–0xEF50`), while dropping Apple SF Symbols Plane 16 (`0x100000–0x10FFFD`, 8,400+ unused glyphs) and unassigned Plane 15 bloat (`0xF1AF1–0xFFFFD`).
+  - **Chinese, Japanese, and Korean (CJK) Script Removal**: Completely purges CJK ideographs (Main block `0x4E00–0x9FFF`, Ext A through H `0x3400–0x4DBF`, `0x20000–0x323AF`), Japanese Kana (Hiragana `0x3040–0x309F`, Katakana `0x30A0–0x30FF`, Kana Supplements), Korean Hangul (Syllables `0xAC00–0xD7AF`, Jamo `0x1100–0x11FF`, Extended A & B), Bopomofo, and Fullwidth forms (`0xFF00–0xFFEF`).
   - **Android Noto Color Emoji Safe**: Drops monochrome emoji outlines that shadow Android's system `NotoColorEmoji`.
-  - **Language Guard**: All spoken languages (Latin, Cyrillic, Greek, Arabic, Hebrew, CJK, Devanagari, Thai, Vietnamese, etc.) and diacritics are strictly guarded via Unicode category verification (`L*` letters and `M*` marks) and never dropped.
+  - **Language Guard**: All non-CJK spoken languages (Latin, Cyrillic, Greek, Arabic, Hebrew, Devanagari, Bengali, Thai, Vietnamese, etc.) and diacritics are strictly guarded via Unicode category verification (`L*` letters and `M*` marks) and never dropped.
   - **Automatic Font Size Detection (> 1 MB)**: Automatically prompts or activates when source fonts exceed 1 MB, slashing font memory footprint and package size.
   - Added `--subset` and `--no-subset` CLI flags with `.mffm-build.json` persistence.
 

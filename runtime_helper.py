@@ -919,13 +919,35 @@ APPLE_SF_SYMBOLS_PLANE16 = (0x100000, 0x10FFFD)
 PLANE15_UNASSIGNED = (0xF1AF1, 0xFFFFD)
 
 CJK_RANGES = [
-    (0x1100, 0x11FF), (0x2E80, 0x2EFF), (0x2F00, 0x2FDF), (0x2FF0, 0x2FFF),
-    (0x3000, 0x303F), (0x3040, 0x309F), (0x30A0, 0x30FF), (0x3100, 0x312F),
-    (0x3130, 0x318F), (0x3190, 0x319F), (0x31A0, 0x31BF), (0x31C0, 0x31EF),
-    (0x31F0, 0x31FF), (0x3200, 0x32FF), (0x3300, 0x33FF), (0x3400, 0x4DBF),
-    (0x4E00, 0x9FFF), (0xA960, 0xA97F), (0xAC00, 0xD7AF), (0xD7B0, 0xD7FF),
-    (0xF900, 0xFAFF), (0xFE30, 0xFE4F), (0xFF00, 0xFFEF), (0x20000, 0x3134F),
-    (0xE0100, 0xE01EF),
+    (0x1100, 0x11FF),    # Hangul Jamo (Korean)
+    (0x2E80, 0x2EFF),    # CJK Radicals Supplement
+    (0x2F00, 0x2FDF),    # Kangxi Radicals
+    (0x2FF0, 0x2FFF),    # Ideographic Description Characters
+    (0x3000, 0x303F),    # CJK Symbols and Punctuation
+    (0x3040, 0x309F),    # Hiragana (Japanese)
+    (0x30A0, 0x30FF),    # Katakana (Japanese)
+    (0x3100, 0x312F),    # Bopomofo (Chinese)
+    (0x3130, 0x318F),    # Hangul Compatibility Jamo (Korean)
+    (0x3190, 0x319F),    # Kanbun (Japanese)
+    (0x31A0, 0x31BF),    # Bopomofo Extended (Chinese)
+    (0x31C0, 0x31EF),    # CJK Strokes
+    (0x31F0, 0x31FF),    # Katakana Phonetic Extensions (Japanese)
+    (0x3200, 0x32FF),    # Enclosed CJK Letters and Months
+    (0x3300, 0x33FF),    # CJK Compatibility
+    (0x3400, 0x4DBF),    # CJK Unified Ideographs Extension A
+    (0x4DC0, 0x4DFF),    # Yijing Hexagram Symbols
+    (0x4E00, 0x9FFF),    # CJK Unified Ideographs (Main Hanzi/Kanji/Hanja block)
+    (0xA960, 0xA97F),    # Hangul Jamo Extended-A (Korean)
+    (0xAC00, 0xD7AF),    # Hangul Syllables (Korean)
+    (0xD7B0, 0xD7FF),    # Hangul Jamo Extended-B (Korean)
+    (0xF900, 0xFAFF),    # CJK Compatibility Ideographs
+    (0xFE30, 0xFE4F),    # CJK Compatibility Forms
+    (0xFF00, 0xFFEF),    # Halfwidth and Fullwidth Forms
+    (0x16FE0, 0x16FFF),  # Ideographic Symbols and Punctuation
+    (0x1AFF0, 0x1AFFF),  # Kana Extended-B (Japanese)
+    (0x1B000, 0x1B16F),  # Kana Supplement, Extended-A, Small Kana (Japanese)
+    (0x20000, 0x323AF),  # CJK Unified Ideographs Ext B-H & Compatibility Supplement
+    (0xE0100, 0xE01EF),  # Variation Selectors Supplement (CJK Ideographic)
 ]
 
 
@@ -934,6 +956,10 @@ def _expand_ranges(ranges) -> set[int]:
     for item in ranges:
         out.update(range(item[0], item[1] + 1))
     return out
+
+
+def get_cjk_set() -> set[int]:
+    return _expand_ranges(CJK_RANGES)
 
 
 def get_noto_emoji_conflict_set() -> set[int]:
@@ -959,7 +985,7 @@ def build_subset_drop_set(
     keep_apple_logo: bool = True,
     emoji_mode: str = "noto-safe",
     drop_technical: bool = True,
-    drop_cjk: bool = False,
+    drop_cjk: bool = True,
 ) -> set[int]:
     drop: set[int] = set()
 
@@ -993,7 +1019,7 @@ def build_subset_drop_set(
     if drop_technical:
         drop |= _expand_ranges(OBSCURE_TECHNICAL_RANGES)
     if drop_cjk:
-        drop |= _expand_ranges(CJK_RANGES)
+        drop |= get_cjk_set()
 
     return drop
 
@@ -1019,7 +1045,7 @@ def subset_font(
     pua_mode: str = "keep-common",
     emoji_mode: str = "noto-safe",
     drop_technical: bool = True,
-    drop_cjk: bool = False,
+    drop_cjk: bool = True,
     force: bool = False,
 ) -> bool:
     """Subset an open TTFont object in-place using smart PUA preservation and Noto-safe emoji cleanup."""
@@ -1035,7 +1061,12 @@ def subset_font(
         drop_technical=drop_technical,
         drop_cjk=drop_cjk,
     )
-    allowed_drops = get_noto_emoji_conflict_set() if emoji_mode == "noto-safe" else set()
+    allowed_drops = set()
+    if emoji_mode == "noto-safe":
+        allowed_drops |= get_noto_emoji_conflict_set()
+    if drop_cjk:
+        allowed_drops |= get_cjk_set()
+
     risky = subset_language_guard(cmap, drop, allowed_drops=allowed_drops)
     drop_eff = (drop - risky) if (risky and not force) else drop
     keep = sorted(cmap - drop_eff)
@@ -1067,7 +1098,7 @@ def subset_font_file(
     pua_mode: str = "keep-common",
     emoji_mode: str = "noto-safe",
     drop_technical: bool = True,
-    drop_cjk: bool = False,
+    drop_cjk: bool = True,
     force: bool = False,
 ) -> tuple[bool, int, int]:
     """Subset a font file on disk. Returns (success, bytes_before, bytes_after)."""
@@ -1091,7 +1122,12 @@ def subset_font_file(
         drop_technical=drop_technical,
         drop_cjk=drop_cjk,
     )
-    allowed_drops = get_noto_emoji_conflict_set() if emoji_mode == "noto-safe" else set()
+    allowed_drops = set()
+    if emoji_mode == "noto-safe":
+        allowed_drops |= get_noto_emoji_conflict_set()
+    if drop_cjk:
+        allowed_drops |= get_cjk_set()
+
     risky = subset_language_guard(cmap, drop, allowed_drops=allowed_drops)
     drop_eff = (drop - risky) if (risky and not force) else drop
     keep = sorted(cmap - drop_eff)
@@ -2435,12 +2471,12 @@ def compile_bundle(
         if convert_otf and ("CFF " in font or "CFF2" in font or getattr(font, "sfntVersion", None) == "OTTO"):
             otf_to_ttf(font)
 
-        # 0b. Font subsetting (Smart PUA & Noto-safe emoji cleanup)
+        # 0b. Font subsetting (Smart PUA, CJK & Noto-safe emoji cleanup)
         if enable_subset:
             cmap_b = len(font.getBestCmap()) if font.getBestCmap() else 0
-            if subset_font(font, keep_hinting=keep_hinting):
+            if subset_font(font, keep_hinting=keep_hinting, drop_cjk=True):
                 cmap_a = len(font.getBestCmap()) if font.getBestCmap() else 0
-                print(f"    [*] Subsetting applied to {Path(face['path']).name} ({cmap_b} -> {cmap_a} glyphs, Noto-safe & PUA preserved)", flush=True)
+                print(f"    [*] Subsetting applied to {Path(face['path']).name} ({cmap_b} -> {cmap_a} glyphs, Plane 16/CJK/emoji removed)", flush=True)
 
         # 1. Hinting stripping
         if not keep_hinting:
@@ -2724,12 +2760,13 @@ def main():
     s_comp.add_argument("--freeze-mono")
     s_comp.add_argument("--freeze-serif")
     s_comp.add_argument("--freeze-bengali")
-    s_comp.add_argument("--enable-subset", action="store_true", help="Subset fonts (smart PUA preservation & Noto-safe emoji cleanup)")
+    s_comp.add_argument("--enable-subset", action="store_true", help="Subset fonts (drops Plane 16 SF bloat, CJK scripts & Noto emoji conflicts)")
 
-    s_sub = sub.add_parser("subset", help="Smart subset font: PUA preservation, format-resilient, Noto-safe")
+    s_sub = sub.add_parser("subset", help="Smart subset font: PUA preservation, format-resilient, Noto-safe, CJK removal")
     s_sub.add_argument("--in", dest="input_file", required=True, help="Input font file")
     s_sub.add_argument("--out", dest="output_file", help="Output font file (default overwrites input)")
     s_sub.add_argument("--keep-hinting", action="store_true", help="Preserve font hinting")
+    s_sub.add_argument("--keep-cjk", action="store_true", help="Preserve Chinese, Japanese, and Korean (CJK) characters")
 
     s_otf2ttf = sub.add_parser("otf2ttf", help="Convert CFF/OTF font to TrueType font using cu2qu")
     s_otf2ttf.add_argument("--in", dest="input_file", required=True, help="Input OTF font")
@@ -2813,7 +2850,7 @@ def main():
         font.close()
         print(f"Processed {args.input_file} -> {out_f}")
     elif args.cmd == "subset":
-        ok, before_b, after_b = subset_font_file(args.input_file, args.output_file, keep_hinting=args.keep_hinting)
+        ok, before_b, after_b = subset_font_file(args.input_file, args.output_file, keep_hinting=args.keep_hinting, drop_cjk=not args.keep_cjk)
         if ok:
             pct = (after_b / before_b * 100) if before_b else 100
             print(f"Subsetted {args.input_file} ({before_b / 1024:.1f} KiB -> {after_b / 1024:.1f} KiB, {pct:.1f}%)")
