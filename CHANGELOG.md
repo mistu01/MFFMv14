@@ -6,10 +6,11 @@ versioning scheme the modules themselves carry.
 ## 2026.09.23
 
 ### Added
-- **Standalone SemiBold-as-Medium Fallback (`template-standalone/customize.sh` & `font_module_standalone.py`)**:
+- **Standalone SemiBold-as-Medium & SemiBoldItalic-as-MediumItalic Fallback (`template-standalone/customize.sh` & `font_module_standalone.py`)**:
   - Automatically maps SemiBold (600) to Medium (500) for external Bengali and Serif static fonts lacking a native Medium weight face.
-  - Expands static Bengali fallback to 3 faces (`Regular`, `SemiBold-as-Medium`, `Bold`) and static Serif fallback to up to 6 faces (`Regular`, `Italic`, `SemiBold-as-Medium`, `MediumItalic`, `Bold`, `BoldItalic`).
-  - Emits corresponding `weight="500"` XML entries referencing the SemiBold face index in unified TTC with zero added overhead.
+  - For external Serif fonts, when MediumItalic (500 italic) is not present and upright Medium is also missing, SemiBoldItalic (600 italic) is automatically used as MediumItalic.
+  - Expands static Bengali fallback to 3 faces (`Regular`, `SemiBold-as-Medium`, `Bold`) and static Serif fallback to up to 6 faces (`Regular`, `Italic`, `SemiBold-as-Medium`, `SemiBoldItalic-as-MediumItalic`, `Bold`, `BoldItalic`).
+  - Emits corresponding `weight="500"` XML entries referencing the SemiBold / SemiBoldItalic face indices in unified TTC with zero added overhead.
 - **Automated MFFM Runtime Build & Release Pipeline (`.github/workflows/runtime-auto-release.yml` & `check_runtime_updates.py`)**:
   - Automatically queries PyPI for `fonttools` updates and GitHub for `astral-sh/python-build-standalone` CPython updates on a daily schedule.
   - Automatically updates supply-chain pins, compiles static musl ABI payloads, signs the runtime module, and publishes GitHub releases.

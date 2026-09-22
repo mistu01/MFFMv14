@@ -1588,6 +1588,9 @@ else
 
       _r500=$(find_best_face 500 normal $_beng_dirs "$MFFM_DIR")
       _r500_from_sb=0
+      case "$(printf '%s' "${_r500##*/}" | tr '[:upper:]' '[:lower:]')" in
+        *semi*bold*|*demibold*|*600*) _r500_from_sb=1 ;;
+      esac
       if [ -z "$_r500" ]; then
         _r600=$(find_best_face 600 normal $_beng_dirs "$MFFM_DIR")
         if [ -n "$_r600" ] && [ "$_r600" != "$_r400" ]; then
@@ -1729,6 +1732,9 @@ else
 
       _sr500=$(find_best_face 500 normal $_serif_dirs)
       _sr500_from_sb=0
+      case "$(printf '%s' "${_sr500##*/}" | tr '[:upper:]' '[:lower:]')" in
+        *semi*bold*|*demibold*|*600*) _sr500_from_sb=1 ;;
+      esac
       if [ -z "$_sr500" ]; then
         _sr600=$(find_best_face 600 normal $_serif_dirs)
         if [ -n "$_sr600" ] && [ "$_sr600" != "$_sr400" ]; then
@@ -1738,13 +1744,21 @@ else
       fi
 
       _si500=$(find_best_face 500 italic $_serif_dirs)
+      _si500_from_sb=0
+      case "$(printf '%s' "${_si500##*/}" | tr '[:upper:]' '[:lower:]')" in
+        *semi*bold*|*demibold*|*600*) _si500_from_sb=1 ;;
+      esac
       if [ -z "$_si500" ]; then
         _si600=$(find_best_face 600 italic $_serif_dirs)
         if [ -n "$_si600" ] && [ "$_si600" != "$_si400" ]; then
           _si500="$_si600"
+          _si500_from_sb=1
         fi
       fi
-      [ -n "$_sr500" ] && [ -z "$_si500" ] && _si500="$_sr500"
+      if [ -n "$_sr500" ] && [ -z "$_si500" ]; then
+        _si500="$_sr500"
+        [ "$_sr500_from_sb" = "1" ] && _si500_from_sb=1
+      fi
 
       _sr700=$(find_best_face 700 normal $_serif_dirs)
       if [ -z "$_sr700" ]; then
@@ -1791,11 +1805,11 @@ else
         replace_family "$xml" serif-monospace "$frag_file" "split"
       done
       if [ -n "$_sr500" ]; then
-        if [ "$_sr500_from_sb" = "1" ]; then
-          status_ok "Static Serif fonts (6 faces: Regular, Italic, SemiBold-as-Medium, MediumItalic, Bold, BoldItalic)"
-        else
-          status_ok "Static Serif fonts (6 faces: Regular, Italic, Medium, MediumItalic, Bold, BoldItalic)"
-        fi
+        _med_name="Medium"
+        [ "$_sr500_from_sb" = "1" ] && _med_name="SemiBold-as-Medium"
+        _med_ital_name="MediumItalic"
+        [ "$_si500_from_sb" = "1" ] && _med_ital_name="SemiBoldItalic-as-MediumItalic"
+        status_ok "Static Serif fonts (6 faces: Regular, Italic, $_med_name, $_med_ital_name, Bold, BoldItalic)"
       else
         status_ok "Static Serif fonts (4 faces: Regular, Italic, Bold, BoldItalic)"
       fi

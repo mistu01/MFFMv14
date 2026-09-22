@@ -9,10 +9,11 @@ Dates follow the `YYYY.MM.DD` versioning format carried by the modules.
 ## 2026.09.23
 
 ### Added
-- **SemiBold-as-Medium Fallback for External Static Bengali & Serif Fonts (`template-standalone/customize.sh` & `font_module_standalone.py`)**:
+- **SemiBold-as-Medium & SemiBoldItalic-as-MediumItalic Fallback for External Static Fonts (`template-standalone/customize.sh` & `font_module_standalone.py`)**:
   - Automatically maps SemiBold (600) to Medium (500) when external static Bengali or Serif fonts provide SemiBold but lack a native Medium weight face.
-  - Expands static Bengali fallback to 3 faces (`Regular`, `SemiBold-as-Medium`, `Bold`) and static Serif fallback to up to 6 faces (`Regular`, `Italic`, `SemiBold-as-Medium`, `MediumItalic`, `Bold`, `BoldItalic`).
-  - Emits `<font weight="500">` XML definitions pointing directly to the SemiBold face index in `DroidSans.ttf` or standalone font files with zero overhead.
+  - For external Serif fonts, when MediumItalic (500 italic) is not present and upright Medium is also missing, SemiBoldItalic (600 italic) is automatically used as MediumItalic.
+  - Expands static Bengali fallback to 3 faces (`Regular`, `SemiBold-as-Medium`, `Bold`) and static Serif fallback to up to 6 faces (`Regular`, `Italic`, `SemiBold-as-Medium`, `SemiBoldItalic-as-MediumItalic`, `Bold`, `BoldItalic`).
+  - Emits `<font weight="500">` XML definitions pointing directly to the SemiBold / SemiBoldItalic face indices in `DroidSans.ttf` or standalone font files with zero overhead.
 - **3-Mode Vertical Metrics Harmonization (`--metrics-mode`) (`build_standalone.py`, `build.py`, `font_module_standalone.py`)**:
   - Added full parity with runtime metrics modes: `compact` (default tight FFIX3), `safe` (decoupled zero-clipping bounds calculation from `glyf`/`head`), and `preserve` (intact designer metrics with HWUI bugfixes).
   - Integrated into interactive wizard prompts (`prompt_metrics_mode`), build configuration persistence (`.mffm-build.json`), build summary banners, and standalone module runtime configuration (`font-config.sh`).

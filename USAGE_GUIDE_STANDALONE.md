@@ -289,11 +289,11 @@ When the standalone installer detects external static fonts in `/sdcard/MFFM/`, 
 
 | Category | Target Directory | Standard Face Count | Selected Faces |
 | :--- | :--- | :--- | :--- |
-| **Serif** | `/sdcard/MFFM/Serif/` | **4–6 faces** | `Regular` (400 normal), `Italic` (400 italic), `Bold` (700 normal), `BoldItalic` (700 italic), and optional `Medium` (500 normal/italic; if medium is missing but semibold exists, semibold is used as medium) |
+| **Serif** | `/sdcard/MFFM/Serif/` | **4–6 faces** | `Regular` (400 normal), `Italic` (400 italic), `Bold` (700 normal), `BoldItalic` (700 italic), and optional `Medium` / `MediumItalic` (500 normal/italic; if medium is missing but semibold exists, semibold is used as medium, and if medium italic is missing when upright medium is missing, semibold italic is used as medium italic) |
 | **Bengali** | `/sdcard/MFFM/Bengali/` | **2–3 faces** | `Regular` (400 normal), `Bold` (700 normal), and optional `Medium` (500 normal; if medium is missing but semibold exists, semibold is used as medium) |
 | **Monospace**| `/sdcard/MFFM/Monospace/` | **1 face** | `Regular` (400 normal) |
 
-> 💡 **SemiBold-as-Medium Fallback:** If your external Bengali or Serif font family lacks a dedicated Medium (500) weight but includes SemiBold (600), the standalone module automatically utilizes the SemiBold face as Medium to preserve rich typographical hierarchy in apps.
+> 💡 **SemiBold-as-Medium & SemiBoldItalic-as-MediumItalic Fallback:** If your external Bengali or Serif font family lacks a dedicated Medium (500) weight but includes SemiBold (600), the standalone module automatically utilizes the SemiBold face as Medium to preserve rich typographical hierarchy in apps. Similarly for Serif, if MediumItalic is not present when upright Medium is also missing, SemiBoldItalic is automatically utilized as MediumItalic.
 
 ---
 

@@ -1288,6 +1288,8 @@ def _generate_full_family_xml(faces: list[SourceFace], filename: str, get_index_
             if category in ("bengali", "serif") and not has_500 and sb_face is not None:
                 idx = get_index_fn(sb_face)
                 entries.append((500, _font_xml(filename, 500, style, index=idx)))
+                role = "SemiBoldItalic-as-MediumItalic" if style == "italic" else "SemiBold-as-Medium"
+                print(f"    -> [{category.capitalize()}] Fallback mapped {role}: {sb_face.label} -> weight 500 ({style})", flush=True)
 
             entries.sort(key=lambda item: item[0])
             for _w, xml in entries:
