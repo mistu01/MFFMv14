@@ -12,9 +12,10 @@ versioning scheme the modules themselves carry.
   - Generates completely self-contained modules that require **zero** on-device Python or `mffm-runtime` prerequisite and install in 1–2 seconds.
   - Backed by dedicated `template-standalone/` payload and `font_module_standalone.py`.
   - **Standardized External Static Fallback Faces**:
-    - **Serif**: 4 faces default (`NotoSerif-Regular.ttf` 400 normal, `NotoSerif-Italic.ttf` 400 italic, `NotoSerif-Bold.ttf` 700 normal, `NotoSerif-BoldItalic.ttf` 700 italic).
-    - **Bengali**: 2 faces default (`NotoSansBengali-VF.ttf` / `Regular` 400, `NotoSansBengaliUI-VF.ttf` / `Bold` 700).
+    - **Serif**: 4–6 faces default (`NotoSerif-Regular.ttf` 400 normal, `NotoSerif-Italic.ttf` 400 italic, `NotoSerif-Bold.ttf` 700 normal, `NotoSerif-BoldItalic.ttf` 700 italic, plus optional `Medium` 500 / SemiBold-as-Medium).
+    - **Bengali**: 2–3 faces default (`NotoSansBengali-VF.ttf` / `Regular` 400, `NotoSansBengaliUI-VF.ttf` / `Bold` 700, plus optional `Medium` 500 / SemiBold-as-Medium).
     - **Monospace**: 1 face default (`DroidSansMono.ttf` / `CutiveMono.ttf` 400 normal).
+    - **SemiBold-as-Medium Fallback**: If external Bengali or Serif fonts lack a Medium (500) weight but contain SemiBold (600), the standalone module maps that SemiBold face as Medium in system font configurations.
     - Pure shell execution with zero on-device TTC bundling or Python dependencies for external static fonts.
   - **100% Python & fontTools Dependency-Free Module Installer**:
     - Completely decoupled the standalone module (`template-standalone/customize.sh`) from `python`, `python3`, `pip`, and `fonttools`.

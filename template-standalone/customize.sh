@@ -1581,22 +1581,46 @@ else
       status_ok "Variable Bengali font (${ext_beng##*/}) auto-configured natively"
     else
       prune_obsolete_profile_keys BENGALI_UPRIGHT
-      # Standalone standard: 2 faces default for static Bengali (Regular 400 and Bold 700)
+      # Standalone standard: 2-3 faces for static Bengali (Regular 400, Medium 500 [or SemiBold 600 as Medium], Bold 700)
       _r400=$(find_best_face 400 normal $_beng_dirs "$MFFM_DIR")
       [ -z "$_r400" ] && _r400="$ext_beng"
+
+      _r500=$(find_best_face 500 normal $_beng_dirs "$MFFM_DIR")
+      _r500_from_sb=0
+      if [ -z "$_r500" ]; then
+        _r600=$(find_best_face 600 normal $_beng_dirs "$MFFM_DIR")
+        if [ -n "$_r600" ] && [ "$_r600" != "$_r400" ]; then
+          _r500="$_r600"
+          _r500_from_sb=1
+        fi
+      fi
+
       _r700=$(find_best_face 700 normal $_beng_dirs "$MFFM_DIR")
-      [ -z "$_r700" ] && _r700=$(find_best_face 600 normal $_beng_dirs "$MFFM_DIR")
-      [ -z "$_r700" ] && _r700="$_r400"
+      if [ -z "$_r700" ]; then
+        _r600_cand=$(find_best_face 600 normal $_beng_dirs "$MFFM_DIR")
+        if [ -n "$_r600_cand" ] && [ "$_r600_cand" != "$_r500" ] && [ "$_r600_cand" != "$_r400" ]; then
+          _r700="$_r600_cand"
+        fi
+      fi
+      [ -z "$_r700" ] && _r700="${_r500:-$_r400}"
 
       cp -f "$_r400" "$SYS_FONT/NotoSansBengali-Regular.ttf" 2>/dev/null || true
       cp -f "$_r700" "$SYS_FONT/NotoSansBengali-Bold.ttf" 2>/dev/null || true
       cp -f "$_r400" "$SYS_FONT/NotoSansBengali-VF.ttf"
-      cp -f "$_r700" "$SYS_FONT/NotoSerifBengali-VF.ttf"
+      if [ -n "$_r500" ]; then
+        cp -f "$_r500" "$SYS_FONT/NotoSerifBengali-VF.ttf"
+        cp -f "$_r500" "$SYS_FONT/NotoSansBengali-Medium.ttf" 2>/dev/null || true
+      else
+        cp -f "$_r700" "$SYS_FONT/NotoSerifBengali-VF.ttf"
+      fi
       cp -f "$_r700" "$SYS_FONT/NotoSansBengaliUI-VF.ttf"
 
       frag_file="$FONT_DIR/ext_beng.xml"
       {
         printf '    <font weight="400" style="normal">NotoSansBengali-VF.ttf</font>\n'
+        if [ -n "$_r500" ]; then
+          printf '    <font weight="500" style="normal">NotoSerifBengali-VF.ttf</font>\n'
+        fi
         printf '    <font weight="700" style="normal">NotoSansBengaliUI-VF.ttf</font>\n'
       } > "$frag_file"
       for xml in "$SYS_XML" "$SYS_FALLBACK"; do
@@ -1604,7 +1628,15 @@ else
         replace_lang_family "$xml" "und-Beng" "$frag_file"
         replace_lang_family "$xml" "bn" "$frag_file"
       done
-      status_ok "Static Bengali fonts (2 faces: Regular [${_r400##*/}], Bold [${_r700##*/}])"
+      if [ -n "$_r500" ]; then
+        if [ "$_r500_from_sb" = "1" ]; then
+          status_ok "Static Bengali fonts (3 faces: Regular [${_r400##*/}], SemiBold-as-Medium [${_r500##*/}], Bold [${_r700##*/}])"
+        else
+          status_ok "Static Bengali fonts (3 faces: Regular [${_r400##*/}], Medium [${_r500##*/}], Bold [${_r700##*/}])"
+        fi
+      else
+        status_ok "Static Bengali fonts (2 faces: Regular [${_r400##*/}], Bold [${_r700##*/}])"
+      fi
     fi
   else
     prune_obsolete_profile_keys BENGALI_UPRIGHT
@@ -1687,23 +1719,56 @@ else
     else
       prune_obsolete_profile_keys SERIF_UPRIGHT
       prune_obsolete_profile_keys SERIF_ITALIC
-      # Standalone standard: 4 faces default for static Serif (Regular, Italic, Bold, BoldItalic)
+      # Standalone standard: 4-6 faces for static Serif (Regular, Italic, Medium, MediumItalic [or SemiBold as Medium], Bold, BoldItalic)
       _sr400=$(find_best_face 400 normal $_serif_dirs)
       [ -z "$_sr400" ] && _sr400="$ext_s_reg"
 
       _si400=$(find_best_face 400 italic $_serif_dirs)
       [ -z "$_si400" ] && _si400="$_sr400"
 
+      _sr500=$(find_best_face 500 normal $_serif_dirs)
+      _sr500_from_sb=0
+      if [ -z "$_sr500" ]; then
+        _sr600=$(find_best_face 600 normal $_serif_dirs)
+        if [ -n "$_sr600" ] && [ "$_sr600" != "$_sr400" ]; then
+          _sr500="$_sr600"
+          _sr500_from_sb=1
+        fi
+      fi
+
+      _si500=$(find_best_face 500 italic $_serif_dirs)
+      if [ -z "$_si500" ]; then
+        _si600=$(find_best_face 600 italic $_serif_dirs)
+        if [ -n "$_si600" ] && [ "$_si600" != "$_si400" ]; then
+          _si500="$_si600"
+        fi
+      fi
+      [ -n "$_sr500" ] && [ -z "$_si500" ] && _si500="$_sr500"
+
       _sr700=$(find_best_face 700 normal $_serif_dirs)
-      [ -z "$_sr700" ] && _sr700=$(find_best_face 600 normal $_serif_dirs)
-      [ -z "$_sr700" ] && _sr700="$_sr400"
+      if [ -z "$_sr700" ]; then
+        _sr600_cand=$(find_best_face 600 normal $_serif_dirs)
+        if [ -n "$_sr600_cand" ] && [ "$_sr600_cand" != "$_sr500" ] && [ "$_sr600_cand" != "$_sr400" ]; then
+          _sr700="$_sr600_cand"
+        fi
+      fi
+      [ -z "$_sr700" ] && _sr700="${_sr500:-$_sr400}"
 
       _si700=$(find_best_face 700 italic $_serif_dirs)
-      [ -z "$_si700" ] && _si700=$(find_best_face 600 italic $_serif_dirs)
-      [ -z "$_si700" ] && _si700="$_si400"
+      if [ -z "$_si700" ]; then
+        _si600_cand=$(find_best_face 600 italic $_serif_dirs)
+        if [ -n "$_si600_cand" ] && [ "$_si600_cand" != "$_si500" ] && [ "$_si600_cand" != "$_si400" ]; then
+          _si700="$_si600_cand"
+        fi
+      fi
+      [ -z "$_si700" ] && _si700="${_si500:-$_si400}"
 
       cp -f "$_sr400" "$SYS_FONT/NotoSerif-Regular.ttf"
       cp -f "$_si400" "$SYS_FONT/NotoSerif-Italic.ttf"
+      if [ -n "$_sr500" ]; then
+        cp -f "$_sr500" "$SYS_FONT/NotoSerif-Medium.ttf"
+        cp -f "$_si500" "$SYS_FONT/NotoSerif-MediumItalic.ttf"
+      fi
       cp -f "$_sr700" "$SYS_FONT/NotoSerif-Bold.ttf"
       cp -f "$_si700" "$SYS_FONT/NotoSerif-BoldItalic.ttf"
 
@@ -1711,6 +1776,10 @@ else
       {
         printf '    <font weight="400" style="normal">NotoSerif-Regular.ttf</font>\n'
         printf '    <font weight="400" style="italic">NotoSerif-Italic.ttf</font>\n'
+        if [ -n "$_sr500" ]; then
+          printf '    <font weight="500" style="normal">NotoSerif-Medium.ttf</font>\n'
+          printf '    <font weight="500" style="italic">NotoSerif-MediumItalic.ttf</font>\n'
+        fi
         printf '    <font weight="700" style="normal">NotoSerif-Bold.ttf</font>\n'
         printf '    <font weight="700" style="italic">NotoSerif-BoldItalic.ttf</font>\n'
       } > "$frag_file"
@@ -1720,7 +1789,15 @@ else
         replace_family "$xml" noto-serif "$frag_file" "split"
         replace_family "$xml" serif-monospace "$frag_file" "split"
       done
-      status_ok "Static Serif fonts (4 faces: Regular, Italic, Bold, BoldItalic)"
+      if [ -n "$_sr500" ]; then
+        if [ "$_sr500_from_sb" = "1" ]; then
+          status_ok "Static Serif fonts (6 faces: Regular, Italic, SemiBold-as-Medium, MediumItalic, Bold, BoldItalic)"
+        else
+          status_ok "Static Serif fonts (6 faces: Regular, Italic, Medium, MediumItalic, Bold, BoldItalic)"
+        fi
+      else
+        status_ok "Static Serif fonts (4 faces: Regular, Italic, Bold, BoldItalic)"
+      fi
     fi
   else
     prune_obsolete_profile_keys SERIF_UPRIGHT

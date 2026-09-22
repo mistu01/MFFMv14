@@ -1189,7 +1189,7 @@ def _font_xml(filename: str, weight: int, style: str, *, index: int | None = Non
     return "\n".join(lines)
 
 
-def _generate_full_family_xml(faces: list[SourceFace], filename: str, get_index_fn) -> list[str]:
+def _generate_full_family_xml(faces: list[SourceFace], filename: str, get_index_fn, category: str | None = None) -> list[str]:
     """Generates XML lines for a set of faces (full 100..900 for variable, exact faces for static)."""
     lines: list[str] = []
     upright_faces = [f for f in faces if f.style == "normal"]
@@ -1206,9 +1206,22 @@ def _generate_full_family_xml(faces: list[SourceFace], filename: str, get_index_
                 if axes is not None:
                     lines.append(_font_xml(filename, weight, style, index=idx, axes=axes))
         else:
+            entries: list[tuple[int, str]] = []
+            has_500 = any(f.weight == 500 for f in s_faces)
+            sb_face = next((f for f in s_faces if f.weight == 600), None)
+
             for face in s_faces:
                 idx = get_index_fn(face)
-                lines.append(_font_xml(filename, face.weight, face.style, index=idx))
+                entries.append((face.weight, _font_xml(filename, face.weight, face.style, index=idx)))
+
+            # If bengali or serif font family doesn't have medium (500) but contains semibold (600), use that semibold as medium
+            if category in ("bengali", "serif") and not has_500 and sb_face is not None:
+                idx = get_index_fn(sb_face)
+                entries.append((500, _font_xml(filename, 500, style, index=idx)))
+
+            entries.sort(key=lambda item: item[0])
+            for _w, xml in entries:
+                lines.append(xml)
     return lines
 
 
@@ -1344,7 +1357,7 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
         cat_faces = optional_faces.get(cat_key) or []
         if not cat_faces:
             continue
-        lines = _generate_full_family_xml(cat_faces, "DroidSans.ttf", lambda f, ck=cat_key: face_idx_maps[ck][id(f)])
+        lines = _generate_full_family_xml(cat_faces, "DroidSans.ttf", lambda f, ck=cat_key: face_idx_maps[ck][id(f)], category=cat_key)
         (files_dir / FONT_CATEGORIES[cat_key].fragment_name).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
     normal: list[tuple[int, str, str]] = []
@@ -1426,7 +1439,7 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
                 mono_index = idx
             var_fonts.append(font)
         if cat_faces:
-            lines = _generate_full_family_xml(cat_faces, output_name, lambda f, ck=cat_key: face_idx_maps[ck][id(f)])
+            lines = _generate_full_family_xml(cat_faces, output_name, lambda f, ck=cat_key: face_idx_maps[ck][id(f)], category=cat_key)
             (files_dir / FONT_CATEGORIES[cat_key].fragment_name).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
     print(f"  * Saving variable font collection: {output_name} ({len(var_fonts)} face(s))...", flush=True)

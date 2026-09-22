@@ -1,0 +1,178 @@
+name: Auto Build & Release MFFM Runtime
+
+on:
+  schedule:
+    # Run daily at 02:00 UTC to check for new fontTools or Python releases
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force build and release even if versions already match'
+        required: false
+        default: false
+        type: boolean
+      override_fonttools:
+        description: 'Override fontTools version (e.g. 4.65.0)'
+        required: false
+        type: string
+      override_python_tag:
+        description: 'Override python-build-standalone tag (e.g. 20260901)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: runtime-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-and-release:
+    name: Check Upstream & Release Runtime
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Build Tools & Host Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils-aarch64-linux-gnu llvm
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt zstandard
+
+      - name: Check Upstream Dependencies
+        id: check_upstream
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ARGS="--output-github"
+          if [ "${{ inputs.force }}" = "true" ]; then
+            ARGS="$ARGS --force"
+          fi
+          if [ -n "${{ inputs.override_fonttools }}" ]; then
+            ARGS="$ARGS --override-fonttools ${{ inputs.override_fonttools }}"
+          fi
+          if [ -n "${{ inputs.override_python_tag }}" ]; then
+            ARGS="$ARGS --override-python-tag ${{ inputs.override_python_tag }}"
+          fi
+          python check_runtime_updates.py $ARGS
+
+      - name: Apply Upstream Version Pins
+        if: steps.check_upstream.outputs.needs_update == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ARGS="--update"
+          if [ "${{ inputs.force }}" = "true" ]; then
+            ARGS="$ARGS --force"
+          fi
+          if [ -n "${{ inputs.override_fonttools }}" ]; then
+            ARGS="$ARGS --override-fonttools ${{ inputs.override_fonttools }}"
+          fi
+          if [ -n "${{ inputs.override_python_tag }}" ]; then
+            ARGS="$ARGS --override-python-tag ${{ inputs.override_python_tag }}"
+          fi
+          python check_runtime_updates.py $ARGS
+
+      - name: Prepare MFFM Runtime Payloads (aarch64 & x64)
+        if: steps.check_upstream.outputs.needs_update == 'true'
+        run: |
+          python prepare_runtime.py
+
+      - name: Build & Sign MFFM Runtime Module ZIP
+        if: steps.check_upstream.outputs.needs_update == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python build_runtime.py --output-dir dist/
+
+      - name: Generate Cryptographic SHA256 Checksums
+        if: steps.check_upstream.outputs.needs_update == 'true'
+        run: |
+          cd dist
+          sha256sum mffm-runtime-*.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          cd ..
+
+      - name: Commit Updated Pins & Manifest
+        if: steps.check_upstream.outputs.needs_update == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add prepare_runtime.py runtime-template/manifest.json
+          git commit -m "build(runtime): update fontTools ${{ steps.check_upstream.outputs.fonttools_version }} / python ${{ steps.check_upstream.outputs.python_tag }} [skip ci]" || true
+          git push origin main || true
+
+      - name: Prepare Release Metadata
+        if: steps.check_upstream.outputs.needs_update == 'true'
+        id: runtime_meta
+        run: |
+          python - << 'EOF'
+          import json, os, textwrap
+          from pathlib import Path
+
+          manifest = json.loads(Path("runtime-template/manifest.json").read_text(encoding="utf-8"))
+          version = manifest.get("version", "latest")
+          python_ver = manifest.get("python_version", "3.11.16")
+          python_tag = manifest.get("python_release_tag", "")
+          ft_ver = manifest.get("fonttools_version", "")
+          tag = f"runtime-v{version}"
+          title = f"MFFM Runtime v{version} (fontTools {ft_ver}, Python {python_ver}+{python_tag})"
+
+          dist = Path("dist")
+          runtime_zips = sorted(dist.glob("mffm-runtime-*.zip"))
+          runtime_name = runtime_zips[-1].name if runtime_zips else f"mffm-runtime-{version}.zip"
+
+          body = textwrap.dedent(f"""\
+          ## 🚀 MFFM Runtime Automated Release (v{version})
+
+          Automated build triggered by upstream updates to core typography engine dependencies.
+
+          ### 📦 Runtime Components
+          - **fontTools**: `{ft_ver}` (pure-python wheel from PyPI)
+          - **CPython**: `{python_ver}` (musl static build `{python_tag}` from `astral-sh/python-build-standalone`)
+          - **Supported Target ABIs**: `arm64-v8a` (`aarch64`), `x86_64` (`x64`)
+          - **Legacy ABIs (`armeabi-v7a`, `x86`)**: Fallback bootstrapping via Termux pip
+
+          ### 📥 Release Assets
+          - **`{runtime_name}`**: Standalone MFFM Runtime flashable module. Flash once in Magisk / KernelSU / APatch.
+          - **`SHA256SUMS.txt`**: Cryptographic verification checksums.
+
+          ---
+          *Automated compilation and supply-chain verification by MFFMv14 GitHub Actions Pipeline.*
+          """)
+
+          Path("runtime_release_body.md").write_text(body + "\n", encoding="utf-8")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"version={version}\n")
+              out.write(f"tag={tag}\n")
+              out.write(f"title={title}\n")
+          EOF
+
+      - name: Publish Runtime GitHub Release
+        if: steps.check_upstream.outputs.needs_update == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.runtime_meta.outputs.tag }}
+          name: ${{ steps.runtime_meta.outputs.title }}
+          body_path: runtime_release_body.md
+          files: |
+            dist/mffm-runtime-*.zip
+            dist/SHA256SUMS.txt
+          draft: false
+          prerelease: false
+          make_latest: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

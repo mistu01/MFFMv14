@@ -88,8 +88,8 @@ You can build an MFFMv14 font module either directly on your phone using any fil
 > [!NOTE]
 > **External Fonts Standard in Standalone Modules (`/sdcard/MFFM/`):**
 > If you provide external fonts on your device in `/sdcard/MFFM/` (or its subdirectories `Serif/`, `Bengali/`, `Monospace/`), the standalone installer applies standard fallback face counts with zero on-device Python/TTC overhead:
-> - **Serif**: 4 faces standard (`NotoSerif-Regular.ttf`, `NotoSerif-Italic.ttf`, `NotoSerif-Bold.ttf`, `NotoSerif-BoldItalic.ttf`).
-> - **Bengali**: 2 faces standard (`NotoSansBengali-VF.ttf` 400 Regular, `NotoSansBengaliUI-VF.ttf` 700 Bold).
+> - **Serif**: 4–6 faces standard (`NotoSerif-Regular.ttf`, `NotoSerif-Italic.ttf`, `NotoSerif-Bold.ttf`, `NotoSerif-BoldItalic.ttf`, plus optional `Medium` / SemiBold-as-Medium).
+> - **Bengali**: 2–3 faces standard (`NotoSansBengali-VF.ttf` 400 Regular, `NotoSansBengaliUI-VF.ttf` 700 Bold, plus optional `Medium` / SemiBold-as-Medium).
 > - **Monospace**: 1 face standard (`DroidSansMono.ttf` / `CutiveMono.ttf` 400 Regular).
 > - **Variable Fonts (VF)**: Automatically scanned for variation axes (`fvar`), generating full 100–900 weight mapping XML and creating/updating `/sdcard/MFFM/*.conf` automatically.
 

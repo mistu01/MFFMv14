@@ -17,9 +17,10 @@ Dates follow the `YYYY.MM.DD` versioning format carried by the modules.
 
 #### 🔤 Standardized External Static Face Standards
 - When static fonts are supplied in `/sdcard/MFFM/`, the standalone installer configures standardized face counts with zero on-device TTC compilation:
-  - **Serif**: **4 faces default** (`Regular` 400, `Italic` 400, `Bold` 700, `BoldItalic` 700).
-  - **Bengali**: **2 faces default** (`Regular` 400, `Bold` 700).
+  - **Serif**: **4–6 faces default** (`Regular` 400, `Italic` 400, `Bold` 700, `BoldItalic` 700, plus `Medium` 500 / SemiBold-as-Medium).
+  - **Bengali**: **2–3 faces default** (`Regular` 400, `Bold` 700, plus `Medium` 500 / SemiBold-as-Medium).
   - **Monospace**: **1 face default** (`Regular` 400).
+  - **SemiBold-as-Medium Fallback**: For Bengali and Serif external fonts that do not contain a Medium (500) face but include a SemiBold (600) face, the module automatically leverages that SemiBold face as Medium in system typography mappings.
 
 #### ⏰ Enhanced Centered Clock Colon Suite
 - **Vertical Colon Shift / Offset** (`--colon-offset` / `--colon-shift`): Allows fine-grained height adjustment (+/- font units) of the centered clock colon for OEM-specific lockscreen clock widgets.
