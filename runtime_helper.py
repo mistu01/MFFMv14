@@ -5,7 +5,9 @@ import argparse
 import math
 import os
 import re
+import shutil
 import sys
+import unicodedata
 from pathlib import Path
 
 FFIX3_REFERENCE_UPM = 2048
@@ -841,6 +843,287 @@ def equalize_clock_digits(font_or_path, target_width: int | None = None) -> bool
             except Exception:
                 pass
         return False
+
+
+# ---------------------------------------------------------------------------
+# Universal Font Subsetting (Smart PUA Preservation, Format-Resilient, Noto-Safe)
+# ---------------------------------------------------------------------------
+
+EMOJI_PICTOGRAPH_RANGES = [
+    (0x1F000, 0x1FAFF),
+]
+
+NOTO_EMOJI_BMP_RANGES = [
+    (0x2600, 0x26FF),
+    (0x2700, 0x27BF),
+]
+
+NOTO_EMOJI_BMP_DISCRETE = {
+    0x203C, 0x2049, 0x2139,
+    0x2194, 0x2195, 0x2196, 0x2197, 0x2198, 0x2199, 0x21A9, 0x21AA,
+    0x231A, 0x231B, 0x2328, 0x23CF,
+    0x23E9, 0x23EA, 0x23EB, 0x23EC, 0x23ED, 0x23EE, 0x23EF,
+    0x23F0, 0x23F1, 0x23F2, 0x23F3, 0x23F8, 0x23F9, 0x23FA,
+    0x24C2, 0x25AA, 0x25AB, 0x25B6, 0x25C0,
+    0x25FB, 0x25FC, 0x25FD, 0x25FE,
+    0x2934, 0x2935,
+    0x2B05, 0x2B06, 0x2B07,
+    0x2B1B, 0x2B1C, 0x2B50, 0x2B55,
+    0x3030, 0x303D, 0x3297, 0x3299,
+}
+
+OBSCURE_TECHNICAL_RANGES = [
+    (0x2400, 0x243F),
+    (0x2440, 0x245F),
+    (0x2900, 0x297F),
+    (0x2980, 0x29FF),
+    (0xE0000, 0xE00FF),
+    (0xE0200, 0xE0FFF),
+]
+
+APPLE_LOGO = 0xF8FF
+
+POWERLINE_RANGES = [
+    (0xE0A0, 0xE0A3),
+    (0xE0B0, 0xE0C8),
+    (0xE0CA, 0xE0CA),
+    (0xE0CC, 0xE0D4),
+]
+
+NERD_FONTS_BMP_RANGES = [
+    (0xE200, 0xE2A9),
+    (0xE300, 0xE3EB),
+    (0xE5FA, 0xE6B5),
+    (0xE700, 0xE7C5),
+    (0xEA60, 0xEC1E),
+    (0xF000, 0xF2E0),
+    (0xF300, 0xF375),
+    (0xF400, 0xF533),
+]
+
+MDI_PLANE15_RANGES = [
+    (0xF0001, 0xF1AF0),
+]
+
+WEB_ICONS_BMP_RANGES = [
+    (0xE900, 0xEA00),
+    (0xEA00, 0xEF50),
+    (0xF000, 0xF8FF),
+]
+
+BMP_PUA_RANGE = (0xE000, 0xF8FF)
+SUP_PUA_A_RANGE = (0xF0000, 0xFFFFD)
+SUP_PUA_B_RANGE = (0x100000, 0x10FFFD)
+
+APPLE_SF_SYMBOLS_PLANE16 = (0x100000, 0x10FFFD)
+PLANE15_UNASSIGNED = (0xF1AF1, 0xFFFFD)
+
+CJK_RANGES = [
+    (0x1100, 0x11FF), (0x2E80, 0x2EFF), (0x2F00, 0x2FDF), (0x2FF0, 0x2FFF),
+    (0x3000, 0x303F), (0x3040, 0x309F), (0x30A0, 0x30FF), (0x3100, 0x312F),
+    (0x3130, 0x318F), (0x3190, 0x319F), (0x31A0, 0x31BF), (0x31C0, 0x31EF),
+    (0x31F0, 0x31FF), (0x3200, 0x32FF), (0x3300, 0x33FF), (0x3400, 0x4DBF),
+    (0x4E00, 0x9FFF), (0xA960, 0xA97F), (0xAC00, 0xD7AF), (0xD7B0, 0xD7FF),
+    (0xF900, 0xFAFF), (0xFE30, 0xFE4F), (0xFF00, 0xFFEF), (0x20000, 0x3134F),
+    (0xE0100, 0xE01EF),
+]
+
+
+def _expand_ranges(ranges) -> set[int]:
+    out: set[int] = set()
+    for item in ranges:
+        out.update(range(item[0], item[1] + 1))
+    return out
+
+
+def get_noto_emoji_conflict_set() -> set[int]:
+    conflicts: set[int] = set()
+    conflicts |= _expand_ranges(EMOJI_PICTOGRAPH_RANGES)
+    conflicts |= _expand_ranges(NOTO_EMOJI_BMP_RANGES)
+    conflicts |= NOTO_EMOJI_BMP_DISCRETE
+    return conflicts
+
+
+def get_common_pua_codepoints() -> set[int]:
+    common: set[int] = {APPLE_LOGO}
+    common |= _expand_ranges(POWERLINE_RANGES)
+    common |= _expand_ranges(NERD_FONTS_BMP_RANGES)
+    common |= _expand_ranges(MDI_PLANE15_RANGES)
+    common |= _expand_ranges(WEB_ICONS_BMP_RANGES)
+    return common
+
+
+def build_subset_drop_set(
+    *,
+    pua_mode: str = "keep-common",
+    keep_apple_logo: bool = True,
+    emoji_mode: str = "noto-safe",
+    drop_technical: bool = True,
+    drop_cjk: bool = False,
+) -> set[int]:
+    drop: set[int] = set()
+
+    if pua_mode == "drop-all":
+        drop.update(range(BMP_PUA_RANGE[0], BMP_PUA_RANGE[1] + 1))
+        drop.update(range(SUP_PUA_A_RANGE[0], SUP_PUA_A_RANGE[1] + 1))
+        drop.update(range(SUP_PUA_B_RANGE[0], SUP_PUA_B_RANGE[1] + 1))
+        if keep_apple_logo:
+            drop.discard(APPLE_LOGO)
+    elif pua_mode == "keep-common":
+        drop.update(range(APPLE_SF_SYMBOLS_PLANE16[0], APPLE_SF_SYMBOLS_PLANE16[1] + 1))
+        drop.update(range(PLANE15_UNASSIGNED[0], PLANE15_UNASSIGNED[1] + 1))
+    elif pua_mode == "drop-unusual":
+        common = get_common_pua_codepoints()
+        all_bmp = set(range(BMP_PUA_RANGE[0], BMP_PUA_RANGE[1] + 1))
+        drop |= (all_bmp - common)
+        all_p15 = set(range(SUP_PUA_A_RANGE[0], SUP_PUA_A_RANGE[1] + 1))
+        drop |= (all_p15 - _expand_ranges(MDI_PLANE15_RANGES))
+        drop.update(range(SUP_PUA_B_RANGE[0], SUP_PUA_B_RANGE[1] + 1))
+        if keep_apple_logo:
+            drop.discard(APPLE_LOGO)
+
+    if not keep_apple_logo:
+        drop.add(APPLE_LOGO)
+
+    if emoji_mode == "noto-safe":
+        drop |= get_noto_emoji_conflict_set()
+    elif emoji_mode == "drop-pictographs":
+        drop |= _expand_ranges(EMOJI_PICTOGRAPH_RANGES)
+
+    if drop_technical:
+        drop |= _expand_ranges(OBSCURE_TECHNICAL_RANGES)
+    if drop_cjk:
+        drop |= _expand_ranges(CJK_RANGES)
+
+    return drop
+
+
+def subset_language_guard(cmap: set[int], drop: set[int], allowed_drops: set[int] | None = None) -> set[int]:
+    risky = set()
+    for cp in cmap & drop:
+        if allowed_drops and cp in allowed_drops:
+            continue
+        try:
+            cat = unicodedata.category(chr(cp))
+        except ValueError:
+            continue
+        if cat.startswith(("L", "M")):
+            risky.add(cp)
+    return risky
+
+
+def subset_font(
+    font,
+    *,
+    keep_hinting: bool = True,
+    pua_mode: str = "keep-common",
+    emoji_mode: str = "noto-safe",
+    drop_technical: bool = True,
+    drop_cjk: bool = False,
+    force: bool = False,
+) -> bool:
+    """Subset an open TTFont object in-place using smart PUA preservation and Noto-safe emoji cleanup."""
+    from fontTools import subset
+
+    cmap = set(font.getBestCmap().keys()) if font.getBestCmap() else set()
+    if not cmap:
+        return False
+
+    drop = build_subset_drop_set(
+        pua_mode=pua_mode,
+        emoji_mode=emoji_mode,
+        drop_technical=drop_technical,
+        drop_cjk=drop_cjk,
+    )
+    allowed_drops = get_noto_emoji_conflict_set() if emoji_mode == "noto-safe" else set()
+    risky = subset_language_guard(cmap, drop, allowed_drops=allowed_drops)
+    drop_eff = (drop - risky) if (risky and not force) else drop
+    keep = sorted(cmap - drop_eff)
+    if not keep or len(keep) == len(cmap):
+        return False
+
+    is_variable = "fvar" in font
+    opt = subset.Options()
+    opt.hinting = keep_hinting
+    opt.layout_features = ["*"]
+    opt.layout_scripts = ["*"]
+    opt.layout_closure = True
+    opt.bidi_closure = True
+    opt.passthrough_tables = True
+    if is_variable:
+        opt.name_IDs = ["*"]
+
+    sub = subset.Subsetter(opt)
+    sub.populate(unicodes=keep)
+    sub.subset(font)
+    return True
+
+
+def subset_font_file(
+    src_path: Path | str,
+    dst_path: Path | str | None = None,
+    *,
+    keep_hinting: bool = True,
+    pua_mode: str = "keep-common",
+    emoji_mode: str = "noto-safe",
+    drop_technical: bool = True,
+    drop_cjk: bool = False,
+    force: bool = False,
+) -> tuple[bool, int, int]:
+    """Subset a font file on disk. Returns (success, bytes_before, bytes_after)."""
+    from fontTools import subset
+    from fontTools.ttLib import TTFont
+
+    src = Path(src_path).resolve()
+    dst = Path(dst_path).resolve() if dst_path else src
+    bytes_before = src.stat().st_size if src.exists() else 0
+
+    with TTFont(str(src), lazy=True) as raw_font:
+        is_variable = "fvar" in raw_font
+        cmap = set(raw_font.getBestCmap().keys()) if raw_font.getBestCmap() else set()
+
+    if not cmap:
+        return False, bytes_before, bytes_before
+
+    drop = build_subset_drop_set(
+        pua_mode=pua_mode,
+        emoji_mode=emoji_mode,
+        drop_technical=drop_technical,
+        drop_cjk=drop_cjk,
+    )
+    allowed_drops = get_noto_emoji_conflict_set() if emoji_mode == "noto-safe" else set()
+    risky = subset_language_guard(cmap, drop, allowed_drops=allowed_drops)
+    drop_eff = (drop - risky) if (risky and not force) else drop
+    keep = sorted(cmap - drop_eff)
+
+    if not keep or len(keep) == len(cmap):
+        if dst != src:
+            shutil.copy2(src, dst)
+        return False, bytes_before, dst.stat().st_size
+
+    opt = subset.Options()
+    opt.hinting = keep_hinting
+    opt.layout_features = ["*"]
+    opt.layout_scripts = ["*"]
+    opt.layout_closure = True
+    opt.bidi_closure = True
+    opt.passthrough_tables = True
+    if is_variable:
+        opt.name_IDs = ["*"]
+
+    font = subset.load_font(str(src), opt)
+    tmp_out = dst.parent / f"{dst.stem}.subtmp{dst.suffix}"
+    try:
+        sub = subset.Subsetter(opt)
+        sub.populate(unicodes=keep)
+        sub.subset(font)
+        subset.save_font(font, str(tmp_out), opt)
+    finally:
+        font.close()
+
+    tmp_out.replace(dst)
+    bytes_after = dst.stat().st_size
+    return True, bytes_before, bytes_after
 
 
 def inject_centered_colon(
@@ -2032,6 +2315,7 @@ def compile_bundle(
     freeze_mono: list[str] | str | None = None,
     freeze_serif: list[str] | str | None = None,
     freeze_bengali: list[str] | str | None = None,
+    enable_subset: bool = False,
 ) -> int:
     from fontTools.ttLib import TTFont, TTCollection
     out_path = Path(out_dir)
@@ -2150,6 +2434,13 @@ def compile_bundle(
         # 0. Convert CFF/OTF outlines to TrueType
         if convert_otf and ("CFF " in font or "CFF2" in font or getattr(font, "sfntVersion", None) == "OTTO"):
             otf_to_ttf(font)
+
+        # 0b. Font subsetting (Smart PUA & Noto-safe emoji cleanup)
+        if enable_subset:
+            cmap_b = len(font.getBestCmap()) if font.getBestCmap() else 0
+            if subset_font(font, keep_hinting=keep_hinting):
+                cmap_a = len(font.getBestCmap()) if font.getBestCmap() else 0
+                print(f"    [*] Subsetting applied to {Path(face['path']).name} ({cmap_b} -> {cmap_a} glyphs, Noto-safe & PUA preserved)", flush=True)
 
         # 1. Hinting stripping
         if not keep_hinting:
@@ -2433,6 +2724,12 @@ def main():
     s_comp.add_argument("--freeze-mono")
     s_comp.add_argument("--freeze-serif")
     s_comp.add_argument("--freeze-bengali")
+    s_comp.add_argument("--enable-subset", action="store_true", help="Subset fonts (smart PUA preservation & Noto-safe emoji cleanup)")
+
+    s_sub = sub.add_parser("subset", help="Smart subset font: PUA preservation, format-resilient, Noto-safe")
+    s_sub.add_argument("--in", dest="input_file", required=True, help="Input font file")
+    s_sub.add_argument("--out", dest="output_file", help="Output font file (default overwrites input)")
+    s_sub.add_argument("--keep-hinting", action="store_true", help="Preserve font hinting")
 
     s_otf2ttf = sub.add_parser("otf2ttf", help="Convert CFF/OTF font to TrueType font using cu2qu")
     s_otf2ttf.add_argument("--in", dest="input_file", required=True, help="Input OTF font")
@@ -2515,6 +2812,13 @@ def main():
         font.save(out_f)
         font.close()
         print(f"Processed {args.input_file} -> {out_f}")
+    elif args.cmd == "subset":
+        ok, before_b, after_b = subset_font_file(args.input_file, args.output_file, keep_hinting=args.keep_hinting)
+        if ok:
+            pct = (after_b / before_b * 100) if before_b else 100
+            print(f"Subsetted {args.input_file} ({before_b / 1024:.1f} KiB -> {after_b / 1024:.1f} KiB, {pct:.1f}%)")
+        else:
+            print(f"No subsetting needed or font unchanged: {args.input_file}")
     elif args.cmd == "otf2ttf":
         from fontTools.ttLib import TTFont
         in_path = Path(args.input_file)
@@ -2635,6 +2939,7 @@ def main():
             freeze_mono=args.freeze_mono,
             freeze_serif=args.freeze_serif,
             freeze_bengali=args.freeze_bengali,
+            enable_subset=args.enable_subset,
         )
         sys.exit(ret)
     else:

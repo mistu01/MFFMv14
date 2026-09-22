@@ -38,7 +38,7 @@ BUILD_CONFIG_KEYS = (
     "bengali_features", "centered_colon", "colon_offset", "colon_shift",
     "colon_alignment", "colon_rule", "equalize_digits", "pua_colon",
     "synthetic_italic", "synthetic_italic_angle", "interactive",
-    "metrics_mode",
+    "metrics_mode", "subset",
 )
 
 
@@ -73,6 +73,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-synthetic-italic", action="store_false", dest="synthetic_italic", help="disable synthetic italic generation")
     parser.add_argument("--synthetic-italic-angle", type=float, default=-12.0, help="slant angle in degrees for synthetic italic (default: -12.0)")
     parser.add_argument("--metrics-mode", choices=("compact", "safe", "preserve"), default=None, help="vertical metrics mode: compact (default tight FFIX3), safe (decoupled zero-clipping), or preserve (original font metrics)")
+    parser.add_argument("--subset", action="store_true", default=None, help="subset fonts (drops Plane 16 SF bloat & Noto emoji conflicts; preserves language scripts & PUA)")
+    parser.add_argument("--no-subset", action="store_false", dest="subset", help="disable font subsetting")
     parser.add_argument("--config", type=Path, help=f"build config file to load (default: {BUILD_CONFIG_NAME} in the project root, when present)")
     parser.add_argument("--no-config", action="store_true", help="ignore any build config file")
     parser.add_argument("--save-config", action="store_true", help=f"save the effective build options to the config file (default: {BUILD_CONFIG_NAME})")
@@ -167,6 +169,7 @@ def save_build_config(path: Path, args: argparse.Namespace) -> None:
         "synthetic_italic_angle": float(args.synthetic_italic_angle or -12.0),
         "interactive": args.interactive,
         "metrics_mode": getattr(args, "metrics_mode", "compact") or "compact",
+        "subset": getattr(args, "subset", None),
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(f"Build config    : saved {path}")
@@ -247,6 +250,22 @@ def build_module(args: argparse.Namespace) -> Path | None:
     fonts_dir = (args.fonts_dir or (ROOT / "Fonts")).resolve()
     out_dir = (args.output_dir or (ROOT / "dist")).resolve()
 
+    if getattr(args, "subset", None) is None:
+        font_files = [p for p in fonts_dir.rglob("*") if p.is_file() and p.suffix.lower() in {".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2"}]
+        large_fonts = [(p, p.stat().st_size) for p in font_files if p.stat().st_size > 1024 * 1024]
+        if large_fonts:
+            should_prompt = args.interactive if args.interactive is not None else sys.stdin.isatty()
+            if should_prompt and args.interactive is not False:
+                from font_module import prompt_subset_mode
+                args.subset = prompt_subset_mode(large_fonts, interactive=True)
+            else:
+                args.subset = True
+                print("  * Font(s) larger than 1 MB detected: Font Subsetting automatically triggered [OK]", flush=True)
+        else:
+            args.subset = False
+    else:
+        args.subset = bool(args.subset)
+
     print("=" * 64, flush=True)
     print("  MFFMv14 Module Builder", flush=True)
     print("=" * 64, flush=True)
@@ -255,6 +274,10 @@ def build_module(args: argparse.Namespace) -> Path | None:
     print(f"  Detection Mode   : {args.mode or 'auto'}", flush=True)
     print(f"  TrueType Hinting : {'Preserve' if args.keep_hinting else 'Strip (Clean rendering)'}", flush=True)
     print(f"  Family Prefix    : {'Disabled (--no-prefix)' if args.no_prefix else 'Enabled ([MFFM] / Mistu)'}", flush=True)
+    if args.subset:
+        print("  Subsetting       : Enabled [Smart PUA & Noto-Safe Emoji Dropping]", flush=True)
+    else:
+        print("  Subsetting       : Disabled", flush=True)
     if args.features:
         print(f"  Sans Features    : {args.features}", flush=True)
     if args.centered_colon is not False:
@@ -292,6 +315,7 @@ def build_module(args: argparse.Namespace) -> Path | None:
             pua_colon=args.pua_colon,
             synthetic_italic=args.synthetic_italic,
             synthetic_italic_angle=float(args.synthetic_italic_angle or -12.0),
+            subset=bool(args.subset),
         )
         display_name = display_name_for_mode(args.name or result.family, result.mode)
         props = update_module_metadata(

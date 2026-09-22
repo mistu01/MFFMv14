@@ -241,6 +241,32 @@ python build.py --metrics-mode preserve  # Keep original font designer metrics
 
 ---
 
+### Universal Font Subsetting (Smart PUA & Noto-Safe Emoji Optimization)
+
+Large modern fonts (such as Apple San Francisco / SF Pro, or fonts bundled with thousands of proprietary desktop icons) can easily exceed several megabytes per face. These bloat the module size, waste Android RAM, and can cause out-of-memory crashes on resource-constrained devices.
+
+The builder includes a smart universal font subsetter:
+```bash
+python build.py --subset      # Force enable subsetting
+python build.py --no-subset   # Force disable subsetting
+```
+
+- **Automatic Size Detection (> 1 MB)**:
+  - When any font in your font directory is larger than **1 MB** (`1,048,576 bytes`), the builder automatically detects it.
+  - In **interactive mode**, prompts: `[?] Font size > 1MB detected (...). Enable font subsetting? [Y/n]`.
+  - In **non-interactive mode**, subsetting is automatically triggered by default to safeguard system performance.
+- **Smart PUA Preservation**:
+  - Drops proprietary non-standard symbol bloat: Apple SF Symbols in Plane 16 (`0x100000–0x10FFFD`, 8,400+ unused icons) and unassigned Plane 15 ranges (`0xF1AF1–0xFFFFD`).
+  - Preserves essential developer glyphs and symbols: Apple logo (`0xF8FF`), Powerline status line symbols, Nerd Fonts BMP icons, Material Design Icons Plane 15 (`0xF0001–0xF1AF0`), and Web icons (`0xE900–0xEF50`).
+- **Android Noto Color Emoji Safe**:
+  - Drops monochrome bitmap/outline duplicates that shadow Android's system `NotoColorEmoji` (Plane 1 pictographs `0x1F000–0x1FAFF`, Misc Symbols `0x2600–0x26FF`, Dingbats `0x2700–0x27BF`).
+- **Language Guard**:
+  - All spoken language scripts (Latin, Cyrillic, Greek, Arabic, Hebrew, CJK, Devanagari, Thai, Vietnamese, etc.) and diacritics are strictly guarded via Unicode category checks (`L*` letters and `M*` marks) and never dropped.
+- **Full Layout & Metadata Passthrough**:
+  - Preserves all OpenType layout features (`*`), scripts, variable axes (`fvar`, `gvar`, `cvar`), GPOS/GSUB tables, and font naming.
+
+---
+
 ### Saving and Loading Build Configurations
 
 Save your favorite build options into `.mffm-build.json` for repeated builds:

@@ -20,6 +20,7 @@ from runtime_helper import (
     font_has_centered_colon,
     font_has_italic_support,
     inject_centered_colon,
+    subset_font_file,
     synthesize_italic_font,
 )
 
@@ -1164,6 +1165,45 @@ def prompt_feature_selection(available_features: dict[str, str], category_name: 
     return selected
 
 
+def fmt_size(n: int) -> str:
+    """Format bytes into human-readable KiB / MiB."""
+    if n >= 1 << 20:
+        return f"{n / (1 << 20):.2f} MiB"
+    return f"{n / 1024:.1f} KiB"
+
+
+def prompt_subset_mode(large_fonts: list[tuple[Path, int]] | None = None, interactive: bool = True) -> bool:
+    """Prompt user interactively to enable or disable universal font subsetting."""
+    if not interactive:
+        return True
+
+    print("\n------------------------------------------------------------")
+    print("Universal Font Subsetter (Optimization & Size Reduction)")
+    print("-" * 60)
+    if large_fonts:
+        details = ", ".join(f"{p.name} ({fmt_size(sz)})" for p, sz in large_fonts[:3])
+        if len(large_fonts) > 3:
+            details += f", and {len(large_fonts) - 3} more"
+        print(f"Large font file(s) (> 1 MB) detected: {details}")
+    else:
+        print("Font file(s) (> 1 MB) detected in source directory.")
+    print("Subsetting strips unused Plane 16 Apple SF Symbols (8,400+ glyphs) and")
+    print("monochrome emoji overrides that shadow Android's Noto Color Emoji, while")
+    print("strictly preserving all written languages, Powerline/Nerd/MDI icons,")
+    print("and OpenType layout features. File size is reduced by up to 50-90%.")
+    try:
+        choice = input("Enable font subsetting? [Y/n] (default: Y): ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("\nUsing default: subsetting enabled.")
+        return True
+
+    if choice in ("", "y", "yes", "1", "true"):
+        return True
+    elif choice in ("n", "no", "0", "false"):
+        return False
+    return True
+
+
 def freeze_font_features(font_path: Path, features: list[str] | str) -> None:
     """Freeze OpenType features into a font file using pyftfeatfreeze for 1-to-1 cmap remappings
     and GSUB lookup promotion into default 'calt'/'liga' features for multi-glyph/contextual rules (like dlig, frac, hlig).
@@ -1361,6 +1401,7 @@ def compile_fonts(
     pua_colon: bool | None = None,
     synthetic_italic: bool | None = None,
     synthetic_italic_angle: float = -12.0,
+    subset: bool = False,
 ) -> CompileResult:
     files_dir = module_dir / "Files"
     files_dir.mkdir(parents=True, exist_ok=True)
@@ -1399,6 +1440,18 @@ def compile_fonts(
             sub_dir = temp_fonts_dir / category
             sub_dir.mkdir(parents=True, exist_ok=True)
             _ensure_ttf(path, sub_dir, index=idx, total=total_sources)
+
+        if subset:
+            print("  * Optimizing font outlines (Universal Smart Subsetter)...", flush=True)
+            for prep_file in sorted(temp_fonts_dir.rglob("*.ttf")):
+                if prep_file.is_file():
+                    orig_sz = prep_file.stat().st_size
+                    ok, b_before, b_after = subset_font_file(prep_file, prep_file, keep_hinting=keep_hinting)
+                    if ok and b_before > 0:
+                        pct = (b_after / b_before) * 100
+                        print(f"    -> Subsetting {prep_file.name}: {fmt_size(b_before)} -> {fmt_size(b_after)} ({pct:.1f}%) [OK]", flush=True)
+                    else:
+                        print(f"    -> Subsetting {prep_file.name}: already compact ({fmt_size(orig_sz)}) [--]", flush=True)
 
         all_faces = discover_faces(temp_fonts_dir)
         separated = _separate_faces_by_category(all_faces)

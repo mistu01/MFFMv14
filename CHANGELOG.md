@@ -13,6 +13,15 @@ versioning scheme the modules themselves carry.
 - **Automated MFFM Runtime Build & Release Pipeline (`.github/workflows/runtime-auto-release.yml` & `check_runtime_updates.py`)**:
   - Automatically queries PyPI for `fonttools` updates and GitHub for `astral-sh/python-build-standalone` CPython updates on a daily schedule.
   - Automatically updates supply-chain pins, compiles static musl ABI payloads, signs the runtime module, and publishes GitHub releases.
+- **Universal Font Subsetter & Runtime Optimization Engine (`runtime_helper.py`, `template/customize.sh`, `font_module.py`, `font_module_standalone.py`, `build.py`, `build_standalone.py`)**:
+  - Added universal font subsetting across both standalone (`build_standalone.py`) and regular (`build.py`) builders, as well as on-device dynamic compilation via MFFM Runtime (`template/customize.sh`).
+  - **Smart PUA Preservation**: Retains developer & UI glyphs including Apple logo (`0xF8FF`), Powerline status line symbols, Nerd Fonts BMP glyphs, Material Design Icons Plane 15 (`0xF0001–0xF1AF0`), and Web icons (`0xE900–0xEF50`), while eliminating proprietary Apple SF Symbols in Plane 16 (`0x100000–0x10FFFD`, 8,400+ unused glyphs) and unassigned Plane 15 ranges (`0xF1AF1–0xFFFFD`).
+  - **Android Noto Color Emoji Safe**: Automatically strips monochrome outline duplicates that conflict with Android's system `NotoColorEmoji` (Plane 1 pictographs `0x1F000–0x1FAFF`, Misc Symbols `0x2600–0x26FF`, Dingbats `0x2700–0x27BF`).
+  - **Language Guard**: All spoken languages (Latin, Cyrillic, Greek, Arabic, Hebrew, CJK, Devanagari, Thai, Vietnamese, etc.) and diacritics are strictly guarded via Unicode category verification (`L*` letters and `M*` marks) and never dropped.
+  - **Automatic Font Size Detection (> 1 MB)**:
+    - In standalone and regular builders, fonts larger than 1 MB automatically trigger the subset prompt in interactive mode (`[?] Enable font subsetting? [Y/n]`) or auto-enable in non-interactive mode.
+    - CLI flags `--subset` and `--no-subset` provide explicit control and are persisted in `.mffm-build.json`.
+    - In on-device installer (`template/customize.sh`), `.conf` generation measures primary font size and automatically recommends `ENABLE_SUBSET_FONTS=yes` when font size > 1 MB.
 
 ## 2026.09.11
 

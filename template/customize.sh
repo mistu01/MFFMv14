@@ -1333,12 +1333,12 @@ reformat_config_file() {
     # If inside typo section
     if (in_typo) {
       if (strip_colon == 1) {
-        if (line ~ /^#[ \t]*[1-6]\.[ \t]*CENTERED CLOCK COLON/) {
+        if (line ~ /^#[ \t]*[1-7]\.[ \t]*CENTERED CLOCK COLON/) {
           in_colon_block = 1
           next
         }
         if (in_colon_block) {
-          if (line ~ /^#[ \t]*[1-6]\.[ \t]*(ANDROID LOCKSCREEN CLOCK COLON|SYNTHETIC ITALIC|TABULAR CLOCK DIGITS|SMART METRIC|OPENTYPE FEATURE)/) {
+          if (line ~ /^#[ \t]*[1-7]\.[ \t]*(ANDROID LOCKSCREEN CLOCK COLON|SYNTHETIC ITALIC|TABULAR CLOCK DIGITS|SMART METRIC|UNIVERSAL FONT SUBSETTER|OPENTYPE FEATURE)/) {
             in_colon_block = 0
           } else {
             next
@@ -1350,12 +1350,12 @@ reformat_config_file() {
       }
 
       if (strip_pua == 1) {
-        if (line ~ /^#[ \t]*[1-6]\.[ \t]*ANDROID LOCKSCREEN CLOCK COLON/) {
+        if (line ~ /^#[ \t]*[1-7]\.[ \t]*ANDROID LOCKSCREEN CLOCK COLON/) {
           in_pua_block = 1
           next
         }
         if (in_pua_block) {
-          if (line ~ /^#[ \t]*[1-6]\.[ \t]*(SYNTHETIC ITALIC|TABULAR CLOCK DIGITS|SMART METRIC|OPENTYPE FEATURE)/) {
+          if (line ~ /^#[ \t]*[1-7]\.[ \t]*(SYNTHETIC ITALIC|TABULAR CLOCK DIGITS|SMART METRIC|UNIVERSAL FONT SUBSETTER|OPENTYPE FEATURE)/) {
             in_pua_block = 0
           } else {
             next
@@ -1367,12 +1367,12 @@ reformat_config_file() {
       }
 
       if (strip_italic == 1) {
-        if (line ~ /^#[ \t]*[1-6]\.[ \t]*SYNTHETIC ITALIC/) {
+        if (line ~ /^#[ \t]*[1-7]\.[ \t]*SYNTHETIC ITALIC/) {
           in_italic_block = 1
           next
         }
         if (in_italic_block) {
-          if (line ~ /^#[ \t]*[1-6]\.[ \t]*(TABULAR CLOCK DIGITS|SMART METRIC|OPENTYPE FEATURE)/) {
+          if (line ~ /^#[ \t]*[1-7]\.[ \t]*(TABULAR CLOCK DIGITS|SMART METRIC|UNIVERSAL FONT SUBSETTER|OPENTYPE FEATURE)/) {
             in_italic_block = 0
           } else {
             next
@@ -1384,9 +1384,9 @@ reformat_config_file() {
       }
 
       # If this line is a numbered typography section header, wrap with clean dividers and renumber
-      if (line ~ /^#[ \t]*[1-6]\.[ \t]*(CENTERED CLOCK COLON|ANDROID LOCKSCREEN CLOCK COLON|SYNTHETIC ITALIC|TABULAR CLOCK DIGITS|SMART METRIC|OPENTYPE FEATURE)/) {
+      if (line ~ /^#[ \t]*[1-7]\.[ \t]*(CENTERED CLOCK COLON|ANDROID LOCKSCREEN CLOCK COLON|SYNTHETIC ITALIC|TABULAR CLOCK DIGITS|SMART METRIC|UNIVERSAL FONT SUBSETTER|OPENTYPE FEATURE)/) {
         typo_sec_num++
-        sub(/^#[ \t]*[1-6]\./, "# " typo_sec_num ".", line)
+        sub(/^#[ \t]*[1-7]\./, "# " typo_sec_num ".", line)
         while (typo_count > 0 && typo[typo_count - 1] ~ /^[ \t]*$/) typo_count--
         typo[typo_count++] = ""
         typo[typo_count++] = "# ------------------------------------------------------------------------------"
@@ -1489,6 +1489,10 @@ update_installed_module_description() {
 
   if [ -n "$_cfg_metrics_mode" ] && [ "$_cfg_metrics_mode" != "preserve" ]; then
     active_feats="${active_feats:+$active_feats, }Metrics: $_cfg_metrics_mode"
+  fi
+
+  if [ "$_applied_subset" = "1" ]; then
+    active_feats="${active_feats:+$active_feats, }Subsetted"
   fi
 
   if [ -n "$active_feats" ]; then
@@ -1869,6 +1873,12 @@ prepare_variable_config() {
     [ -z "$_primary_sans" ] && _primary_sans=$(find_first '*.woff2' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
     [ -z "$_primary_sans" ] && _primary_sans=$(find_first '*.woff' "$FONT_DIR/Sans" "$MFFM_DIR/Sans" "$FONT_DIR")
     if [ -n "$_primary_sans" ]; then
+      local _font_sz=0
+      if [ -f "$_primary_sans" ]; then
+        _font_sz=$(wc -c < "$_primary_sans" 2>/dev/null)
+        _font_sz=${_font_sz:-0}
+      fi
+
       local _has_col
       _has_col=$("$_helper" check-colon "$_primary_sans" "$FONT_DIR/Sans" "$MFFM_DIR/Sans" 2>/dev/null)
       export _has_col
@@ -1990,6 +2000,8 @@ prepare_variable_config() {
       local _tab_sec=$_sec_idx
       _sec_idx=$((_sec_idx + 1))
       local _met_sec=$_sec_idx
+      _sec_idx=$((_sec_idx + 1))
+      local _sub_sec=$_sec_idx
 
       if ! grep -q "^[[:space:]]*ENABLE_TABULAR_CLOCK_DIGITS[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
         {
@@ -2025,7 +2037,32 @@ prepare_variable_config() {
           printf '#                any clipping while strictly preserving the FFIX3 baseline ratio.\n'
           printf '#                Buttons and status bar icons stay perfectly centered!\n'
           printf '#   - preserve : Retains the font designer original vertical metrics untouched.\n'
-          printf 'METRICS_MODE=compact\n'
+          printf 'METRICS_MODE=compact\n\n'
+        } >> "$VF_CONFIG_FILE"
+      fi
+
+      if ! grep -q "^[[:space:]]*ENABLE_SUBSET_FONTS[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+        local _def_subset="no"
+        local _subset_note="[Default: no]"
+        if [ "$_font_sz" -gt 1048576 ]; then
+          _def_subset="yes"
+          _subset_note="[Recommended: yes - font > 1MB]"
+        fi
+        {
+          printf '# ------------------------------------------------------------------------------\n'
+          printf '# %s. UNIVERSAL FONT SUBSETTER (Strip Plane 16 Bloat & Noto Emoji Conflicts)\n' "$_sub_sec"
+          printf '# ------------------------------------------------------------------------------\n'
+          printf '# WHAT IT DOES:\n'
+          printf '#   Removes proprietary bloat (Apple SF Symbols in Plane 16, 8400+ unused icons)\n'
+          printf '#   and monochrome emoji outlines that conflict with Android NotoColorEmoji.\n'
+          printf '#   Safeguards all spoken language alphabets (Latin, Cyrillic, Greek, Arabic,\n'
+          printf '#   Hebrew, CJK, Devanagari, etc.) and developer glyphs (Powerline, Nerd Fonts).\n'
+          printf '#   Reduces font memory footprint and prevents out-of-memory errors on-device.\n'
+          printf '#\n'
+          printf '# WHEN TO CHOOSE:\n'
+          printf '#   - yes : Optimize font size and strip unused symbol bloat. %s\n' "$_subset_note"
+          printf '#   - no  : Retain all original glyphs and tables untouched.\n'
+          printf 'ENABLE_SUBSET_FONTS=%s\n' "$_def_subset"
         } >> "$VF_CONFIG_FILE"
       fi
     fi
@@ -2043,7 +2080,7 @@ prepare_variable_config() {
         [ "$_has_col" != "true" ] && _fr_num_calc=$((_fr_num_calc + 1))
         [ "$_has_pua_col" != "true" ] && _fr_num_calc=$((_fr_num_calc + 1))
         [ "$_has_ital" != "true" ] && _fr_num_calc=$((_fr_num_calc + 1))
-        _fr_num_calc=$((_fr_num_calc + 2))
+        _fr_num_calc=$((_fr_num_calc + 3))
         {
           printf '\n# ------------------------------------------------------------------------------\n'
           printf '# %s. OPENTYPE FEATURE FREEZING (Stylistic Alternates)\n' "$_fr_num_calc"
@@ -2142,6 +2179,7 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
   _cfg_tabular_digits=$(config_value ENABLE_TABULAR_CLOCK_DIGITS)
   _cfg_metrics_mode=$(config_value METRICS_MODE)
   _cfg_metrics_mode=${_cfg_metrics_mode:-compact}
+  _cfg_subset=$(config_value ENABLE_SUBSET_FONTS)
   _cfg_sans_f=$(config_value SANS_FREEZE_FEATURES)
   _cfg_mono_f=$(config_value MONO_FREEZE_FEATURES)
   _cfg_serif_f=$(config_value SERIF_FREEZE_FEATURES)
@@ -2159,6 +2197,9 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
   case "$_cfg_tabular_digits" in
     yes|YES|true|TRUE|1) _should_compile=1 ;;
   esac
+  case "$_cfg_subset" in
+    yes|YES|true|TRUE|1) _should_compile=1 ;;
+  esac
   case "$_cfg_metrics_mode" in
     safe|preserve) _should_compile=1 ;;
   esac
@@ -2172,11 +2213,12 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
   _applied_tabular=0
   _applied_freeze=0
   _applied_metrics=0
+  _applied_subset=0
 
   if [ "$_should_compile" = "1" ]; then
     ui_print "- Dynamic compilation via MFFM Runtime..."
     _extra_compile_args=""
-    _req_colon=0; _req_pua_colon=0; _req_synthetic_italic=0; _req_tabular=0; _req_freeze=0; _req_metrics=0
+    _req_colon=0; _req_pua_colon=0; _req_synthetic_italic=0; _req_tabular=0; _req_freeze=0; _req_metrics=0; _req_subset=0
     case "$_cfg_colon" in
       yes|YES|true|TRUE|1)
         _req_colon=1
@@ -2207,6 +2249,13 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
         _req_tabular=1
         _extra_compile_args="$_extra_compile_args --enable-tabular-digits"
         ui_print "    [*] Equalizing clock digits for tabular spacing..."
+        ;;
+    esac
+    case "$_cfg_subset" in
+      yes|YES|true|TRUE|1)
+        _req_subset=1
+        _extra_compile_args="$_extra_compile_args --enable-subset"
+        ui_print "    [*] Subsetting font (stripping Plane 16 bloat & emoji conflicts)..."
         ;;
     esac
     if [ -n "$_cfg_metrics_mode" ] && [ "$_cfg_metrics_mode" != "preserve" ]; then
@@ -2327,6 +2376,10 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
         _applied_metrics=1
         ui_print "    [OK] Font metrics harmonized (mode: $_cfg_metrics_mode)"
       fi
+      if [ "$_req_subset" = "1" ]; then
+        _applied_subset=1
+        ui_print "    [OK] Universal font subsetting applied"
+      fi
       ui_print "    [OK] Dynamic compilation completed successfully"
     else
       [ "$_req_colon" = "1" ] && ui_print "    [!] Centered colon injection failed"
@@ -2335,6 +2388,7 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
       [ "$_req_tabular" = "1" ] && ui_print "    [!] Tabular clock digits equalization failed"
       [ "$_req_freeze" = "1" ] && ui_print "    [!] OpenType feature freezing failed"
       [ "$_req_metrics" = "1" ] && ui_print "    [!] Font metrics harmonization failed"
+      [ "$_req_subset" = "1" ] && ui_print "    [!] Font subsetting failed"
       status_warn "Dynamic compilation failed (exit $_compile_ret); see $LOG_FILE"
       _err_snippet=$(grep -iE 'error|exception|traceback' "$_comp_log" 2>/dev/null | tail -n 1)
       [ -n "$_err_snippet" ] && ui_print "    [!] Cause: $_err_snippet"

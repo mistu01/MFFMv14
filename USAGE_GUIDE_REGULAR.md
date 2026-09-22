@@ -138,6 +138,7 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
 | `SYNTHETIC_ITALIC_ANGLE` | `-12` | `-12` | Slant angle in degrees for synthetic italic (negative slants forward to the right). |
 | `ENABLE_TABULAR_CLOCK_DIGITS` | `no` | `yes` (if clock wobbles) | Equalizes digit widths (0–9) so lockscreen clocks never jump horizontally as minutes or seconds change. |
 | `METRICS_MODE` | `compact` | `compact` | Vertical metrics: `compact` forces tight FFIX3; `safe` prevents accent clipping with zero monospace inflation; `preserve` leaves original metrics untouched. |
+| `ENABLE_SUBSET_FONTS` | `no` (or `yes` if > 1MB) | `yes` (for large fonts) | Strips Apple Plane 16 SF Symbol bloat (8400+ icons) and Noto-conflicting monochrome emoji outlines while strictly guarding all spoken language alphabets and developer PUA glyphs. |
 | `*_FREEZE_FEATURES` | *(empty)* | `ss01,zero` (user choice) | Freezes OpenType layout features (like slashed zero `0` or stylistic sets) permanently into default characters. |
 | `SANS_WGHT` / `SANS_WDTH` | *(auto)* | Leave unless custom | Explicit numeric weights (100–900) mapped to Android system font weight slots. |
 
@@ -195,14 +196,23 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
     ```
   - Re-flash the font module ZIP to bake these alternates into the default glyphs system-wide!
 
-#### 7. ⚖️ Variable Font Weight Tuning
+#### 7. ✂️ Universal Font Subsetting (`ENABLE_SUBSET_FONTS`)
+- **The Problem**: Large modern fonts (such as Apple San Francisco / SF Pro, or fonts packed with thousands of unneeded desktop icons) can exceed several megabytes per face. When dynamically compiling on-device, this consumes heavy RAM and can trigger out-of-memory errors on resource-constrained devices.
+- **Intelligent Auto-Detection**: If your primary font is larger than **1 MB** (`1,048,576 bytes`), the installer automatically defaults `ENABLE_SUBSET_FONTS=yes` in your `.conf` file to protect system memory and speed up compilation.
+- **Smart PUA & Symbol Pruning**:
+  - Drops proprietary symbol bloat: Apple SF Symbols in Plane 16 (`0x100000–0x10FFFD`, 8,400+ glyphs) and unassigned Plane 15 bloat (`0xF1AF1–0xFFFFD`).
+  - Drops monochrome emoji outlines (Plane 1 pictographs `0x1F000–0x1FAFF`, Misc Symbols `0x2600–0x26FF`, Dingbats `0x2700–0x27BF`) so Android's system `NotoColorEmoji` is never shadowed by black-and-white outlines.
+  - **Preserves essential developer & UI symbols**: Apple logo (`0xF8FF`), Powerline status line symbols, Nerd Fonts BMP glyphs, Material Design Icons Plane 15 (`0xF0001–0xF1AF0`), and Web icons (`0xE900–0xEF50`).
+  - **Language Guard**: All spoken languages (Latin, Cyrillic, Greek, Arabic, Hebrew, CJK, Devanagari, Thai, etc.) and diacritics are strictly guarded via Unicode category verification (`L*` and `M*`) and never removed.
+
+#### 8. ⚖️ Variable Font Weight Tuning
 - For variable fonts, fine-tune the exact numeric weight mapped to each of Android's system weight tiers (100–900):
   ```sh
   SANS_WGHT="100 200 300 400 500 600 700 800 900"
   SANS_WDTH="100 100 100 100 100 100 100 100 100"
   ```
 
-#### 8. 🌐 Adding Extra Fonts Directly on Your Phone
+#### 9. 🌐 Adding Extra Fonts Directly on Your Phone
 - You can augment an installed module with additional language or style families without repacking the ZIP on PC:
   - Place extra fonts into `/sdcard/MFFM/<FontFamily>/`:
     - `/sdcard/MFFM/<FontFamily>/Bengali/`
