@@ -33,7 +33,7 @@ RUNTIME_DIR = ROOT / "runtime-template" / "runtime"
 MANIFEST_PATH = ROOT / "runtime-template" / "manifest.json"
 
 # Supply-chain pins (mirrors zipsigner_auto.py's approach). Bump together.
-PYTHON_RELEASE_TAG = "20260814"
+PYTHON_RELEASE_TAG = "20260901"
 PYTHON_VERSION = "3.11.16"
 PYTHON_ABI_TARGET = {
     "aarch64": "aarch64-unknown-linux-musl",
@@ -43,12 +43,11 @@ PYTHON_VARIANT = "lto+static-full"
 PYTHON_RELEASE_BASE = "https://github.com/astral-sh/python-build-standalone/releases/download"
 
 # Pure-python fontTools wheel (no C accelerator, works on static musl python).
-FONTTOOLS_VERSION = "4.64.0"
+FONTTOOLS_VERSION = "4.65.0"
 FONTTOOLS_WHEEL_URL = (
-    "https://files.pythonhosted.org/packages/82/f8/7188153c4b265c899cd035de6a062677d51f67118a4ba640902bd9683e90"
-    "/fonttools-4.64.0-py3-none-any.whl"
+    "https://files.pythonhosted.org/packages/e6/35/f894ceb867118c0261d0f69a9bd516b045a3754238f76c88a49513ac7a83/fonttools-4.65.0-py3-none-any.whl"
 )
-FONTTOOLS_WHEEL_SHA256 = "4a05783ff54ce4c7a28f18e5772efdf63c219374bd9ffc55452182e1cef8be60"
+FONTTOOLS_WHEEL_SHA256 = "3060b8c1fc2329fa20265b7c138614143ea7c1624e26c5c180c76aeb74deae6f"
 
 # Standard-library directories safe to drop for a fontTools-only runtime.
 STDLIB_REMOVE_DIRS = (
