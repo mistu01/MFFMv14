@@ -51,7 +51,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--name", help="module display name override")
     parser.add_argument("--version", help="module version override")
     parser.add_argument("--version-code", help="numeric module versionCode override")
-    parser.add_argument("--output-dir", type=Path, help="output directory for the ZIP (default: ./dist)")
+    parser.add_argument("--output-dir", type=Path, help="output directory for the ZIP (default: ./dist/Standalone)")
     parser.add_argument("--no-zip", action="store_true", default=None, help="prepare module files without packaging")
     parser.add_argument("--no-sign", action="store_true", default=None, help="create an unsigned debugging ZIP")
     parser.add_argument("--keep-hinting", action="store_true", default=None, help="do not remove TrueType hinting")
@@ -140,8 +140,10 @@ def apply_build_config(args: argparse.Namespace, config: dict | None, source: st
         args.fonts_dir = ROOT / "Fonts"
     if args.output_dir is not None:
         args.output_dir = _config_path(args.output_dir)
+        if args.output_dir.resolve() == (ROOT / "dist").resolve():
+            args.output_dir = ROOT / "dist" / "Standalone"
     else:
-        args.output_dir = ROOT / "dist"
+        args.output_dir = ROOT / "dist" / "Standalone"
     if args.mode is None:
         args.mode = "auto"
 
@@ -261,7 +263,8 @@ def build_module(args: argparse.Namespace) -> Path | None:
         raise SystemExit(f"Template payload is incomplete: customize.sh is missing in {TEMPLATE_DIR}")
 
     fonts_dir = (args.fonts_dir or (ROOT / "Fonts")).resolve()
-    out_dir = (args.output_dir or (ROOT / "dist")).resolve()
+    out_dir = (args.output_dir or (ROOT / "dist" / "Standalone")).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     if getattr(args, "metrics_mode", None) is None:
         should_prompt = args.interactive if args.interactive is not None else sys.stdin.isatty()
@@ -477,7 +480,7 @@ def package_standalone_template_zip(output_dir: Path) -> Path:
         "Fonts/Monospace",
         "Fonts/Serif",
         "Fonts/Bengali",
-        "dist",
+        "dist/Standalone",
     )
 
     def _read_lf_bytes(p: Path) -> bytes:

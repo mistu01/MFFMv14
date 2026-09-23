@@ -59,7 +59,7 @@ You can compile a standalone MFFMv14 module on a PC (Windows, macOS, Linux) or d
    # In extracted MFFMv14-Standalone-Template.zip, you can also run: python build.py
    ```
 5. **Flash the Output**:
-   The signed, flashable ZIP is written to `dist/` (e.g., `dist/mffm14-inter-2026.09.11.zip`). Transfer it to your device and flash it directly in **Magisk**, **KernelSU**, or **APatch**, then reboot.
+   The signed, flashable ZIP is written to `dist/Standalone/` (e.g., `dist/Standalone/mffm14-inter-2026.09.11.zip`). Transfer it to your device and flash it directly in **Magisk**, **KernelSU**, or **APatch**, then reboot.
 
 ---
 
@@ -98,7 +98,8 @@ MFFMv14/
 │   ├── Monospace/    <-- Terminal & code font (Optional)
 │   ├── Serif/        <-- Serif / news font (Optional)
 │   └── Bengali/      <-- Regional Bengali font (Optional)
-├── dist/             <-- Output flashable ZIP modules
+├── dist/
+│   └── Standalone/   <-- Output flashable ZIP modules
 ├── build.py          <-- CLI entrypoint
 ├── build_standalone.py
 ├── termux-build.sh

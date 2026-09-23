@@ -85,7 +85,7 @@ mffm-runtime-YYYY.MM.DD.zip
   # Put fonts in Fonts/Sans/
   python build.py
   ```
-  Flash the generated ZIP from `dist/` in Magisk, KernelSU, or APatch.
+  Flash the generated ZIP from `dist/Regular/` in Magisk, KernelSU, or APatch.
 * **Option B (On Phone via File Manager)**:
   Extract **`MFFMv14-Source-Template.zip`**, place your fonts in `Files/Sans/`, compress the folder contents back into a ZIP, and flash!
 
@@ -105,7 +105,7 @@ mffm-runtime-YYYY.MM.DD.zip
    ```sh
    python build_standalone.py
    ```
-4. Transfer the flashable ZIP from `dist/` to your phone and flash it. **No runtime or Python required on device!**
+4. Transfer the flashable ZIP from `dist/Standalone/` to your phone and flash it. **No runtime or Python required on device!**
 
 ### On Android Phone (via Termux)
 1. Extract `MFFMv14-Standalone-Template.zip` in Termux.

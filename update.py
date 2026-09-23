@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
         dest="old_dir",
         help="input directory containing old ZIP modules, or path to a single ZIP file",
     )
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "dist")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "dist" / "Regular", help="destination directory for updated ZIP modules (default: ./dist/Regular)")
     parser.add_argument("--mode", choices=("auto", "static", "variable"), default="auto")
     parser.add_argument("--name", help="override every output display name (best for one input ZIP)")
     parser.add_argument("--version")
@@ -191,15 +191,18 @@ def update_one(zip_path: Path, args: argparse.Namespace, reserved: set[Path]) ->
             file_slug = slugify(f"{display} {' '.join(result.applied_features)}")
         else:
             file_slug = slugify(display)
-        args.output_dir.mkdir(parents=True, exist_ok=True)
+        out_dir = args.output_dir.resolve()
+        if out_dir == (ROOT / "dist").resolve():
+            out_dir = (ROOT / "dist" / "Regular").resolve()
+        out_dir.mkdir(parents=True, exist_ok=True)
         output = reserve_output(
-            args.output_dir.resolve(),
+            out_dir,
             f"mffm14-{file_slug}-{props['version']}",
             args.force,
             reserved,
         )
         if output is None:
-            existing = args.output_dir.resolve() / f"mffm14-{file_slug}-{props['version']}.zip"
+            existing = out_dir / f"mffm14-{file_slug}-{props['version']}.zip"
             print(f"Skipping {zip_path.name}: output already exists (use --force to overwrite): {existing}")
             return None
         write_zip(module_dir, output)

@@ -30,7 +30,10 @@ Dates follow the `YYYY.MM.DD` versioning format carried by the modules.
   - Standardized tracking units to $1/1000\text{ em}$ ($\Delta W = \text{round}(tracking \times upem / 1000)$).
   - Symmetrical optical centering with equal padding added to LSB and RSB.
   - Zero-width combining mark / diacritic preservation and composite TrueType bounding recalculation.
-  - Exported `TRACKING=...` into `font-config.sh` and added `[Active: Tracking: ...]` tag to `module.prop` and terminal banners.
+- **Dedicated `dist/Standalone/` Output Directory (`build_standalone.py`, `termux-build.sh`)**:
+  - Standalone module packages are now written to `dist/Standalone/` by default instead of sharing the root `dist/` directory with regular modules.
+  - Prevents module ZIP naming collisions and accidental overwriting when building both regular and standalone modules for the same font in the same directory.
+  - Standalone template package includes the `dist/Standalone/` directory skeleton.
 
 ## 2026.09.11
 

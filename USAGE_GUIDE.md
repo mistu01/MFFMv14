@@ -69,7 +69,7 @@ You can build an MFFMv14 font module either directly on your phone using any fil
    ```sh
    python build.py
    ```
-5. Your signed, flashable module ZIP will be generated in `dist/`.
+5. Your signed, flashable module ZIP will be generated in `dist/Regular/`.
 
 ---
 
@@ -83,7 +83,7 @@ You can build an MFFMv14 font module either directly on your phone using any fil
    ```sh
    python build_standalone.py
    ```
-3. The pre-compiled, self-contained module ZIP is generated in `dist/` and is immediately flashable in Magisk, KernelSU, or APatch.
+3. The pre-compiled, self-contained module ZIP is generated in `dist/Standalone/` and is immediately flashable in Magisk, KernelSU, or APatch.
 
 > [!NOTE]
 > **External Fonts Standard in Standalone Modules (`/sdcard/MFFM/`):**
@@ -348,7 +348,7 @@ python build_standalone.py --template
 This produces `dist/MFFMv14-Standalone-Template.zip` containing:
 - **Build Tools**: `build_standalone.py`, `font_module_standalone.py`, `runtime_helper.py`, `zipsigner_auto.py`, `termux-build.sh`, `requirements.txt`, and convenience wrapper `build.py`.
 - **Standalone Module Template**: Complete `template-standalone/` payload (`customize.sh`, `action.sh`, `font-config.sh`, `module.prop`, `post-mount.sh`, `service.sh`, `uninstall.sh`, `META-INF/`, `Files/`).
-- **Font Directory Skeleton**: `Fonts/Sans`, `Fonts/Monospace`, `Fonts/Serif`, `Fonts/Bengali`, and `dist/`.
+- **Font Directory Skeleton**: `Fonts/Sans`, `Fonts/Monospace`, `Fonts/Serif`, `Fonts/Bengali`, and `dist/Standalone/`.
 - **Documentation**: `USAGE_GUIDE.md`, `CHANGELOG.md`, `ReadMe.md`.
 
 Anyone extracting this archive on PC or Termux can immediately drop fonts into `Fonts/Sans/` and run `python build.py` or `sh termux-build.sh` without cloning the entire git repository.

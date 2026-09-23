@@ -141,7 +141,7 @@ build_status=$(cat "$BUILD_STATUS" 2>/dev/null || echo 1)
 rm -f "$BUILD_STATUS"
 [ "$build_status" = "0" ] || { rm -f "$BUILD_LOG"; die "$BUILD_SCRIPT failed (exit $build_status)"; }
 
-ZIP=$(sed -n 's/^Output *: *//p' "$BUILD_LOG" | tail -n 1)
+ZIP=$(sed -n -e 's/^[[:space:]]*Output[[:space:]]*File[[:space:]]*:[[:space:]]*//p' -e 's/^[[:space:]]*Output[[:space:]]*:[[:space:]]*//p' "$BUILD_LOG" | tail -n 1)
 rm -f "$BUILD_LOG"
 if [ -z "$ZIP" ]; then
   say "The build wrote no ZIP (--no-zip), so there is nothing to install"

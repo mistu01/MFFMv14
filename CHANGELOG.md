@@ -31,7 +31,12 @@ versioning scheme the modules themselves carry.
   - Symmetrical optical centering: adds $\Delta W / 2$ to Left Sidebearing (LSB) and Right Sidebearing (RSB) while expanding advance width by $\Delta W$, ensuring glyphs remain centered within their character cell.
   - Zero-width combining mark / diacritic safety: preserves zero-advance glyphs (`orig_adv == 0`) with zero shift, ensuring accents stay anchored to base characters.
   - TrueType composite glyph safety: recalculates composite bounding boxes (`g.recalcBounds(glyf)`) without double-shifting nested component contours.
-  - Added tracking tag reporting in `module.prop` description (`[Active: Tracking: +20‰]`) and installer terminal banners.
+- **Separated Module Output Folders in `dist/` (`build.py`, `build_standalone.py`, `update.py`, `termux-build.sh`)**:
+  - Regular modules built with `build.py` (and updated via `update.py`) are now cleanly output to `dist/Regular/`.
+  - Standalone modules built with `build_standalone.py` (and `termux-build.sh`) are now cleanly output to `dist/Standalone/`.
+  - Prevents filename collisions and unintentional overwrites when building both regular and standalone packages for the same font family in the same workspace.
+  - Automatically routes legacy `dist` paths from config files and CLI flags to their respective dedicated subdirectories (`dist/Regular` or `dist/Standalone`), while preserving custom paths.
+  - Standalone template package includes `dist/Standalone/` skeleton out of the box.
 
 ## 2026.09.11
 
