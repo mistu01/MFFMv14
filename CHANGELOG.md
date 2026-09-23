@@ -24,6 +24,14 @@ versioning scheme the modules themselves carry.
     - In standalone and regular builders, fonts larger than 1 MB automatically trigger the subset prompt in interactive mode (`[?] Enable font subsetting? [Y/n]`) or auto-enable in non-interactive mode.
     - CLI flags `--subset` and `--no-subset` provide explicit control and are persisted in `.mffm-build.json`.
     - In on-device installer (`template/customize.sh`), `.conf` generation measures primary font size and automatically recommends `ENABLE_SUBSET_FONTS=yes` when font size > 1 MB.
+- **Horizontal Font Tracking & Letter-Spacing Control (`runtime_helper.py`, `font_module.py`, `font_module_standalone.py`, `build.py`, `build_standalone.py`, `template/customize.sh`, `runtime-template/customize.sh`)**:
+  - Added character tracking / letter-spacing adjustment across both regular (`build.py`) and standalone (`build_standalone.py`) builders via CLI flags (`--tracking`, `--letter-spacing`, `--sans-tracking`, `--mono-tracking`, `--serif-tracking`, `--bengali-tracking`) and `.mffm-build.json` configuration options.
+  - Added on-device runtime configuration support in `/sdcard/MFFM/*.conf` via `FONT_TRACKING=...` (fallback `TRACKING=...`) to allow real-time tuning on Android devices without repacking module ZIPs.
+  - Standardized tracking units to $1/1000\text{ em}$ ($\Delta W = \text{round}(tracking \times upem / 1000)$) for consistent visual spacing across different font UPMs (1000, 2048, etc.).
+  - Symmetrical optical centering: adds $\Delta W / 2$ to Left Sidebearing (LSB) and Right Sidebearing (RSB) while expanding advance width by $\Delta W$, ensuring glyphs remain centered within their character cell.
+  - Zero-width combining mark / diacritic safety: preserves zero-advance glyphs (`orig_adv == 0`) with zero shift, ensuring accents stay anchored to base characters.
+  - TrueType composite glyph safety: recalculates composite bounding boxes (`g.recalcBounds(glyf)`) without double-shifting nested component contours.
+  - Added tracking tag reporting in `module.prop` description (`[Active: Tracking: +20‰]`) and installer terminal banners.
 
 ## 2026.09.11
 

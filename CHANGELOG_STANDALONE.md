@@ -25,6 +25,12 @@ Dates follow the `YYYY.MM.DD` versioning format carried by the modules.
   - **Language Guard**: All non-CJK spoken languages (Latin, Cyrillic, Greek, Arabic, Hebrew, Devanagari, Bengali, Thai, Vietnamese, etc.) and diacritics are strictly guarded via Unicode category verification (`L*` letters and `M*` marks) and never dropped.
   - **Automatic Font Size Detection (> 1 MB)**: Automatically prompts or activates when source fonts exceed 1 MB, slashing font memory footprint and package size.
   - Added `--subset` and `--no-subset` CLI flags with `.mffm-build.json` persistence.
+- **Horizontal Font Tracking & Letter-Spacing Control (`build_standalone.py`, `font_module_standalone.py`, `runtime_helper.py`, `template-standalone/customize.sh`)**:
+  - Added `--tracking` and `--letter-spacing` CLI flags (with per-family overrides `--sans-tracking`, `--mono-tracking`, `--serif-tracking`, `--bengali-tracking`) and interactive wizard prompt (`prompt_tracking_mode`).
+  - Standardized tracking units to $1/1000\text{ em}$ ($\Delta W = \text{round}(tracking \times upem / 1000)$).
+  - Symmetrical optical centering with equal padding added to LSB and RSB.
+  - Zero-width combining mark / diacritic preservation and composite TrueType bounding recalculation.
+  - Exported `TRACKING=...` into `font-config.sh` and added `[Active: Tracking: ...]` tag to `module.prop` and terminal banners.
 
 ## 2026.09.11
 

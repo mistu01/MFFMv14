@@ -139,6 +139,7 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
 | `ENABLE_TABULAR_CLOCK_DIGITS` | `no` | `yes` (if clock wobbles) | Equalizes digit widths (0–9) so lockscreen clocks never jump horizontally as minutes or seconds change. |
 | `METRICS_MODE` | `compact` | `compact` | Vertical metrics: `compact` forces tight FFIX3; `safe` prevents accent clipping with zero monospace inflation; `preserve` leaves original metrics untouched. |
 | `ENABLE_SUBSET_FONTS` | `no` (or `yes` if > 1MB) | `yes` (for large fonts) | Strips Apple Plane 16 SF Symbol bloat (8400+ icons), CJK scripts (Chinese/Japanese/Korean), and Noto-conflicting monochrome emoji outlines while strictly guarding spoken language alphabets and developer PUA glyphs. |
+| `FONT_TRACKING` | `0` | `+20` (or `-15`) | Adjusts horizontal letter-spacing in 1/1000 em units. Positive values (e.g. `+20`, `+30`) add breathing room between dense characters; negative values (e.g. `-10`, `-15`) tighten airy fonts. |
 | `*_FREEZE_FEATURES` | *(empty)* | `ss01,zero` (user choice) | Freezes OpenType layout features (like slashed zero `0` or stylistic sets) permanently into default characters. |
 | `SANS_WGHT` / `SANS_WDTH` | *(auto)* | Leave unless custom | Explicit numeric weights (100–900) mapped to Android system font weight slots. |
 
@@ -206,14 +207,28 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
   - **Preserves essential developer & UI symbols**: Apple logo (`0xF8FF`), Powerline status line symbols, Nerd Fonts BMP glyphs, Material Design Icons Plane 15 (`0xF0001–0xF1AF0`), and Web icons (`0xE900–0xEF50`).
   - **Language Guard**: All non-CJK spoken languages (Latin, Cyrillic, Greek, Arabic, Hebrew, Devanagari, Bengali, Thai, Vietnamese, etc.) and diacritics are strictly guarded via Unicode category verification (`L*` and `M*`) and never removed.
 
-#### 8. ⚖️ Variable Font Weight Tuning
+#### 8. 🔤 Font Tracking / Letter-Spacing (`FONT_TRACKING`)
+- **The Problem**: Some fonts are designed with tight letter-spacing that can feel crowded or dense on mobile screens, especially in UI headings, app labels, and chat bubbles. Conversely, other fonts may feel overly airy or loose.
+- **How to Use**:
+  - In your module's `/sdcard/MFFM/<FontFamily>.conf`:
+    - `FONT_TRACKING=0`: Original font spacing (default).
+    - `FONT_TRACKING=+20` (or `+30`): Adds horizontal breathing room between glyphs (makes dense fonts less dense).
+    - `FONT_TRACKING=-10` (or `-15`): Tightens horizontal spacing between glyphs (makes loose fonts more compact).
+  - Re-flash the module in Magisk / KernelSU / APatch.
+- **Optical Centering & Zero-Width Safety**:
+  - Tracking units are standardized to $1/1000\text{ em}$ and automatically scale to the font's internal units per em ($\Delta W = \text{round}(tracking \times upem / 1000)$).
+  - Contours are shifted rightward by $\text{round}(\Delta W / 2)$, adding equal padding to both left and right sidebearings (LSB and RSB) so characters remain optically centered.
+  - Zero-advance marks (combining accents, diacritics, non-spacing marks) are strictly preserved with zero shift, ensuring accents stay anchored to base letters.
+  - Composite TrueType glyphs have their component bounds cleanly recalculated.
+
+#### 9. ⚖️ Variable Font Weight Tuning
 - For variable fonts, fine-tune the exact numeric weight mapped to each of Android's system weight tiers (100–900):
   ```sh
   SANS_WGHT="100 200 300 400 500 600 700 800 900"
   SANS_WDTH="100 100 100 100 100 100 100 100 100"
   ```
 
-#### 9. 🌐 Adding Extra Fonts Directly on Your Phone
+#### 10. 🌐 Adding Extra Fonts Directly on Your Phone
 - You can augment an installed module with additional language or style families without repacking the ZIP on PC:
   - Place extra fonts into `/sdcard/MFFM/<FontFamily>/`:
     - `/sdcard/MFFM/<FontFamily>/Bengali/`

@@ -39,7 +39,8 @@ BUILD_CONFIG_KEYS = (
     "bengali_features", "centered_colon", "colon_offset", "colon_shift",
     "colon_alignment", "colon_rule", "equalize_digits", "pua_colon",
     "synthetic_italic", "synthetic_italic_angle", "interactive",
-    "metrics_mode", "subset",
+    "metrics_mode", "subset", "tracking", "letter_spacing",
+    "sans_tracking", "mono_tracking", "serif_tracking", "bengali_tracking",
 )
 
 
@@ -76,6 +77,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--metrics-mode", choices=("compact", "safe", "preserve"), default=None, help="vertical metrics mode: compact (default tight FFIX3), safe (decoupled zero-clipping), or preserve (original font metrics)")
     parser.add_argument("--subset", action="store_true", default=None, help="subset fonts (drops Plane 16 SF bloat, CJK scripts & Noto emoji conflicts; preserves spoken alphabets & PUA)")
     parser.add_argument("--no-subset", action="store_false", dest="subset", help="disable font subsetting")
+    parser.add_argument("--tracking", "--letter-spacing", dest="tracking", type=int, default=None, help="horizontal tracking / letter spacing in 1/1000 em (+/- font units, e.g. +20 for less dense, -15 for tighter)")
+    parser.add_argument("--sans-tracking", type=int, default=None, help="Sans-serif specific tracking override")
+    parser.add_argument("--mono-tracking", type=int, default=None, help="Monospace specific tracking override")
+    parser.add_argument("--serif-tracking", type=int, default=None, help="Serif specific tracking override")
+    parser.add_argument("--bengali-tracking", type=int, default=None, help="Bengali specific tracking override")
     parser.add_argument("--config", type=Path, help=f"build config file to load (default: {BUILD_CONFIG_NAME} in the project root, when present)")
     parser.add_argument("--no-config", action="store_true", help="ignore any build config file")
     parser.add_argument("--save-config", action="store_true", help=f"save the effective build options to the config file (default: {BUILD_CONFIG_NAME})")
@@ -127,6 +133,8 @@ def apply_build_config(args: argparse.Namespace, config: dict | None, source: st
                 setattr(args, key, config[key])
         if getattr(args, "colon_offset", None) is None and "colon_shift" in config:
             args.colon_offset = config["colon_shift"]
+        if getattr(args, "tracking", None) is None and "letter_spacing" in config:
+            args.tracking = config["letter_spacing"]
         if source:
             print(f"Build config    : loaded {source}")
     if (getattr(args, "colon_offset", None) is not None or getattr(args, "colon_shift", None) is not None) and args.centered_colon is None:
@@ -175,6 +183,11 @@ def save_build_config(path: Path, args: argparse.Namespace) -> None:
         "interactive": args.interactive,
         "metrics_mode": getattr(args, "metrics_mode", "compact") or "compact",
         "subset": getattr(args, "subset", None),
+        "tracking": getattr(args, "tracking", 0) or 0,
+        "sans_tracking": getattr(args, "sans_tracking", None),
+        "mono_tracking": getattr(args, "mono_tracking", None),
+        "serif_tracking": getattr(args, "serif_tracking", None),
+        "bengali_tracking": getattr(args, "bengali_tracking", None),
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(f"Build config    : saved {path}")
@@ -271,6 +284,16 @@ def build_module(args: argparse.Namespace) -> Path | None:
     else:
         args.subset = bool(args.subset)
 
+    if getattr(args, "tracking", None) is None:
+        should_prompt = args.interactive if args.interactive is not None else False
+        if should_prompt:
+            from font_module import prompt_tracking_mode
+            args.tracking = prompt_tracking_mode(0, interactive=True)
+        else:
+            args.tracking = 0
+    else:
+        args.tracking = int(args.tracking)
+
     print("=" * 64, flush=True)
     print("  MFFMv14 Module Builder", flush=True)
     print("=" * 64, flush=True)
@@ -283,6 +306,9 @@ def build_module(args: argparse.Namespace) -> Path | None:
         print("  Subsetting       : Enabled [Smart PUA & Noto-Safe Emoji Dropping]", flush=True)
     else:
         print("  Subsetting       : Disabled", flush=True)
+    if getattr(args, "tracking", 0):
+        dens_label = "less dense" if args.tracking > 0 else "tighter"
+        print(f"  Tracking / Spacing : {args.tracking:+d} ‰ em ({dens_label})", flush=True)
     if args.features:
         print(f"  Sans Features    : {args.features}", flush=True)
     if args.centered_colon is True:
@@ -329,6 +355,11 @@ def build_module(args: argparse.Namespace) -> Path | None:
             synthetic_italic=args.synthetic_italic,
             synthetic_italic_angle=float(args.synthetic_italic_angle or -12.0),
             subset=bool(args.subset),
+            tracking=int(args.tracking or 0),
+            sans_tracking=args.sans_tracking,
+            mono_tracking=args.mono_tracking,
+            serif_tracking=args.serif_tracking,
+            bengali_tracking=args.bengali_tracking,
         )
         display_name = display_name_for_mode(args.name or result.family, result.mode)
         props = update_module_metadata(
@@ -341,6 +372,7 @@ def build_module(args: argparse.Namespace) -> Path | None:
             applied_features=result.applied_features,
             injected_colon=result.injected_colon,
             synthesized_italic=result.synthesized_italic,
+            tracking=int(args.tracking or 0),
         )
 
         print(flush=True)

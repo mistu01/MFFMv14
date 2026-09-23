@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Iterable, Literal
 
 from runtime_helper import (
+    apply_font_tracking,
     copy_colon_to_pua,
     equalize_clock_digits,
     font_has_centered_colon,
@@ -1206,6 +1207,26 @@ def prompt_subset_mode(large_fonts: list[tuple[Path, int]] | None = None, intera
     return True
 
 
+def prompt_tracking_mode(default_tracking: int = 0, interactive: bool = False) -> int:
+    """Prompt user interactively to adjust horizontal character tracking (letter-spacing)."""
+    if not interactive:
+        return default_tracking
+    print("\n" + "-" * 60)
+    print("Character Spacing / Font Tracking (Letter-Spacing)")
+    print("-" * 60)
+    print("Adjust horizontal spacing between letters across the font:")
+    print("  0       : Default original font spacing [Enter]")
+    print("  +15, +30: Add breathing room between letters (makes dense fonts less dense)")
+    print("  -10, -20: Tighten spacing (makes wide/airy fonts more compact)")
+    try:
+        val = input(f"Enter tracking adjustment in 1/1000 em [{default_tracking}]: ").strip()
+        if not val:
+            return default_tracking
+        return int(val)
+    except (ValueError, EOFError, KeyboardInterrupt):
+        return default_tracking
+
+
 def freeze_font_features(font_path: Path, features: list[str] | str) -> None:
     """Freeze OpenType features into a font file using pyftfeatfreeze for 1-to-1 cmap remappings
     and GSUB lookup promotion into default 'calt'/'liga' features for multi-glyph/contextual rules (like dlig, frac, hlig).
@@ -1404,6 +1425,11 @@ def compile_fonts(
     synthetic_italic: bool | None = None,
     synthetic_italic_angle: float = -12.0,
     subset: bool = False,
+    tracking: int = 0,
+    sans_tracking: int | None = None,
+    mono_tracking: int | None = None,
+    serif_tracking: int | None = None,
+    bengali_tracking: int | None = None,
 ) -> CompileResult:
     files_dir = module_dir / "Files"
     files_dir.mkdir(parents=True, exist_ok=True)
@@ -1617,6 +1643,26 @@ def compile_fonts(
                 copy_colon_to_pua(font_path)
             print("    -> PUA codepoints mapped across cmap tables [OK]", flush=True)
 
+        # Tracking / Letter-spacing
+        for cat_key, cat_paths, cat_label in category_paths:
+            cat_track = tracking
+            if cat_key == "sans" and sans_tracking is not None:
+                cat_track = sans_tracking
+            elif cat_key == "mono" and mono_tracking is not None:
+                cat_track = mono_tracking
+            elif cat_key == "serif" and serif_tracking is not None:
+                cat_track = serif_tracking
+            elif cat_key == "bengali" and bengali_tracking is not None:
+                cat_track = bengali_tracking
+
+            if cat_track and cat_paths:
+                has_enhancements = True
+                dens_desc = "less dense" if cat_track > 0 else "tighter"
+                print(f"  * Applying font tracking ({cat_track:+d} ‰ em, {dens_desc}) across {len(cat_paths)} {cat_label} face(s)...", flush=True)
+                for font_path in cat_paths:
+                    apply_font_tracking(font_path, tracking=cat_track)
+                print(f"    -> Character spacing & sidebearings adjusted successfully [OK]", flush=True)
+
         if not has_enhancements:
             print("  * Standard typography layout (no extra overrides requested)", flush=True)
 
@@ -1731,6 +1777,7 @@ def update_module_metadata(
     injected_colon: bool = False,
     synthesized_italic: bool = False,
     active_features: Iterable[str] | None = None,
+    tracking: int = 0,
 ) -> dict[str, str]:
     path = module_dir / "module.prop"
     props = read_props(path)
@@ -1755,6 +1802,8 @@ def update_module_metadata(
         active_items.append("Centered Colon")
     if synthesized_italic:
         active_items.append("Synthetic Italic")
+    if tracking:
+        active_items.append(f"Tracking: {tracking:+d}‰")
     if applied_features:
         active_items.append(f"Frozen: {', '.join(applied_features)}")
     if active_features:

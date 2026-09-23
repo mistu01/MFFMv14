@@ -270,6 +270,28 @@ python build.py --no-subset   # Force disable subsetting
 
 ---
 
+### Font Tracking / Letter-Spacing (Horizontal Breathing Room)
+
+Adjust the horizontal spacing between letters across the font:
+```bash
+python build.py --tracking 20       # Add +20 ‰ em breathing room (makes dense fonts less dense)
+python build.py --tracking -15      # Tighten letter-spacing by -15 ‰ em (more compact)
+```
+*(Alias: `--letter-spacing`)*
+
+Per-category tracking overrides:
+- `--sans-tracking VAL`: Sans-serif specific tracking.
+- `--mono-tracking VAL`: Monospace specific tracking.
+- `--serif-tracking VAL`: Serif specific tracking.
+- `--bengali-tracking VAL`: Bengali specific tracking.
+
+Tracking features:
+- **Standardized 1/1000 em Units**: Scaled proportionally to font upem (`round(tracking * upem / 1000.0)`).
+- **Symmetrical Optical Centering**: $\Delta W / 2$ added to both LSB and RSB.
+- **Zero-Width Diacritic Safety**: Combining accents (`orig_adv == 0`) remain anchored without drifting.
+
+---
+
 ### Saving and Loading Build Configurations
 
 Save your favorite build options into `.mffm-build.json` for repeated builds:

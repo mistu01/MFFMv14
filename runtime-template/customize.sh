@@ -1121,6 +1121,106 @@ def equalize_clock_digits(font_or_path, target_width: int | None = None) -> bool
         return False
 
 
+def apply_font_tracking(font_or_path, tracking: int | float = 0, scale_to_upem: bool = True) -> bool:
+    """Adjust horizontal font tracking (letter-spacing) across glyphs.
+
+    Positive tracking increases spacing between characters (makes dense fonts less dense).
+    Negative tracking decreases spacing between characters (makes airy fonts tighter).
+    Tracking is specified in thousandths of an em (1/1000 em), consistent with standard typography.
+    """
+    if not tracking:
+        return False
+
+    from fontTools.ttLib import TTFont
+
+    should_save_and_close = False
+    if isinstance(font_or_path, (str, Path)):
+        try:
+            font = TTFont(str(font_or_path))
+            should_save_and_close = True
+        except Exception as exc:
+            sys.stderr.write(f"apply_font_tracking error loading font: {exc}\n")
+            return False
+    else:
+        font = font_or_path
+
+    try:
+        if getattr(font, "flavor", None) is not None:
+            font.flavor = None
+
+        if "CFF " in font or "CFF2" in font or getattr(font, "sfntVersion", None) == "OTTO":
+            otf_to_ttf(font)
+
+        if "glyf" not in font or "hmtx" not in font:
+            if should_save_and_close:
+                font.close()
+            return False
+
+        upem = font["head"].unitsPerEm if "head" in font else 1000
+        delta_units = round(float(tracking) * (upem / 1000.0)) if scale_to_upem else round(float(tracking))
+        if delta_units == 0:
+            if should_save_and_close:
+                font.close()
+            return False
+
+        dx = round(delta_units / 2.0)
+        glyf = font["glyf"]
+        hmtx = font["hmtx"]
+        metrics = getattr(hmtx, "metrics", {})
+        glyph_order = font.getGlyphOrder()
+
+        modified = False
+
+        # Phase 1: Shift simple glyph contours rightward by dx
+        for name in glyph_order:
+            orig_adv, orig_lsb = metrics.get(name, (0, 0))
+            if orig_adv == 0:
+                continue
+            g = glyf.get(name)
+            if g is not None and hasattr(g, "numberOfContours") and g.numberOfContours > 0:
+                coords = g.coordinates
+                for i in range(len(coords)):
+                    coords[i] = (coords[i][0] + dx, coords[i][1])
+                g.recalcBounds(glyf)
+                modified = True
+
+        # Phase 2: Recalculate composite bounds and update hmtx metrics
+        for name in glyph_order:
+            orig_adv, orig_lsb = metrics.get(name, (0, 0))
+            if orig_adv == 0:
+                continue
+            new_adv = max(1, orig_adv + delta_units)
+            g = glyf.get(name)
+            if g is not None:
+                if hasattr(g, "components") and g.components:
+                    g.recalcBounds(glyf)
+                    metrics[name] = (new_adv, g.xMin)
+                    modified = True
+                elif hasattr(g, "numberOfContours") and g.numberOfContours > 0:
+                    metrics[name] = (new_adv, g.xMin)
+                    modified = True
+                else:
+                    metrics[name] = (new_adv, orig_lsb)
+                    modified = True
+            else:
+                metrics[name] = (new_adv, orig_lsb)
+                modified = True
+
+        if should_save_and_close:
+            if modified:
+                font.save(str(font_or_path))
+            font.close()
+        return modified
+    except Exception as exc:
+        sys.stderr.write(f"apply_font_tracking error: {exc}\n")
+        if should_save_and_close:
+            try:
+                font.close()
+            except Exception:
+                pass
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Universal Font Subsetting (Smart PUA Preservation, Format-Resilient, Noto-Safe)
 # ---------------------------------------------------------------------------
@@ -2628,6 +2728,11 @@ def compile_bundle(
     freeze_serif: list[str] | str | None = None,
     freeze_bengali: list[str] | str | None = None,
     enable_subset: bool = False,
+    tracking: int = 0,
+    sans_tracking: int | None = None,
+    mono_tracking: int | None = None,
+    serif_tracking: int | None = None,
+    bengali_tracking: int | None = None,
 ) -> int:
     from fontTools.ttLib import TTFont, TTCollection
     out_path = Path(out_dir)
@@ -2784,6 +2889,20 @@ def compile_bundle(
         if category == "sans" and enable_pua_colon:
             copy_colon_to_pua(font)
 
+        # 5b. Horizontal tracking / letter-spacing
+        eff_tracking = tracking
+        if category == "sans" and sans_tracking is not None:
+            eff_tracking = sans_tracking
+        elif category == "mono" and mono_tracking is not None:
+            eff_tracking = mono_tracking
+        elif category == "serif" and serif_tracking is not None:
+            eff_tracking = serif_tracking
+        elif category == "bengali" and bengali_tracking is not None:
+            eff_tracking = bengali_tracking
+
+        if eff_tracking:
+            apply_font_tracking(font, tracking=eff_tracking)
+
         # 6. Name table sanitization
         if sanitize_names:
             sanitize_name_table(font)
@@ -2841,6 +2960,9 @@ def compile_bundle(
                 inject_centered_colon(ital_font, alignment=colon_alignment, offset=colon_offset, rule=colon_rule)
             if enable_pua_colon:
                 copy_colon_to_pua(ital_font)
+            sans_track = sans_tracking if sans_tracking is not None else tracking
+            if sans_track:
+                apply_font_tracking(ital_font, tracking=sans_track)
             if sanitize_names:
                 sanitize_name_table(ital_font)
             if fix_metrics:
@@ -2898,6 +3020,9 @@ def compile_bundle(
                     inject_centered_colon(ital_f, alignment=colon_alignment, offset=colon_offset, rule=colon_rule)
                 if enable_pua_colon:
                     copy_colon_to_pua(ital_f)
+                sans_track = sans_tracking if sans_tracking is not None else tracking
+                if sans_track:
+                    apply_font_tracking(ital_f, tracking=sans_track)
                 if sanitize_names:
                     sanitize_name_table(ital_f)
                 if fix_metrics:
@@ -3037,6 +3162,16 @@ def main():
     s_comp.add_argument("--freeze-serif")
     s_comp.add_argument("--freeze-bengali")
     s_comp.add_argument("--enable-subset", action="store_true", help="Subset fonts (drops Plane 16 SF bloat, CJK scripts & Noto emoji conflicts)")
+    s_comp.add_argument("--tracking", "--letter-spacing", dest="tracking", type=int, default=0, help="Horizontal tracking / letter spacing in 1/1000 em (+/- font units, e.g. +20, -15)")
+    s_comp.add_argument("--sans-tracking", type=int, default=None, help="Sans-serif specific tracking override")
+    s_comp.add_argument("--mono-tracking", type=int, default=None, help="Monospace specific tracking override")
+    s_comp.add_argument("--serif-tracking", type=int, default=None, help="Serif specific tracking override")
+    s_comp.add_argument("--bengali-tracking", type=int, default=None, help="Bengali specific tracking override")
+
+    s_track = sub.add_parser("track", help="Adjust horizontal font tracking (letter-spacing)")
+    s_track.add_argument("--in", dest="input_file", required=True, help="Input font file")
+    s_track.add_argument("--out", dest="output_file", help="Output font file (default overwrites input)")
+    s_track.add_argument("--value", type=int, required=True, help="Tracking value in 1/1000 em (+/-)")
 
     s_sub = sub.add_parser("subset", help="Smart subset font: PUA preservation, format-resilient, Noto-safe, CJK removal")
     s_sub.add_argument("--in", dest="input_file", required=True, help="Input font file")
@@ -3228,6 +3363,17 @@ def main():
             Path(args.out).write_text(report_txt, encoding="utf-8")
         else:
             sys.stdout.write(report_txt)
+    elif args.cmd == "track":
+        in_p = Path(args.input_file)
+        out_p = Path(args.output_file) if args.output_file else in_p
+        if in_p != out_p:
+            shutil.copy2(in_p, out_p)
+        ok = apply_font_tracking(out_p, tracking=args.value)
+        if ok:
+            print(f"Applied tracking ({args.value:+d} ‰ em) to {out_p}")
+        else:
+            print(f"Tracking unchanged or not applicable to {args.input_file}")
+        sys.exit(0 if ok else 1)
     elif args.cmd == "compile-bundle":
         ret = compile_bundle(
             out_dir=args.out_dir,
@@ -3253,6 +3399,11 @@ def main():
             freeze_serif=args.freeze_serif,
             freeze_bengali=args.freeze_bengali,
             enable_subset=args.enable_subset,
+            tracking=args.tracking,
+            sans_tracking=args.sans_tracking,
+            mono_tracking=args.mono_tracking,
+            serif_tracking=args.serif_tracking,
+            bengali_tracking=args.bengali_tracking,
         )
         sys.exit(ret)
     else:

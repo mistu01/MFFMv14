@@ -1333,12 +1333,12 @@ reformat_config_file() {
     # If inside typo section
     if (in_typo) {
       if (strip_colon == 1) {
-        if (line ~ /^#[ \t]*[1-7]\.[ \t]*CENTERED CLOCK COLON/) {
+        if (line ~ /^#[ \t]*[1-8]\.[ \t]*CENTERED CLOCK COLON/) {
           in_colon_block = 1
           next
         }
         if (in_colon_block) {
-          if (line ~ /^#[ \t]*[1-7]\.[ \t]*(ANDROID LOCKSCREEN CLOCK COLON|SYNTHETIC ITALIC|TABULAR CLOCK DIGITS|SMART METRIC|UNIVERSAL FONT SUBSETTER|OPENTYPE FEATURE)/) {
+          if (line ~ /^#[ \t]*[1-8]\.[ \t]*(ANDROID LOCKSCREEN CLOCK COLON|SYNTHETIC ITALIC|TABULAR CLOCK DIGITS|SMART METRIC|UNIVERSAL FONT SUBSETTER|FONT TRACKING|OPENTYPE FEATURE)/) {
             in_colon_block = 0
           } else {
             next
@@ -1350,12 +1350,12 @@ reformat_config_file() {
       }
 
       if (strip_pua == 1) {
-        if (line ~ /^#[ \t]*[1-7]\.[ \t]*ANDROID LOCKSCREEN CLOCK COLON/) {
+        if (line ~ /^#[ \t]*[1-8]\.[ \t]*ANDROID LOCKSCREEN CLOCK COLON/) {
           in_pua_block = 1
           next
         }
         if (in_pua_block) {
-          if (line ~ /^#[ \t]*[1-7]\.[ \t]*(SYNTHETIC ITALIC|TABULAR CLOCK DIGITS|SMART METRIC|UNIVERSAL FONT SUBSETTER|OPENTYPE FEATURE)/) {
+          if (line ~ /^#[ \t]*[1-8]\.[ \t]*(SYNTHETIC ITALIC|TABULAR CLOCK DIGITS|SMART METRIC|UNIVERSAL FONT SUBSETTER|FONT TRACKING|OPENTYPE FEATURE)/) {
             in_pua_block = 0
           } else {
             next
@@ -1367,12 +1367,12 @@ reformat_config_file() {
       }
 
       if (strip_italic == 1) {
-        if (line ~ /^#[ \t]*[1-7]\.[ \t]*SYNTHETIC ITALIC/) {
+        if (line ~ /^#[ \t]*[1-8]\.[ \t]*SYNTHETIC ITALIC/) {
           in_italic_block = 1
           next
         }
         if (in_italic_block) {
-          if (line ~ /^#[ \t]*[1-7]\.[ \t]*(TABULAR CLOCK DIGITS|SMART METRIC|UNIVERSAL FONT SUBSETTER|OPENTYPE FEATURE)/) {
+          if (line ~ /^#[ \t]*[1-8]\.[ \t]*(TABULAR CLOCK DIGITS|SMART METRIC|UNIVERSAL FONT SUBSETTER|FONT TRACKING|OPENTYPE FEATURE)/) {
             in_italic_block = 0
           } else {
             next
@@ -1384,9 +1384,9 @@ reformat_config_file() {
       }
 
       # If this line is a numbered typography section header, wrap with clean dividers and renumber
-      if (line ~ /^#[ \t]*[1-7]\.[ \t]*(CENTERED CLOCK COLON|ANDROID LOCKSCREEN CLOCK COLON|SYNTHETIC ITALIC|TABULAR CLOCK DIGITS|SMART METRIC|UNIVERSAL FONT SUBSETTER|OPENTYPE FEATURE)/) {
+      if (line ~ /^#[ \t]*[1-8]\.[ \t]*(CENTERED CLOCK COLON|ANDROID LOCKSCREEN CLOCK COLON|SYNTHETIC ITALIC|TABULAR CLOCK DIGITS|SMART METRIC|UNIVERSAL FONT SUBSETTER|FONT TRACKING|OPENTYPE FEATURE)/) {
         typo_sec_num++
-        sub(/^#[ \t]*[1-7]\./, "# " typo_sec_num ".", line)
+        sub(/^#[ \t]*[1-8]\./, "# " typo_sec_num ".", line)
         while (typo_count > 0 && typo[typo_count - 1] ~ /^[ \t]*$/) typo_count--
         typo[typo_count++] = ""
         typo[typo_count++] = "# ------------------------------------------------------------------------------"
@@ -1493,6 +1493,10 @@ update_installed_module_description() {
 
   if [ "$_applied_subset" = "1" ]; then
     active_feats="${active_feats:+$active_feats, }Subsetted"
+  fi
+
+  if [ "$_applied_tracking" = "1" ]; then
+    active_feats="${active_feats:+$active_feats, }Tracking: ${_cfg_tracking}‰"
   fi
 
   if [ -n "$active_feats" ]; then
@@ -2002,6 +2006,8 @@ prepare_variable_config() {
       local _met_sec=$_sec_idx
       _sec_idx=$((_sec_idx + 1))
       local _sub_sec=$_sec_idx
+      _sec_idx=$((_sec_idx + 1))
+      local _trk_sec=$_sec_idx
 
       if ! grep -q "^[[:space:]]*ENABLE_TABULAR_CLOCK_DIGITS[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
         {
@@ -2066,6 +2072,24 @@ prepare_variable_config() {
           printf 'ENABLE_SUBSET_FONTS=%s\n' "$_def_subset"
         } >> "$VF_CONFIG_FILE"
       fi
+
+      if ! grep -q "^[[:space:]]*FONT_TRACKING[[:space:]]*=" "$VF_CONFIG_FILE" 2>/dev/null; then
+        {
+          printf '# ------------------------------------------------------------------------------\n'
+          printf '# %s. FONT TRACKING / LETTER-SPACING (Horizontal Character Spacing)\n' "$_trk_sec"
+          printf '# ------------------------------------------------------------------------------\n'
+          printf '# WHAT IT DOES:\n'
+          printf '#   Adjusts horizontal spacing between characters across all font faces.\n'
+          printf '#   Ideal if a font feels too dense / cramped, or too loose / airy.\n'
+          printf '#\n'
+          printf '# HOW TO CHOOSE:\n'
+          printf '#   - Value in 1/1000 em units (scaled proportionally to font upem):\n'
+          printf '#     *  0       : Default original font spacing [Default: 0]\n'
+          printf '#     * +15, +30 : Add breathing room between letters (makes dense fonts less dense)\n'
+          printf '#     * -10, -20 : Tighten spacing (makes wide/airy fonts more compact)\n'
+          printf 'FONT_TRACKING=0\n\n'
+        } >> "$VF_CONFIG_FILE"
+      fi
     fi
 
     # 2. OpenType Feature Discovery & Reporting
@@ -2081,7 +2105,7 @@ prepare_variable_config() {
         [ "$_has_col" != "true" ] && _fr_num_calc=$((_fr_num_calc + 1))
         [ "$_has_pua_col" != "true" ] && _fr_num_calc=$((_fr_num_calc + 1))
         [ "$_has_ital" != "true" ] && _fr_num_calc=$((_fr_num_calc + 1))
-        _fr_num_calc=$((_fr_num_calc + 3))
+        _fr_num_calc=$((_fr_num_calc + 4))
         {
           printf '\n# ------------------------------------------------------------------------------\n'
           printf '# %s. OPENTYPE FEATURE FREEZING (Stylistic Alternates)\n' "$_fr_num_calc"
@@ -2185,6 +2209,9 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
   _cfg_mono_f=$(config_value MONO_FREEZE_FEATURES)
   _cfg_serif_f=$(config_value SERIF_FREEZE_FEATURES)
   _cfg_beng_f=$(config_value BENGALI_FREEZE_FEATURES)
+  _cfg_tracking=$(config_value FONT_TRACKING)
+  [ -z "$_cfg_tracking" ] && _cfg_tracking=$(config_value TRACKING)
+  _cfg_tracking=${_cfg_tracking:-0}
 
   case "$_cfg_colon" in
     yes|YES|true|TRUE|1) _should_compile=1 ;;
@@ -2207,6 +2234,9 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
   if [ -n "$_cfg_sans_f" ] || [ -n "$_cfg_mono_f" ] || [ -n "$_cfg_serif_f" ] || [ -n "$_cfg_beng_f" ]; then
     _should_compile=1
   fi
+  if [ -n "$_cfg_tracking" ] && [ "$_cfg_tracking" != "0" ]; then
+    _should_compile=1
+  fi
 
   _applied_colon=0
   _applied_pua_colon=0
@@ -2215,11 +2245,12 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
   _applied_freeze=0
   _applied_metrics=0
   _applied_subset=0
+  _applied_tracking=0
 
   if [ "$_should_compile" = "1" ]; then
     ui_print "- Dynamic compilation via MFFM Runtime..."
     _extra_compile_args=""
-    _req_colon=0; _req_pua_colon=0; _req_synthetic_italic=0; _req_tabular=0; _req_freeze=0; _req_metrics=0; _req_subset=0
+    _req_colon=0; _req_pua_colon=0; _req_synthetic_italic=0; _req_tabular=0; _req_freeze=0; _req_metrics=0; _req_subset=0; _req_tracking=0
     case "$_cfg_colon" in
       yes|YES|true|TRUE|1)
         _req_colon=1
@@ -2270,6 +2301,13 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
     if [ -n "$_cfg_mono_f" ]; then _req_freeze=1; _extra_compile_args="$_extra_compile_args --freeze-mono $_cfg_mono_f"; ui_print "    [*] Freezing Mono features: $_cfg_mono_f..."; fi
     if [ -n "$_cfg_serif_f" ]; then _req_freeze=1; _extra_compile_args="$_extra_compile_args --freeze-serif $_cfg_serif_f"; ui_print "    [*] Freezing Serif features: $_cfg_serif_f..."; fi
     if [ -n "$_cfg_beng_f" ]; then _req_freeze=1; _extra_compile_args="$_extra_compile_args --freeze-bengali $_cfg_beng_f"; ui_print "    [*] Freezing Bengali features: $_cfg_beng_f..."; fi
+    if [ -n "$_cfg_tracking" ] && [ "$_cfg_tracking" != "0" ]; then
+      _req_tracking=1
+      _extra_compile_args="$_extra_compile_args --tracking $_cfg_tracking"
+      _dens_lbl="less dense"
+      [ "$_cfg_tracking" -lt 0 ] 2>/dev/null && _dens_lbl="tighter"
+      ui_print "    [*] Adjusting font tracking (letter-spacing: ${_cfg_tracking} ‰ em, ${_dens_lbl})..."
+    fi
 
     _comp_log="/dev/.mffm_compile_output.log"
     rm -f "$_comp_log" 2>/dev/null
@@ -2318,15 +2356,17 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
           _idle_count=0
           _last_status=$(grep '\[\*\]' "$_comp_log" 2>/dev/null | tail -n 1 | sed -e 's/^[[:space:]]*//' -e 's/\.\.\.*$//' | tr -d '\r')
           if [ -n "$_last_status" ]; then
-            ui_print "    ${_last_status}... (${_elapsed}s elapsed)..."
+            ui_print "    ... Still compiling [${_elapsed}s] ($_last_status)"
           else
-            ui_print "    [*] Compiling font payload on-device (${_elapsed}s elapsed)..."
+            ui_print "    ... Still compiling [${_elapsed}s] (processing fonts)"
           fi
         fi
       fi
     done
-    wait "$_comp_pid"
+    wait "$_comp_pid" 2>/dev/null
     _compile_ret=$?
+
+    # Flush any remaining lines from the compilation log
     _total_lines=$(wc -l < "$_comp_log" 2>/dev/null)
     _total_lines=${_total_lines:-0}
     if [ "$_total_lines" -gt "$_last_line" ]; then
@@ -2381,6 +2421,10 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
         _applied_subset=1
         ui_print "    [OK] Universal font subsetting applied"
       fi
+      if [ "$_req_tracking" = "1" ]; then
+        _applied_tracking=1
+        ui_print "    [OK] Font tracking adjusted (${_cfg_tracking} ‰ em)"
+      fi
       ui_print "    [OK] Dynamic compilation completed successfully"
     else
       [ "$_req_colon" = "1" ] && ui_print "    [!] Centered colon injection failed"
@@ -2390,6 +2434,7 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
       [ "$_req_freeze" = "1" ] && ui_print "    [!] OpenType feature freezing failed"
       [ "$_req_metrics" = "1" ] && ui_print "    [!] Font metrics harmonization failed"
       [ "$_req_subset" = "1" ] && ui_print "    [!] Font subsetting failed"
+      [ "$_req_tracking" = "1" ] && ui_print "    [!] Font tracking adjustment failed"
       status_warn "Dynamic compilation failed (exit $_compile_ret); see $LOG_FILE"
       _err_snippet=$(grep -iE 'error|exception|traceback' "$_comp_log" 2>/dev/null | tail -n 1)
       [ -n "$_err_snippet" ] && ui_print "    [!] Cause: $_err_snippet"
