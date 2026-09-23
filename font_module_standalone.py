@@ -1161,8 +1161,8 @@ def transform_family_name(family: str) -> str:
         return f"{words[0]} Mistu {' '.join(words[1:])}"
 
 
-def _apply_custom_metadata(font) -> None:
-    raw_family = _name(font, 16, 1) or "Font"
+def _apply_custom_metadata(font, target_family: str | None = None) -> None:
+    raw_family = target_family or _name(font, 16, 1) or "Font"
     new_family = transform_family_name(raw_family)
     style = _name(font, 17, 2) or "Regular"
     full_name = f"{new_family} {style}".strip()
@@ -1184,12 +1184,12 @@ def _apply_custom_metadata(font) -> None:
     _set_name(font, 8, "Mistu @ MFFM Inc.")
 
 
-def _process_font(font, *, keep_hinting: bool, prefix_family: bool, metrics_mode: str = "compact") -> None:
+def _process_font(font, *, keep_hinting: bool, prefix_family: bool, metrics_mode: str = "compact", target_family: str | None = None) -> None:
     if not keep_hinting:
         _remove_hinting(font)
     _fix_metrics(font, mode=metrics_mode)
     if prefix_family:
-        _apply_custom_metadata(font)
+        _apply_custom_metadata(font, target_family=target_family)
 
 
 def _format_number(value: float) -> str:
@@ -1367,7 +1367,7 @@ def _write_fragments(files_dir: Path, normal: list[tuple[int, str, str]], conden
         (files_dir / "serif.xml").write_text(_serif_fragment(normal) + "\n", encoding="utf-8", newline="\n")
 
 
-def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, optional_faces: dict[str, list[SourceFace]] | None = None, metrics_mode: str = "compact") -> tuple[list[SourceFace], tuple[str, ...], int | None]:
+def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, optional_faces: dict[str, list[SourceFace]] | None = None, metrics_mode: str = "compact", target_family: str | None = None) -> tuple[list[SourceFace], tuple[str, ...], int | None]:
     TTCollection, _font = require_fonttools()
     optional_faces = {key: list(value) for key, value in (optional_faces or {}).items() if value}
     ordered = _dedupe_static(faces)
@@ -1383,7 +1383,7 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
         print(f"    -> Harmonizing metrics ({metrics_mode}) for single face: {w_name} {face.style} ({face.weight})...", flush=True)
         font = _open_font(face)
         try:
-            _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family, metrics_mode=metrics_mode)
+            _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family, metrics_mode=metrics_mode, target_family=target_family)
             font.save(str(files_dir / output_name))
         finally:
             font.close()
@@ -1402,7 +1402,7 @@ def _compile_static(faces: list[SourceFace], files_dir: Path, *, keep_hinting: b
             cond_str = " condensed" if face.condensed else ""
             print(f"    -> [{idx}/{len(ordered)}] Harmonizing metrics ({metrics_mode}): {weight_name} {face.style}{cond_str} ({face.weight})...", flush=True)
             font = _open_font(face)
-            _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family, metrics_mode=metrics_mode)
+            _process_font(font, keep_hinting=keep_hinting, prefix_family=prefix_family, metrics_mode=metrics_mode, target_family=target_family)
             fonts.append(font)
 
         face_idx_maps: dict[str, dict[int, int]] = {}
@@ -1478,7 +1478,7 @@ def _save_face(face: SourceFace, output: Path, *, keep_hinting: bool, prefix_fam
         font.close()
 
 
-def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, optional_faces: dict[str, list[SourceFace]] | None = None, metrics_mode: str = "compact") -> tuple[list[SourceFace], tuple[str, ...], int | None]:
+def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting: bool, prefix_family: bool, optional_faces: dict[str, list[SourceFace]] | None = None, metrics_mode: str = "compact", target_family: str | None = None) -> tuple[list[SourceFace], tuple[str, ...], int | None]:
     TTCollection, _font = require_fonttools()
     optional_faces = {key: list(value) for key, value in (optional_faces or {}).items() if value}
     upright, italic = _pick_variable_faces(faces)
@@ -1489,7 +1489,7 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
     print(f"  * Mode: variable [Metrics: {metrics_mode}]", flush=True)
     print(f"    -> Upright variable face : {upright.label}", flush=True)
     upright_font = _open_font(upright)
-    _process_font(upright_font, keep_hinting=keep_hinting, prefix_family=prefix_family, metrics_mode=metrics_mode)
+    _process_font(upright_font, keep_hinting=keep_hinting, prefix_family=prefix_family, metrics_mode=metrics_mode, target_family=target_family)
     var_fonts.append(upright_font)
     upright_idx = 0
 
@@ -1497,7 +1497,7 @@ def _compile_variable(faces: list[SourceFace], files_dir: Path, *, keep_hinting:
     if italic != upright:
         print(f"    -> Italic variable face  : {italic.label}", flush=True)
         italic_font = _open_font(italic)
-        _process_font(italic_font, keep_hinting=keep_hinting, prefix_family=prefix_family, metrics_mode=metrics_mode)
+        _process_font(italic_font, keep_hinting=keep_hinting, prefix_family=prefix_family, metrics_mode=metrics_mode, target_family=target_family)
         italic_idx = len(var_fonts)
         var_fonts.append(italic_font)
 
@@ -2119,7 +2119,10 @@ def compile_fonts(
         if not primary_faces:
             raise SystemExit("No valid font faces were found in input subdirectories.")
         mode = detect_mode(primary_faces, requested_mode)
-        family = transform_family_name(next(iter({face.family for face in primary_faces}))) if prefix_family else next(iter({face.family for face in primary_faces}))
+        families = {face.family for face in primary_faces}
+        reg_face = next((f for f in primary_faces if f.weight == 400 and f.style == "normal"), None)
+        canonical_family = reg_face.family if reg_face else max(families, key=lambda fam: sum(1 for f in primary_faces if f.family == fam))
+        family = transform_family_name(canonical_family) if prefix_family else canonical_family
 
         print(flush=True)
         print(f"  * Detected Family : {family}", flush=True)
@@ -2303,19 +2306,19 @@ def compile_fonts(
             raise SystemExit("No valid font faces were found in input subdirectories.")
         mode = detect_mode(primary_faces, requested_mode)
         families = {face.family for face in primary_faces}
+        reg_face = next((f for f in primary_faces if f.weight == 400 and f.style == "normal"), None)
+        canonical_family = reg_face.family if reg_face else max(families, key=lambda fam: sum(1 for f in primary_faces if f.family == fam))
+        family = transform_family_name(canonical_family) if prefix_family else canonical_family
         if len(families) > 1:
-            raise SystemExit("Input files contain multiple font families: " + ", ".join(sorted(families)))
-        family = next(iter(families))
-        if prefix_family:
-            family = transform_family_name(family)
+            print(f"  * Note: Multiple family names detected ({', '.join(sorted(families))}); unifying under '{canonical_family}'", flush=True)
         optional_faces = {key: separated[key] for key in OPTIONAL_CATEGORIES}
 
         print(flush=True)
         print(f"[4/4] Compiling Module Payload & Harmonizing Metrics (mode: {metrics_mode})...", flush=True)
         if mode == "static":
-            selected, payload, mono_index = _compile_static(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, optional_faces=optional_faces, metrics_mode=metrics_mode)
+            selected, payload, mono_index = _compile_static(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, optional_faces=optional_faces, metrics_mode=metrics_mode, target_family=canonical_family)
         else:
-            selected, payload, mono_index = _compile_variable(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, optional_faces=optional_faces, metrics_mode=metrics_mode)
+            selected, payload, mono_index = _compile_variable(faces, files_dir, keep_hinting=keep_hinting, prefix_family=prefix_family, optional_faces=optional_faces, metrics_mode=metrics_mode, target_family=canonical_family)
 
         primary = payload[0]
         has_any_vf = (mode == "variable") or any(f.variable for f in mono_faces) or any(f.variable for f in serif_faces) or any(f.variable for f in bengali_faces)

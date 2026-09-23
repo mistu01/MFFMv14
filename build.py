@@ -271,66 +271,16 @@ def build_module(args: argparse.Namespace) -> Path | None:
     out_dir = (args.output_dir or (ROOT / "dist" / "Regular")).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if getattr(args, "subset", None) is None:
-        font_files = [p for p in fonts_dir.rglob("*") if p.is_file() and p.suffix.lower() in {".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2"}]
-        large_fonts = [(p, p.stat().st_size) for p in font_files if p.stat().st_size > 1024 * 1024]
-        if large_fonts:
-            should_prompt = args.interactive if args.interactive is not None else sys.stdin.isatty()
-            if should_prompt and args.interactive is not False:
-                from font_module import prompt_subset_mode
-                args.subset = prompt_subset_mode(large_fonts, interactive=True)
-            else:
-                args.subset = True
-                print("  * Font(s) larger than 1 MB detected: Font Subsetting automatically triggered [OK]", flush=True)
-        else:
-            args.subset = False
-    else:
-        args.subset = bool(args.subset)
-
-    if getattr(args, "tracking", None) is None:
-        args.tracking = 0
-    else:
-        try:
-            args.tracking = int(args.tracking)
-        except (ValueError, TypeError):
-            args.tracking = 0
-
     print("=" * 64, flush=True)
-    print("  MFFMv14 Module Builder", flush=True)
+    print("  MFFMv14 Module Builder (Runtime-Ready)", flush=True)
     print("=" * 64, flush=True)
     print(f"  Source Directory : {fonts_dir}", flush=True)
     print(f"  Output Directory : {out_dir}", flush=True)
     print(f"  Detection Mode   : {args.mode or 'auto'}", flush=True)
-    print(f"  TrueType Hinting : {'Preserve' if args.keep_hinting else 'Strip (Clean rendering)'}", flush=True)
     print(f"  Family Prefix    : {'Disabled (--no-prefix)' if args.no_prefix else 'Enabled ([MFFM] / Mistu)'}", flush=True)
-    if args.subset:
-        print("  Subsetting       : Enabled [Smart PUA & Noto-Safe Emoji Dropping]", flush=True)
-    else:
-        print("  Subsetting       : Disabled", flush=True)
-    if getattr(args, "tracking", 0):
-        dens_label = "less dense" if args.tracking > 0 else "tighter"
-        print(f"  Tracking / Spacing : {args.tracking:+d} ‰ em ({dens_label})", flush=True)
-    else:
-        print("  Tracking / Spacing : Default (0) [Configurable on-device via .conf]", flush=True)
-    if args.features:
-        print(f"  Sans Features    : {args.features}", flush=True)
-    if args.centered_colon is True:
-        offset_str = f" ({args.colon_offset:+d} font units)" if getattr(args, "colon_offset", 0) else ""
-        print(f"  Centered Colon   : Enabled [{getattr(args, 'colon_alignment', 'center')}, {getattr(args, 'colon_rule', 'between_digits')}{offset_str}]", flush=True)
-    elif args.centered_colon is False:
-        print("  Centered Colon   : Disabled", flush=True)
-    else:
-        should_prompt = args.interactive if args.interactive is not None else sys.stdin.isatty()
-        if should_prompt and args.interactive is not False:
-            print("  Centered Colon   : Auto (prompt if missing)", flush=True)
-        else:
-            print("  Centered Colon   : Disabled", flush=True)
-    if getattr(args, "equalize_digits", False):
-        print("  Digit Widths     : Equalize for wobble-free clocks", flush=True)
-    if args.pua_colon:
-        print("  Lockscreen PUA   : Map to U+EE01, U+2236, U+2982", flush=True)
-    if args.synthetic_italic:
-        print(f"  Synthetic Italic : Enabled ({args.synthetic_italic_angle or -12.0}° slant)", flush=True)
+    print("  Packaging Mode   : Clean Source Fonts (Original Formats Intact)", flush=True)
+    print("  Typography Tuning: Configurable on-device via /sdcard/MFFM/*.conf", flush=True)
+    print("  Runtime Engine   : MFFM Runtime (compiled dynamically on-device)", flush=True)
     print("-" * 64, flush=True)
     print(flush=True)
 
@@ -344,25 +294,6 @@ def build_module(args: argparse.Namespace) -> Path | None:
             requested_mode=args.mode,
             keep_hinting=bool(args.keep_hinting),
             prefix_family=not args.no_prefix,
-            features=args.features,
-            mono_features=args.mono_features,
-            serif_features=args.serif_features,
-            bengali_features=args.bengali_features,
-            interactive_features=args.interactive,
-            centered_colon=args.centered_colon,
-            colon_offset=int(getattr(args, "colon_offset", 0) or 0),
-            colon_alignment=str(getattr(args, "colon_alignment", "center") or "center"),
-            colon_rule=str(getattr(args, "colon_rule", "between_digits") or "between_digits"),
-            equalize_digits=bool(getattr(args, "equalize_digits", False)),
-            pua_colon=args.pua_colon,
-            synthetic_italic=args.synthetic_italic,
-            synthetic_italic_angle=float(args.synthetic_italic_angle or -12.0),
-            subset=bool(args.subset),
-            tracking=int(args.tracking or 0),
-            sans_tracking=args.sans_tracking,
-            mono_tracking=args.mono_tracking,
-            serif_tracking=args.serif_tracking,
-            bengali_tracking=args.bengali_tracking,
         )
         display_name = display_name_for_mode(args.name or result.family, result.mode)
         props = update_module_metadata(
