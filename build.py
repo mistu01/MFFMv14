@@ -285,14 +285,12 @@ def build_module(args: argparse.Namespace) -> Path | None:
         args.subset = bool(args.subset)
 
     if getattr(args, "tracking", None) is None:
-        should_prompt = args.interactive if args.interactive is not None else sys.stdin.isatty()
-        if should_prompt and args.interactive is not False:
-            from font_module import prompt_tracking_mode
-            args.tracking = prompt_tracking_mode(0, interactive=True)
-        else:
-            args.tracking = 0
+        args.tracking = 0
     else:
-        args.tracking = int(args.tracking)
+        try:
+            args.tracking = int(args.tracking)
+        except (ValueError, TypeError):
+            args.tracking = 0
 
     print("=" * 64, flush=True)
     print("  MFFMv14 Module Builder", flush=True)
@@ -310,7 +308,7 @@ def build_module(args: argparse.Namespace) -> Path | None:
         dens_label = "less dense" if args.tracking > 0 else "tighter"
         print(f"  Tracking / Spacing : {args.tracking:+d} ‰ em ({dens_label})", flush=True)
     else:
-        print("  Tracking / Spacing : Default (0)", flush=True)
+        print("  Tracking / Spacing : Default (0) [Configurable on-device via .conf]", flush=True)
     if args.features:
         print(f"  Sans Features    : {args.features}", flush=True)
     if args.centered_colon is True:
