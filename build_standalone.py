@@ -63,7 +63,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-interactive", action="store_false", dest="interactive", help="disable interactive feature prompt")
     parser.add_argument("--centered-colon", action="store_true", default=None, help="force centered colon generation/injection for digits (12:30)")
     parser.add_argument("--no-centered-colon", action="store_false", dest="centered_colon", help="disable centered colon injection")
-    parser.add_argument("--colon-offset", "--colon-shift", dest="colon_offset", type=int, default=0, help="vertical offset in font units (+/-) for centered colon (clock colon shift, e.g. +20, -30)")
+    parser.add_argument("--colon-offset", "--colon-shift", dest="colon_offset", type=int, default=None, help="vertical offset in font units (+/-) for centered colon (clock colon shift, e.g. +20, -30)")
     parser.add_argument("--colon-alignment", choices=("center", "cap_height", "x_height"), default="center", help="alignment target for centered colon: center, cap_height, or x_height (default: center)")
     parser.add_argument("--colon-rule", choices=("between_digits", "after_digit", "always"), default="between_digits", help="contextual rule for centered colon substitution (default: between_digits)")
     parser.add_argument("--equalize-digits", action="store_true", default=False, help="equalize advance widths of digits (0-9) and center contours for wobble-free clocks")
@@ -124,7 +124,7 @@ def apply_build_config(args: argparse.Namespace, config: dict | None, source: st
             args.colon_offset = config["colon_shift"]
         if source:
             print(f"Build config    : loaded {source}")
-    if (getattr(args, "colon_offset", None) or getattr(args, "colon_shift", None)) and args.centered_colon is None:
+    if (getattr(args, "colon_offset", None) is not None or getattr(args, "colon_shift", None) is not None) and args.centered_colon is None:
         args.centered_colon = True
     if args.fonts_dir is not None:
         args.fonts_dir = _config_path(args.fonts_dir)
@@ -299,9 +299,17 @@ def build_module(args: argparse.Namespace) -> Path | None:
         print("  Subsetting       : Disabled", flush=True)
     if args.features:
         print(f"  Sans Features    : {args.features}", flush=True)
-    if args.centered_colon is not False:
-        offset_str = f" ({args.colon_offset:+d} font units)" if args.colon_offset else ""
+    if args.centered_colon is True:
+        offset_str = f" ({args.colon_offset:+d} font units)" if getattr(args, "colon_offset", 0) else ""
         print(f"  Centered Colon   : Enabled [{args.colon_alignment}, {args.colon_rule}{offset_str}]", flush=True)
+    elif args.centered_colon is False:
+        print("  Centered Colon   : Disabled", flush=True)
+    else:
+        should_prompt = args.interactive if args.interactive is not None else sys.stdin.isatty()
+        if should_prompt and args.interactive is not False:
+            print("  Centered Colon   : Auto (prompt if missing)", flush=True)
+        else:
+            print("  Centered Colon   : Disabled", flush=True)
     if args.equalize_digits:
         print("  Digit Widths     : Equalize for wobble-free clocks", flush=True)
     if args.pua_colon:
@@ -327,7 +335,7 @@ def build_module(args: argparse.Namespace) -> Path | None:
             bengali_features=args.bengali_features,
             interactive_features=args.interactive,
             centered_colon=args.centered_colon,
-            colon_offset=int(args.colon_offset or 0),
+            colon_offset=int(getattr(args, "colon_offset", 0) or 0),
             colon_alignment=str(args.colon_alignment or "center"),
             colon_rule=str(args.colon_rule or "between_digits"),
             equalize_digits=bool(args.equalize_digits),

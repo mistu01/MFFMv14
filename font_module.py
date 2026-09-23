@@ -8,6 +8,7 @@ import logging
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -1504,7 +1505,14 @@ def compile_fonts(
         )
         colon_choice: dict[str, bool | None] = {key: centered_colon for key, _paths, _label in category_paths}
         colon_offsets: dict[str, int] = {key: colon_offset for key, _paths, _label in category_paths}
-        should_prompt = bool(interactive_features)
+        should_prompt = interactive_features if interactive_features is not None else sys.stdin.isatty()
+
+        if should_prompt:
+            for colon_key, colon_paths, colon_label in category_paths:
+                if colon_choice[colon_key] is None and colon_paths:
+                    colon_choice[colon_key], colon_offsets[colon_key] = prompt_add_centered_colon_if_missing(
+                        colon_paths, interactive=should_prompt, category=colon_label, default_offset=colon_offset
+                    )
 
         if features is not None or mono_features is not None or serif_features is not None or bengali_features is not None:
             def parse_feat(val):
@@ -1537,11 +1545,6 @@ def compile_fonts(
             if all_feats_to_freeze:
                 print("    -> Feature freezing complete [OK]", flush=True)
         elif should_prompt:
-            for colon_key, colon_paths, colon_label in category_paths:
-                if colon_choice[colon_key] is None and colon_paths:
-                    colon_choice[colon_key], colon_offsets[colon_key] = prompt_add_centered_colon_if_missing(
-                        colon_paths, interactive=should_prompt, category=colon_label, default_offset=colon_offset
-                    )
 
             if sans_ttf_paths:
                 avail_sans = extract_features_from_fonts(sans_ttf_paths)
