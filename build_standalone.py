@@ -293,8 +293,8 @@ def build_module(args: argparse.Namespace) -> Path | None:
         args.subset = bool(args.subset)
 
     if getattr(args, "tracking", None) is None:
-        should_prompt = args.interactive if args.interactive is not None else False
-        if should_prompt:
+        should_prompt = args.interactive if args.interactive is not None else sys.stdin.isatty()
+        if should_prompt and args.interactive is not False:
             from font_module_standalone import prompt_tracking_mode
             args.tracking = prompt_tracking_mode(0, interactive=True)
         else:

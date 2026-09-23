@@ -1222,7 +1222,8 @@ def prompt_tracking_mode(default_tracking: int = 0, interactive: bool = False) -
         val = input(f"Enter tracking adjustment in 1/1000 em [{default_tracking}]: ").strip()
         if not val:
             return default_tracking
-        return int(val)
+        cleaned = val.replace(" ", "").replace("‰", "").replace("%", "").replace("em", "").replace("EM", "")
+        return int(cleaned) if cleaned else default_tracking
     except (ValueError, EOFError, KeyboardInterrupt):
         return default_tracking
 
