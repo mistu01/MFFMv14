@@ -3,6 +3,18 @@
 All notable changes to MFFMv14 are documented here. Dates use the `YYYY.MM.DD`
 versioning scheme the modules themselves carry.
 
+## 2026.09.24
+
+### Added
+- **Roboto Underline Position and Thickness Harmonization Across All Metrics Modes (`runtime_helper.py`, `font_module_standalone.py`, `runtime-template/customize.sh`, `template/customize.sh`, `build.py`, `build_standalone.py`)**:
+  - Harmonizes font underline metrics (`post.underlinePosition` and `post.underlineThickness`) to Android's reference Roboto measurements across **all** vertical metrics modes: `safe`, `compact`, and `intact` / `preserve`.
+  - Proportional scaling applied based on target font `unitsPerEm`:
+    $$\text{underlinePosition} = \text{round}\left(-150 \times \frac{\text{upem}}{2048}\right)$$
+    $$\text{underlineThickness} = \max\left(1, \text{round}\left(100 \times \frac{\text{upem}}{2048}\right)\right)$$
+  - Fixes misplaced, sunken, clipped, or zero-thickness underlines in Android `TextView` hyperlinks and WebViews when using custom fonts with non-standard underline metrics, while leaving designer ascender/descender line spacing completely untouched in `preserve`/`intact` mode.
+  - Added `"intact"` as a recognized first-class alias for `"preserve"` across CLI flags (`--metrics-mode intact`), interactive wizard prompts, and `/sdcard/MFFM/*.conf` configurations (`METRICS_MODE=intact`).
+  - Corrected on-device dynamic compilation and module metadata (`module.prop`) reporting so that all metrics modes (including `preserve` and `intact`) are properly tracked and displayed in root manager UI.
+
 ## 2026.09.23
 
 ### Added

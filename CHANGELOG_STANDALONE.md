@@ -6,6 +6,19 @@ Dates follow the `YYYY.MM.DD` versioning format carried by the modules.
 
 ---
 
+## 2026.09.24
+
+### Added
+- **Roboto Underline Position and Thickness Harmonization Across All Modes (`font_module_standalone.py`, `build_standalone.py`)**:
+  - Sets font underline metrics (`post.underlinePosition` and `post.underlineThickness`) to Roboto reference standards across all modes (`compact`, `safe`, `preserve`, `intact`).
+  - Scales underline metrics proportionally based on font `unitsPerEm`:
+    $$\text{underlinePosition} = \text{round}\left(-150 \times \frac{\text{upem}}{2048}\right)$$
+    $$\text{underlineThickness} = \max\left(1, \text{round}\left(100 \times \frac{\text{upem}}{2048}\right)\right)$$
+  - Fixes misplaced, sunken, or zero-thickness underlines in Android `TextView` hyperlinks and WebViews when using custom fonts, while keeping original designer vertical ascender/descender metrics completely intact in `preserve`/`intact` mode.
+  - Added `"intact"` alias for `"preserve"` in CLI flags (`--metrics-mode intact`), interactive wizard prompts, and configuration files.
+
+---
+
 ## 2026.09.23
 
 ### Added

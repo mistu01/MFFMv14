@@ -1487,7 +1487,7 @@ update_installed_module_description() {
     active_feats="${active_feats:+$active_feats, }Frozen: $frozen_summary"
   fi
 
-  if [ -n "$_cfg_metrics_mode" ] && [ "$_cfg_metrics_mode" != "preserve" ]; then
+  if [ -n "$_cfg_metrics_mode" ] && [ "$_applied_metrics" = "1" ]; then
     active_feats="${active_feats:+$active_feats, }Metrics: $_cfg_metrics_mode"
   fi
 
@@ -2042,7 +2042,9 @@ prepare_variable_config() {
           printf '#   - safe     : Audits all glyphs and automatically expands boundaries to eliminate\n'
           printf '#                any clipping while strictly preserving the FFIX3 baseline ratio.\n'
           printf '#                Buttons and status bar icons stay perfectly centered!\n'
-          printf '#   - preserve : Retains the font designer original vertical metrics untouched.\n'
+          printf '#   - preserve : Retains the font designer original vertical metrics (intact).\n'
+          printf '#                All modes (compact, safe, preserve/intact) harmonize underline\n'
+          printf '#                position & thickness to Roboto standard for pixel-perfect UI!\n'
           printf 'METRICS_MODE=compact\n\n'
         } >> "$VF_CONFIG_FILE"
       fi
@@ -2229,7 +2231,7 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
     yes|YES|true|TRUE|1) _should_compile=1 ;;
   esac
   case "$_cfg_metrics_mode" in
-    safe|preserve) _should_compile=1 ;;
+    safe|preserve|intact) _should_compile=1 ;;
   esac
   if [ -n "$_cfg_sans_f" ] || [ -n "$_cfg_mono_f" ] || [ -n "$_cfg_serif_f" ] || [ -n "$_cfg_beng_f" ]; then
     _should_compile=1
@@ -2290,12 +2292,10 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
         ui_print "    [*] Subsetting font (stripping Plane 16 bloat, CJK scripts & emoji conflicts)..."
         ;;
     esac
-    if [ -n "$_cfg_metrics_mode" ] && [ "$_cfg_metrics_mode" != "preserve" ]; then
+    if [ -n "$_cfg_metrics_mode" ]; then
       _req_metrics=1
       _extra_compile_args="$_extra_compile_args --metrics-mode $_cfg_metrics_mode"
       ui_print "    [*] Harmonizing font metrics (mode: $_cfg_metrics_mode)..."
-    elif [ -n "$_cfg_metrics_mode" ]; then
-      _extra_compile_args="$_extra_compile_args --metrics-mode $_cfg_metrics_mode"
     fi
     if [ -n "$_cfg_sans_f" ]; then _req_freeze=1; _extra_compile_args="$_extra_compile_args --freeze-sans $_cfg_sans_f"; ui_print "    [*] Freezing Sans features: $_cfg_sans_f..."; fi
     if [ -n "$_cfg_mono_f" ]; then _req_freeze=1; _extra_compile_args="$_extra_compile_args --freeze-mono $_cfg_mono_f"; ui_print "    [*] Freezing Mono features: $_cfg_mono_f..."; fi

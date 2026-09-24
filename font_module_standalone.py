@@ -453,6 +453,9 @@ def _remove_hinting(font) -> None:
 log = logging.getLogger("font_metrics_rewriter")
 
 FFIX3_REFERENCE_UPM = 2048
+ROBOTO_REFERENCE_UPM = 2048
+ROBOTO_UNDERLINE_POSITION = -150
+ROBOTO_UNDERLINE_THICKNESS = 100
 FFIX3_METRICS = (
     ("hhea", "ascent", 2128),
     ("hhea", "descent", -550),
@@ -894,13 +897,19 @@ def _fix_metrics(font, mode: str = "compact") -> None:
     head = font.get("head")
     os2 = font.get("OS/2")
     hhea = font.get("hhea")
+    post = font.get("post")
     if head is None:
         return
 
     units_per_em = int(getattr(head, "unitsPerEm", FFIX3_REFERENCE_UPM))
     mode_lower = (mode or "compact").strip().lower()
 
-    if mode_lower == "preserve":
+    # Underline position and thickness: harmonized to Roboto standard across ALL modes (safe, compact, intact/preserve)
+    if post is not None:
+        post.underlinePosition = int(round(ROBOTO_UNDERLINE_POSITION * units_per_em / ROBOTO_REFERENCE_UPM))
+        post.underlineThickness = max(1, int(round(ROBOTO_UNDERLINE_THICKNESS * units_per_em / ROBOTO_REFERENCE_UPM)))
+
+    if mode_lower in ("preserve", "intact"):
         if os2 is not None:
             os2.fsSelection = int(getattr(os2, "fsSelection", 0)) & 0b01111111
             if "fvar" in font:
@@ -1772,11 +1781,11 @@ def prompt_metrics_mode(default_mode: str = "compact", interactive: bool = False
     print("Vertical Metrics Harmonization Mode Selection")
     print("------------------------------------------------------------")
     print("Choose vertical line metrics treatment for your font module:")
-    print("  [1] compact  - (Recommended) Classic tight FFIX3 metrics (maximum UI compactness)")
-    print("  [2] safe     - Decoupled safe metrics (prevents accent clipping & descender cutoff)")
-    print("  [3] preserve - Untouched original font designer metrics")
+    print("  [1] compact           - (Recommended) Classic tight FFIX3 metrics (maximum UI compactness)")
+    print("  [2] safe              - Decoupled safe metrics (prevents accent clipping & descender cutoff)")
+    print("  [3] preserve / intact - Original font designer metrics (with Roboto underline & HWUI bugfixes)")
     try:
-        choice = input(f"Select metrics mode [1=compact, 2=safe, 3=preserve] (default: {default_mode}): ").strip().lower()
+        choice = input(f"Select metrics mode [1=compact, 2=safe, 3=preserve/intact] (default: {default_mode}): ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         print("\nUsing default metrics mode.")
         return default_mode
@@ -1785,7 +1794,7 @@ def prompt_metrics_mode(default_mode: str = "compact", interactive: bool = False
         return "compact"
     elif choice in ("2", "safe", "s"):
         return "safe"
-    elif choice in ("3", "preserve", "p"):
+    elif choice in ("3", "preserve", "p", "intact", "i"):
         return "preserve"
     return default_mode
 
