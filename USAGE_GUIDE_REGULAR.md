@@ -137,7 +137,7 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
 | `ENABLE_SYNTHETIC_ITALIC` | `false` | `true` (if font lacks italics) | Algorithmically synthesizes and bundles slanted italic companion faces for Sans-serif if the supplied font has no native italic faces or slant axes. *(Omitted if font already has italics).* |
 | `SYNTHETIC_ITALIC_ANGLE` | `-12` | `-12` | Slant angle in degrees for synthetic italic (negative slants forward to the right). |
 | `ENABLE_TABULAR_CLOCK_DIGITS` | `no` | `yes` (if clock wobbles) | Equalizes digit widths (0–9) so lockscreen clocks never jump horizontally as minutes or seconds change. |
-| `METRICS_MODE` | `compact` | `compact` | Vertical metrics: `compact` forces tight FFIX3; `safe` prevents accent clipping with zero monospace inflation; `preserve` / `intact` leaves original metrics untouched. (All modes harmonize underline position and thickness to Roboto standard). |
+| `METRICS_MODE` | `compact` | `compact` | Vertical metrics: `compact` forces tight FFIX3; `safe` prevents accent clipping with zero monospace inflation; `preserve` leaves original metrics untouched. (All modes harmonize underline position and thickness to Roboto standard). |
 | `ENABLE_SUBSET_FONTS` | `no` (or `yes` if > 1MB) | `yes` (for large fonts) | Strips Apple Plane 16 SF Symbol bloat (8400+ icons), CJK scripts (Chinese/Japanese/Korean), and Noto-conflicting monochrome emoji outlines while strictly guarding spoken language alphabets and developer PUA glyphs. |
 | `FONT_TRACKING` | `0` | `+20` (or `-15`) | Adjusts horizontal letter-spacing in 1/1000 em units. Positive values (e.g. `+20`, `+30`) add breathing room between dense characters; negative values (e.g. `-10`, `-15`) tighten airy fonts. |
 | `*_FREEZE_FEATURES` | *(empty)* | `ss01,zero` (user choice) | Freezes OpenType layout features (like slashed zero `0` or stylistic sets) permanently into default characters. |
@@ -184,10 +184,10 @@ Every time you flash an MFFMv14 font module, an editable configuration file is c
 - **Options**:
   - `METRICS_MODE=compact` (Default & Recommended): Forces classic ultra-tight FFIX3 metrics ($2128 / -550$). Delivers maximum notification and UI compactness.
   - `METRICS_MODE=safe`: Decoupled safe metrics. Ascent and descent expand independently based on actual glyph boundaries. Tall accents never clip, descenders remain clear, and UI elements stay centered and compact.
-  - `METRICS_MODE=preserve` (alias `intact`): Leaves the font designer's original ascender/descender metric tables unaltered.
+  - `METRICS_MODE=preserve`: Leaves the font designer's original ascender/descender metric tables unaltered.
 
 > [!NOTE]
-> Across **all** modes (`compact`, `safe`, and `preserve` / `intact`), the font's underline position and thickness (`post.underlinePosition`, `post.underlineThickness`) are automatically harmonized to Android's reference Roboto measurements (scaled proportionally to font UPM: $-150 \times \text{upem} / 2048$ and $100 \times \text{upem} / 2048$). This ensures hyperlinks and formatted text render with pixel-perfect underlines across all apps while keeping designer line heights intact.
+> Across **all** modes (`compact`, `safe`, and `preserve`), the font's underline position and thickness (`post.underlinePosition`, `post.underlineThickness`) are automatically harmonized to Android's reference Roboto measurements (scaled proportionally to font UPM: $-150 \times \text{upem} / 2048$ and $100 \times \text{upem} / 2048$). This ensures hyperlinks and formatted text render with pixel-perfect underlines across all apps while keeping designer line heights intact.
 
 #### 6. 🎨 OpenType Feature Freezing (`*_FREEZE_FEATURES`)
 - **The Problem**: Many professional fonts feature alternate characters (slashed zeros, curved lowercase `l`, single-story `a` and `g`, or geometric glyphs) hidden behind OpenType tags (`zero`, `ss01`–`ss20`, `cv01`–`cv99`). Android apps lack menus to activate these.

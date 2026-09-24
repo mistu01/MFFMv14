@@ -439,12 +439,12 @@ def fix_font_metrics(font, target_upm: int = 2048, mode: str = "compact") -> Non
     upm = int(getattr(head, "unitsPerEm", target_upm))
     mode_lower = (mode or "compact").strip().lower()
 
-    # Underline position and thickness: harmonized to Roboto standard across ALL modes (safe, compact, intact/preserve)
+    # Underline position and thickness: harmonized to Roboto standard across ALL modes (safe, compact, preserve)
     if post is not None:
         post.underlinePosition = int(round(ROBOTO_UNDERLINE_POSITION * upm / ROBOTO_REFERENCE_UPM))
         post.underlineThickness = max(1, int(round(ROBOTO_UNDERLINE_THICKNESS * upm / ROBOTO_REFERENCE_UPM)))
 
-    if mode_lower in ("preserve", "intact"):
+    if mode_lower == "preserve":
         if os2 is not None:
             os2.fsSelection = int(getattr(os2, "fsSelection", 0)) & 0b01111111
             if "fvar" in font:
@@ -3134,7 +3134,7 @@ def main():
     s_proc.add_argument("--out", dest="output_file")
     s_proc.add_argument("--no-hinting", action="store_true")
     s_proc.add_argument("--no-fix-metrics", action="store_true")
-    s_proc.add_argument("--metrics-mode", choices=["safe", "compact", "preserve", "intact"], default="compact", help="Metrics mode (safe=auto-clamp FFIX3 ratio, compact=fixed FFIX3, preserve/intact=keep original with Roboto underline)")
+    s_proc.add_argument("--metrics-mode", choices=["safe", "compact", "preserve"], default="compact", help="Metrics mode (safe=auto-clamp FFIX3 ratio, compact=fixed FFIX3, preserve=keep original with Roboto underline)")
     s_proc.add_argument("--sanitize-names", action="store_true")
     s_proc.add_argument("--inject-colon", action="store_true")
     s_proc.add_argument("--colon-alignment", choices=["center", "cap_height", "x_height"], default="center")
@@ -3155,7 +3155,7 @@ def main():
     s_comp.add_argument("--bengali-dir", action="append", default=[])
     s_comp.add_argument("--keep-hinting", action="store_true")
     s_comp.add_argument("--no-fix-metrics", action="store_true")
-    s_comp.add_argument("--metrics-mode", choices=["safe", "compact", "preserve", "intact"], default="compact", help="Metrics mode (safe=auto-clamp FFIX3 ratio, compact=fixed FFIX3, preserve/intact=keep original with Roboto underline)")
+    s_comp.add_argument("--metrics-mode", choices=["safe", "compact", "preserve"], default="compact", help="Metrics mode (safe=auto-clamp FFIX3 ratio, compact=fixed FFIX3, preserve=keep original with Roboto underline)")
     s_comp.add_argument("--no-sanitize-names", action="store_true")
     s_comp.add_argument("--enable-centered-colon", action="store_true")
     s_comp.add_argument("--enable-pua-colon", action="store_true", help="Copy/map colon to Android lockscreen clock colon PUA (U+EE01, U+2236, U+2982)")

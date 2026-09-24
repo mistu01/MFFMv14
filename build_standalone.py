@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pua-colon", action="store_true", default=False, help="copy colon glyph to Android PUA (U+EE01) for lockscreen clocks")
     parser.add_argument("--synthetic-italic", action="store_true", default=False, help="synthesize italic style for Sans-serif if missing")
     parser.add_argument("--synthetic-italic-angle", type=float, default=-12.0, help="slant angle for synthetic italic (default: -12.0)")
-    parser.add_argument("--metrics-mode", choices=("compact", "safe", "preserve", "intact"), default=None, help="vertical metrics mode: compact (default tight FFIX3), safe (decoupled zero-clipping), or preserve / intact (original font metrics with Roboto underline)")
+    parser.add_argument("--metrics-mode", choices=("compact", "safe", "preserve"), default=None, help="vertical metrics mode: compact (default tight FFIX3), safe (decoupled zero-clipping), or preserve (original font metrics with Roboto underline)")
     parser.add_argument("--subset", action="store_true", default=None, help="subset fonts (drops Plane 16 SF bloat, CJK scripts & Noto emoji conflicts; preserves spoken alphabets & PUA)")
     parser.add_argument("--no-subset", action="store_false", dest="subset", help="disable font subsetting")
     parser.add_argument("--tracking", "--letter-spacing", dest="tracking", type=int, default=None, help="horizontal tracking / letter spacing in 1/1000 em (+/- font units, e.g. +20 for less dense, -15 for tighter)")
@@ -276,9 +276,7 @@ def build_module(args: argparse.Namespace) -> Path | None:
     else:
         args.metrics_mode = str(args.metrics_mode).lower().strip()
 
-    if args.metrics_mode in ("intact",):
-        args.metrics_mode = "preserve"
-    elif args.metrics_mode not in ("compact", "safe", "preserve"):
+    if args.metrics_mode not in ("compact", "safe", "preserve"):
         args.metrics_mode = "compact"
 
     if getattr(args, "subset", None) is None:
@@ -319,7 +317,6 @@ def build_module(args: argparse.Namespace) -> Path | None:
         "compact": "Classic tight FFIX3 (Default)",
         "safe": "Decoupled zero-clipping",
         "preserve": "Original metrics (with Roboto underline)",
-        "intact": "Original metrics (with Roboto underline)",
     }.get(args.metrics_mode, "Classic tight FFIX3")
     print(f"  Metrics Mode     : {args.metrics_mode.capitalize()} [{metrics_desc}]", flush=True)
     if args.subset:

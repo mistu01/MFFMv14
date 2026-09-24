@@ -904,12 +904,12 @@ def _fix_metrics(font, mode: str = "compact") -> None:
     units_per_em = int(getattr(head, "unitsPerEm", FFIX3_REFERENCE_UPM))
     mode_lower = (mode or "compact").strip().lower()
 
-    # Underline position and thickness: harmonized to Roboto standard across ALL modes (safe, compact, intact/preserve)
+    # Underline position and thickness: harmonized to Roboto standard across ALL modes (safe, compact, preserve)
     if post is not None:
         post.underlinePosition = int(round(ROBOTO_UNDERLINE_POSITION * units_per_em / ROBOTO_REFERENCE_UPM))
         post.underlineThickness = max(1, int(round(ROBOTO_UNDERLINE_THICKNESS * units_per_em / ROBOTO_REFERENCE_UPM)))
 
-    if mode_lower in ("preserve", "intact"):
+    if mode_lower == "preserve":
         if os2 is not None:
             os2.fsSelection = int(getattr(os2, "fsSelection", 0)) & 0b01111111
             if "fvar" in font:
@@ -1783,9 +1783,9 @@ def prompt_metrics_mode(default_mode: str = "compact", interactive: bool = False
     print("Choose vertical line metrics treatment for your font module:")
     print("  [1] compact           - (Recommended) Classic tight FFIX3 metrics (maximum UI compactness)")
     print("  [2] safe              - Decoupled safe metrics (prevents accent clipping & descender cutoff)")
-    print("  [3] preserve / intact - Original font designer metrics (with Roboto underline & HWUI bugfixes)")
+    print("  [3] preserve          - Original font designer metrics (with Roboto underline & HWUI bugfixes)")
     try:
-        choice = input(f"Select metrics mode [1=compact, 2=safe, 3=preserve/intact] (default: {default_mode}): ").strip().lower()
+        choice = input(f"Select metrics mode [1=compact, 2=safe, 3=preserve] (default: {default_mode}): ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         print("\nUsing default metrics mode.")
         return default_mode
@@ -1794,7 +1794,7 @@ def prompt_metrics_mode(default_mode: str = "compact", interactive: bool = False
         return "compact"
     elif choice in ("2", "safe", "s"):
         return "safe"
-    elif choice in ("3", "preserve", "p", "intact", "i"):
+    elif choice in ("3", "preserve", "p"):
         return "preserve"
     return default_mode
 

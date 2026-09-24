@@ -2042,8 +2042,8 @@ prepare_variable_config() {
           printf '#   - safe     : Audits all glyphs and automatically expands boundaries to eliminate\n'
           printf '#                any clipping while strictly preserving the FFIX3 baseline ratio.\n'
           printf '#                Buttons and status bar icons stay perfectly centered!\n'
-          printf '#   - preserve : Retains the font designer original vertical metrics (intact).\n'
-          printf '#                All modes (compact, safe, preserve/intact) harmonize underline\n'
+          printf '#   - preserve : Retains the font designer original vertical metrics.\n'
+          printf '#                All modes (compact, safe, preserve) harmonize underline\n'
           printf '#                position & thickness to Roboto standard for pixel-perfect UI!\n'
           printf 'METRICS_MODE=compact\n\n'
         } >> "$VF_CONFIG_FILE"
@@ -2231,7 +2231,7 @@ if [ -n "$_helper" ] && [ -x "$_helper" ]; then
     yes|YES|true|TRUE|1) _should_compile=1 ;;
   esac
   case "$_cfg_metrics_mode" in
-    safe|preserve|intact) _should_compile=1 ;;
+    safe|preserve) _should_compile=1 ;;
   esac
   if [ -n "$_cfg_sans_f" ] || [ -n "$_cfg_mono_f" ] || [ -n "$_cfg_serif_f" ] || [ -n "$_cfg_beng_f" ]; then
     _should_compile=1

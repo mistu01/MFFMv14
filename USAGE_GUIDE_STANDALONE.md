@@ -227,7 +227,6 @@ Control vertical line metrics harmonization across `hhea` and `OS/2` tables:
 python build.py --metrics-mode compact         # Classic tight FFIX3 (Default)
 python build.py --metrics-mode safe            # Decoupled safe zero-clipping metrics
 python build.py --metrics-mode preserve        # Keep original font designer metrics
-python build.py --metrics-mode intact          # Alias for preserve
 ```
 
 - **`compact` (Default)**:
@@ -237,12 +236,12 @@ python build.py --metrics-mode intact          # Alias for preserve
   - Dynamically scans true glyph contour bounds (`glyf` outlines + `head.yMax`/`yMin`).
   - Automatically expands ascent and descent independently if tall diacritics or deep descenders exceed baseline values, while setting `usWinAscent` and `usWinDescent` safely.
   - Recommended for fonts with large accent marks or complex scripts (e.g. Vietnamese, Arabic, Thai, Burmese) to eliminate accent and descender clipping.
-- **`preserve` / `intact`**:
+- **`preserve`**:
   - Leaves original font designer metrics (`head`, `hhea`, `OS/2` sTypo/usWin) completely untouched.
   - Only applies necessary Android HWUI bugfixes (clears `fsSelection` bit 7 and ensures `usWeightClass=400` on variable fonts).
 
 > [!NOTE]
-> Across **all** modes (`compact`, `safe`, and `preserve` / `intact`), the font's underline position and thickness (`post.underlinePosition`, `post.underlineThickness`) are automatically harmonized to Android's reference Roboto measurements (scaled proportionally to font UPM: $-150 \times \text{upem} / 2048$ and $100 \times \text{upem} / 2048$). This ensures hyperlinks and formatted text render with pixel-perfect underlines across all apps while keeping designer line heights intact.
+> Across **all** modes (`compact`, `safe`, and `preserve`), the font's underline position and thickness (`post.underlinePosition`, `post.underlineThickness`) are automatically harmonized to Android's reference Roboto measurements (scaled proportionally to font UPM: $-150 \times \text{upem} / 2048$ and $100 \times \text{upem} / 2048$). This ensures hyperlinks and formatted text render with pixel-perfect underlines across all apps while keeping designer line heights intact.
 
 ---
 
