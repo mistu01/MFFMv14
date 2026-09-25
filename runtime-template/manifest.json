@@ -1,17 +1,17 @@
 {
-  "version": "2026.09.24",
-  "versionCode": "260924",
+  "version": "2026.09.25",
+  "versionCode": "260925",
   "description": "MFFM Runtime - shared Python + fontTools. SHA256 pins for supply-chain verification (like zipsigner_auto.py).",
   "python_version": "3.11.16",
   "fonttools_version": "4.66.0",
   "sha256": {
-    "aarch64": "dbf959d5637e431555d7f89c9b67af6bc33e00890f507a5225d09264cb20b3fb",
-    "x64": "98bf4cfed4a91085ace033e2746cf1ba2ec3e6368ce5b1081f191b93480f1384",
+    "aarch64": "d50c4d5972e203de3be1e552e442cd9cfbe01e921caba88ddbb48589699ff062",
+    "x64": "30e1510fc7ceeff254abf346b9aed1820592500a88308dd7850cd0dc4b185854",
     "armv7": "",
     "x86": ""
   },
   "notes": "aarch64/x64: static musl CPython + pure-python fontTools (runs without Termux). armv7/x86: unsupported by python-build-standalone; flash-time falls back to Termux pip.",
-  "python_release_tag": "20260901",
+  "python_release_tag": "20260924",
   "python_variant": "lto+static-full",
   "source": "astral-sh/python-build-standalone"
 }
