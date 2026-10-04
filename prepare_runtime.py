@@ -33,7 +33,7 @@ RUNTIME_DIR = ROOT / "runtime-template" / "runtime"
 MANIFEST_PATH = ROOT / "runtime-template" / "manifest.json"
 
 # Supply-chain pins (mirrors zipsigner_auto.py's approach). Bump together.
-PYTHON_RELEASE_TAG = "20261001"
+PYTHON_RELEASE_TAG = "20261003"
 PYTHON_VERSION = "3.11.17"
 PYTHON_ABI_TARGET = {
     "aarch64": "aarch64-unknown-linux-musl",
