@@ -419,7 +419,7 @@ public class MainActivity extends Activity {
         File engineDir = new File(filesDir, "engine");
 
         // 1. Unpack engine.zip if needed
-        File marker = new File(engineDir, ".ready_v14");
+        File marker = new File(engineDir, ".ready_v14_2");
         if (!marker.exists()) {
             appendLog("Extracting bundled standalone engine assets...");
             unzipAsset("engine.zip", engineDir);
@@ -566,6 +566,11 @@ public class MainActivity extends Activity {
         env.put("PYTHONPATH", new File(engineDir, "lib/python3.11").getAbsolutePath() + ":" +
                 new File(engineDir, "lib/python3.11/site-packages").getAbsolutePath());
         env.put("PATH", new File(engineDir, "scripts/.mffm-signer/bin").getAbsolutePath() + ":" + System.getenv("PATH"));
+        File zipsignerLib = new File(getApplicationInfo().nativeLibraryDir, "libzipsignerust.so");
+        if (zipsignerLib.exists()) {
+            zipsignerLib.setExecutable(true, false);
+            env.put("ZIPSIGNER_BIN", zipsignerLib.getAbsolutePath());
+        }
         env.put("HOME", filesDir.getAbsolutePath());
         env.put("TMPDIR", getCacheDir().getAbsolutePath());
         env.put("SOURCE_DATE_EPOCH", String.valueOf(System.currentTimeMillis() / 1000L));

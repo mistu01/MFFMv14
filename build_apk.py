@@ -217,6 +217,22 @@ def prepare_apk_payloads() -> None:
         with urllib.request.urlopen(req) as resp, target_signer.open("wb") as out:
             out.write(resp.read())
 
+    # Also place libzipsignerust.so into jniLibs so Android extracts it with execute permissions
+    lib_signer = jni_arm64 / "libzipsignerust.so"
+    if target_signer.exists():
+        shutil.copy2(target_signer, lib_signer)
+
+    # Copy signing keys into payload
+    signer_keys_dir = scripts_dir / ".mffm-signer" / "keys"
+    signer_keys_dir.mkdir(parents=True, exist_ok=True)
+    local_keys_dir = ROOT / ".mffm-signer" / "keys"
+    if local_keys_dir.exists():
+        shutil.copytree(local_keys_dir, signer_keys_dir, dirs_exist_ok=True)
+    else:
+        from zipsigner_auto import FALLBACK_KEY_PEM, FALLBACK_CERT_PEM
+        (signer_keys_dir / "mffm-signing-key.pem").write_text(FALLBACK_KEY_PEM.strip() + "\n", encoding="utf-8")
+        (signer_keys_dir / "mffm-signing-cert.pem").write_text(FALLBACK_CERT_PEM.strip() + "\n", encoding="utf-8")
+
     print("  [payload] Packaging engine.zip...")
     with zipfile.ZipFile(engine_zip, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zout:
         for root, dirs, files in os.walk(temp_engine):

@@ -66,6 +66,14 @@ def _sha256_file(path: Path) -> str:
 
 
 def _ensure_binary(root: Path) -> Path:
+    custom_bin = os.environ.get("ZIPSIGNER_BIN")
+    if custom_bin and Path(custom_bin).exists():
+        p = Path(custom_bin)
+        try:
+            p.chmod(p.stat().st_mode | stat.S_IXUSR)
+        except OSError:
+            pass
+        return p
     path_binary = shutil.which("zipsignerust") or shutil.which("zipsignerust.exe")
     cache = root / CACHE_NAME / "bin"
     name = _asset_name()
@@ -107,6 +115,91 @@ def _ensure_binary(root: Path) -> Path:
         raise ZipSignerError(f"Could not obtain ZipSignerust: {exc}") from exc
 
 
+FALLBACK_CERT_PEM = """-----BEGIN CERTIFICATE-----
+MIIEyDCCArCgAwIBAgIUfe0EZkGtItPbcKnHbwhuiV5wIeswDQYJKoZIhvcNAQEL
+BQAwHjEcMBoGA1UEAwwTTUZGTSBNb2R1bGUgU2lnbmluZzAeFw0yNjA5MjMwMDAw
+NDNaFw0zNjA5MjAwMDA1NDNaMB4xHDAaBgNVBAMME01GRk0gTW9kdWxlIFNpZ25p
+YmcwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQCnGGOO7vz8iSt/1ySR
+8fIXf8+qfTzaBTyEugISgDeFw1wXmf1TmDpgQ/HwxuNouq0rHowVJ0gIlZ56/e0T
+MUJt9udmrA8kSvOX/2+g40q7+xG78OFEUDuS3tIHaXi4j/p9BR6JLvwPLi4Ik0MV
+eEWaQQNNUDVjwvpNfxSjvZg2A5pJ7hkdjYKoha6RLINTledVImQQ1r00ZVYnlCYz
+v4VsbasFbW1cqnet3js6FJqqDaczr31DsMJwmiPIP4oYcoUS3Z3n/sFQbRq1cJ4S
+gN8bpGef9J7fdpSBkLt9+w/2JCPFVlTdVRc3cs8TruZAJe6Xc6V+Y0K2+4f/YCln
+8XkvTRILpqgqeA+YKI4VtGbNnw3aJguIGC6c9KYsP3CZx+UIyRM8bpkBbB3q5Ldr
+bgdQdmPz738BQRYkeyecqymt5+AwTpTvMMUOdZ286mtpzvmueiBmV8PHTWNZYwsm
+7rbw+P1DR70OSIcclThdI90mjqiJSz/hMfGvNHC/JRH8y4Q3kvwMAevt9xsIWFZi
+0dBqQ2ZQirYtHyaWEJYuJHjhy1iUZ2DHlH22yReVEHxRQiNELBnzVmUAH27m3ESq
+6RO5AKq54MT0rLIqCnriDwkrTSUrESfCwMSkuBhZDcjjtjfZy9mzURJ2tstreP/2
+BqaHpZyx0bKKnNmlYcLx6cJBCwIDAQABMA0GCSqGSIb3DQEBCwUAA4ICAQAlG50U
+Pc3hDoZQxBswTDY53K7Z63WkWVDIL/+T/bbim3FFO6v+6GX1C+2b2o4OGnItgckT
+dPT6FjD7VR3j55FG2t/Bio+T89m1nNLzPTQa2C11R35jCbWKqSjfJ/zLr7gJwgm/
+T39pTxLm/EX6t6y++/8ofzNZQJtGLkNuC9jvyc7Tcyp4bISQydiRTygYjqI3oxO/
+xJ5CL0NFkN40+qdyPtTYYx2EDosVv8WZcfOuFl6362BdNiwuG+Zfzt6rpNz5DmXy
+4PoCDXjnVRLVYCTCyySqYS9WpikNJfpukiGrBGXqIOa1jBa0KhwmKBtUfvUqBM8U
+/WmNjfQXH7eMdbPXV0LDrWZDzROwtkRAltTLZUzZc4gKOt2o9vEJEiSoO7+pZCcK
+ZR7Mtxjwxz90cBR1X90Rv3iK0ciKYNsY2HH+ESaZp/UibDVAFsdQ7VJrudArXErC
+bbCx+h1CpxT+oZYag1oaWksYpxmqD0Vnu/58SVXYzdNduUVUSpSdcbjOd3JDNkt2
+Y2ByBZ1K9P6qwFLkDpBHJSx2cG1OS0bAC9BGENjyvjakhLUH1+ldCAIiIq8KO92U
+vDf7WvbOKrhXwz6qfyZNhdZLR9n7SH6gvKZzgmbtvblyJjx+Kt/IWnrq4pL+VEPl
+9OrXGiuB/6fL+jAjqohCScKBZ9/919FPEEl3Bg==
+-----END CERTIFICATE-----
+"""
+
+FALLBACK_KEY_PEM = """-----BEGIN PRIVATE KEY-----
+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
+sjGnEIaVekqFVenxCm96WXXPx9956g==
+-----END PRIVATE KEY-----
+"""
+
+
 def _ensure_keys(root: Path) -> tuple[Path, Path]:
     keys = root / CACHE_NAME / "keys"
     private = keys / "mffm-signing-key.pem"
@@ -115,6 +208,16 @@ def _ensure_keys(root: Path) -> tuple[Path, Path]:
         return private, certificate
 
     keys.mkdir(parents=True, exist_ok=True)
+    try:
+        private.write_text(FALLBACK_KEY_PEM.strip() + "\n", encoding="utf-8")
+        certificate.write_text(FALLBACK_CERT_PEM.strip() + "\n", encoding="utf-8")
+        if os.name != "nt":
+            private.chmod(0o600)
+            certificate.chmod(0o644)
+        return private, certificate
+    except Exception:
+        pass
+
     openssl = shutil.which("openssl")
     if openssl:
         proc = subprocess.run(
