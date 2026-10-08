@@ -2,53 +2,69 @@
 <resources>
     <string name="app_name">MFFM Font Module Builder</string>
     <string name="app_subtitle">Universal Magisk &amp; KernelSU Font Module Engine</string>
-    <string name="intro_title">No PC or Termux Required</string>
-    <string name="intro_desc">Choose fonts from your device and build an instant flashable standalone font module with automatic typography fixes.</string>
-    
-    <string name="section_fonts">1. Choose Source Fonts</string>
-    <string name="sans_title">Main Font — Sans-serif (Required)</string>
-    <string name="sans_desc">Primary system font. Select a Variable font or multiple static weights (Regular, Bold, Italic, etc.).</string>
-    <string name="btn_browse_sans">Browse Sans-serif (Single or Multiple)</string>
-    <string name="no_sans_selected">No Sans-serif font selected yet</string>
+    <string name="intro_title">Standalone Font Engine</string>
+    <string name="intro_desc">Step-by-step visual module builder matching the MFFM terminal engine with live clock colon preview and OpenType inspection.</string>
 
-    <string name="optional_families_title">Optional Companion Font Families</string>
-    <string name="optional_families_desc">Apply different fonts for coding (Mono), books (Serif), or Bengali in the same module.</string>
-    
-    <string name="mono_title">💻 Monospace / Coding Font (Optional)</string>
+    <!-- Step 1: Fonts -->
+    <string name="step1_title">1. Select Source Fonts &amp; Inspect</string>
+    <string name="sans_title">Primary Sans-serif Font (Required)</string>
+    <string name="sans_desc">Primary system font. Select a Variable font or multiple static weights (Regular, Bold, Medium, etc.).</string>
+    <string name="btn_browse_sans">📂 Browse Sans-serif Font(s)</string>
+    <string name="no_sans_selected">No Sans-serif font selected yet. Select a font to begin.</string>
+    <string name="optional_families_title">Optional Companion Families (Mono, Serif, Bengali)</string>
+    <string name="optional_families_desc">Include different companion fonts for code, books, or Bengali in the same module.</string>
+    <string name="mono_title">💻 Monospace / Code Font (Optional)</string>
     <string name="btn_browse_mono">Browse Monospace Font(s)</string>
-    
     <string name="serif_title">📖 Serif / Reading Font (Optional)</string>
     <string name="btn_browse_serif">Browse Serif Font(s)</string>
-    
     <string name="bengali_title">🌐 Bengali Script Font (Optional)</string>
     <string name="btn_browse_bengali">Browse Bengali Font(s)</string>
-
     <string name="btn_clear">Clear</string>
-    <string name="section_mode">2. Builder Mode</string>
-    <string name="mode_quick">⚡ Quick Mode (Recommended for Beginners)</string>
-    <string name="mode_quick_desc">Zero configuration needed. Automatically centers clock colons, fixes digit widths, applies safe metrics, and packages a signed flashable module.</string>
-    <string name="mode_custom">⚙️ Custom Mode (Options to Modify)</string>
-    <string name="mode_custom_desc">Fine-tune font name, clock colon offset, metrics mode, synthetic italics, and OpenType features.</string>
-    
-    <string name="label_module_name">Module Display Name</string>
-    <string name="hint_module_name">Auto-detected from font</string>
-    <string name="label_author">Module Author</string>
-    <string name="label_colon">Centered Lockscreen Clock Colon (12:30)</string>
-    <string name="label_digits">Equalize Clock Digits (Wobble-Free Clocks)</string>
-    <string name="label_pua">Lockscreen PUA Colon (Fixes U+EE01 on HyperOS/Pixel)</string>
-    <string name="label_italic">Synthesize Italic Companion</string>
-    <string name="label_metrics">Vertical Metrics Mode</string>
-    <string name="metrics_compact">Compact (Classic tight FFIX3, default)</string>
+
+    <!-- Step 2: Clock Colon & Live Preview -->
+    <string name="step2_title">2. Centered Clock Colon &amp; Live Preview</string>
+    <string name="step2_desc">Visual inspection of centered clock colon (12:30) with real-time vertical position preview.</string>
+    <string name="label_colon_enable">Generate &amp; Inject Centered Clock Colon</string>
+    <string name="colon_align_title">Alignment Target:</string>
+    <string name="colon_align_center">Optical Center (Digits)</string>
+    <string name="colon_align_cap">Cap Height</string>
+    <string name="colon_align_x">x-Height</string>
+    <string name="colon_rule_title">Contextual Rule:</string>
+    <string name="colon_rule_between">Between Digits (12:30)</string>
+    <string name="colon_rule_after">After Digit</string>
+    <string name="colon_rule_always">Always</string>
+    <string name="label_colon_shift">Vertical Colon Shift (Font Units):</string>
+    <string name="clock_preview_title">Live Lockscreen Clock Preview</string>
+    <string name="text_preview_title">Live Typography &amp; Spacing Preview</string>
+
+    <!-- Step 3: OpenType Features -->
+    <string name="step3_title">3. OpenType Feature Freezer</string>
+    <string name="step3_desc">Detected OpenType layout features from your font. Tap to select features to permanently freeze.</string>
+    <string name="features_hint">Or type custom feature tags (e.g. ss01, cv01, zero, tnum)</string>
+
+    <!-- Step 4: Harmonization & Metrics -->
+    <string name="step4_title">4. Typography Harmonization &amp; Metrics</string>
+    <string name="label_equalize_digits">Equalize Clock Digit Widths (Wobble-Free 0-9)</string>
+    <string name="label_pua_colon">Map Colon to Lockscreen PUA (U+EE01, U+2236, U+2982)</string>
+    <string name="label_synthetic_italic">Synthesize Italic Companion (if font lacks italic)</string>
+    <string name="label_metrics_mode">Vertical Line Metrics Treatment:</string>
+    <string name="metrics_compact">Compact (Classic tight FFIX3 - Recommended)</string>
     <string name="metrics_safe">Safe (Decoupled zero-clipping)</string>
-    <string name="metrics_preserve">Preserve (Original font metrics)</string>
-    <string name="label_subset">Font Subsetting (Drop unused characters &amp; emoji bloat)</string>
-    <string name="label_tracking">Letter Spacing / Tracking (‰ em)</string>
-    <string name="label_features">OpenType Feature Freezing Tags (e.g. zero,cv01)</string>
-    
-    <string name="btn_build">⚡ BUILD FLASHABLE MODULE</string>
+    <string name="metrics_preserve">Preserve (Original font designer metrics)</string>
+    <string name="label_subset">Font Subsetting (Strip unused scripts &amp; emoji bloat)</string>
+    <string name="label_tracking">Letter Spacing / Tracking (‰ em):</string>
+
+    <!-- Step 5: Module Metadata & Build -->
+    <string name="step5_title">5. Module Metadata &amp; Build</string>
+    <string name="label_module_name">Module Display Name:</string>
+    <string name="hint_module_name">Auto-detected from font</string>
+    <string name="label_author">Module Author:</string>
+    <string name="hint_author">Default: mistu01</string>
+    <string name="btn_build">⚡ BUILD FLASHABLE FONT MODULE</string>
     <string name="btn_building">Building Font Module...</string>
     <string name="success_title">🎉 Build Successful!</string>
     <string name="btn_open_downloads">📂 Open Downloads</string>
     <string name="btn_share">📤 Share Module</string>
     <string name="btn_flash_root">⚡ Flash Now (Root)</string>
+    <string name="locked_step_hint">Select a Sans-serif font in Step 1 to unlock.</string>
 </resources>
