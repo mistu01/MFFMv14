@@ -113,7 +113,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish / Update GitHub Release
-        if: ${{ inputs.create_release != false }}
+        if: ${{ github.event_name == 'push' || inputs.create_release != false }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
