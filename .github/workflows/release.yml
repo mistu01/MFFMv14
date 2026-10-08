@@ -23,6 +23,8 @@ on:
       - 'CHANGELOG_STANDALONE.md'
       - 'USAGE_GUIDE.md'
       - 'USAGE_GUIDE_STANDALONE.md'
+      - 'app-project/**'
+      - 'build_apk.py'
       - '.github/workflows/release.yml'
   workflow_dispatch:
     inputs:
@@ -57,6 +59,12 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
       - name: Install Build Tools & Dependencies
         run: |
@@ -123,11 +131,13 @@ jobs:
                   notes = "Automated compilation of MFFMv14 Template and Runtime Module."
 
           runtime_name = f"mffm-runtime-{version}.zip"
+          apk_name = f"MFFM-Font-Module-Builder-v{version}.apk"
 
           body = textwrap.dedent(f"""\
           ## 🚀 MFFMv14 Release {tag}
 
           ### 📦 Release Assets
+          - **`{apk_name}`**: Standalone Android App (APK) with all templates and compiler engine pre-installed. Choose/browse any font and build instant flashable modules directly on Android (no PC, Termux, or Python needed).
           - **`MFFMv14-Standalone-Template.zip`**: Complete self-contained standalone build environment (PC & mobile Termux) to create **100% Python-free, instant-flashing** font modules with zero on-device prerequisites.
           - **`MFFMv14-Source-Template.zip`**: Dynamic font module template for on-device creation (via file managers) or PC, utilizing the shared MFFM Runtime.
           - **`{runtime_name}`**: Standalone MFFM Runtime module (portable Python + fontTools). Flash once in Magisk / KernelSU / APatch.
@@ -168,10 +178,14 @@ jobs:
         run: |
           python package_template.py --all
 
+      - name: Build MFFM Font Builder Android APK
+        run: |
+          python build_apk.py --version ${{ steps.release_meta.outputs.version }} --output-dir dist/
+
       - name: Generate SHA256 Checksums
         run: |
           cd dist
-          sha256sum *.zip > SHA256SUMS.txt
+          sha256sum *.zip *.apk > SHA256SUMS.txt
           cat SHA256SUMS.txt
           cd ..
 
@@ -182,6 +196,7 @@ jobs:
           name: ${{ steps.release_meta.outputs.title }}
           body_path: release_body.md
           files: |
+            dist/MFFM-Font-Module-Builder-*.apk
             dist/MFFMv14-Standalone-Template.zip
             dist/MFFMv14-Source-Template.zip
             dist/mffm-runtime-*.zip

@@ -1,0 +1,140 @@
+name: Compile & Release Android APK
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app-project/**'
+      - 'build_apk.py'
+      - 'template-standalone/**'
+      - 'build_standalone.py'
+      - 'font_module_standalone.py'
+      - 'runtime_helper.py'
+      - 'zipsigner_auto.py'
+      - '.github/workflows/build-apk.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'APK Version (e.g. 14.0.0 or leave blank for date)'
+        required: false
+        type: string
+      create_release:
+        description: 'Publish as GitHub Release asset'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    name: Build MFFM Font Builder APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch Git Tags
+        run: git fetch --tags --force
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Python Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils-aarch64-linux-gnu llvm
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt zstandard
+
+      - name: Resolve APK Version
+        id: meta
+        run: |
+          python - << 'EOF'
+          import datetime as dt
+          import os
+          import subprocess
+
+          override = "${{ inputs.version }}".strip()
+          if override:
+              version = override.lstrip("v")
+          else:
+              version = dt.datetime.now(dt.timezone.utc).strftime("%Y.%m.%d")
+
+          tag = f"v{version}"
+          code = int(dt.datetime.now(dt.timezone.utc).strftime("%y%m%d"))
+
+          print(f"Version: {version}")
+          print(f"Tag: {tag}")
+          print(f"Version Code: {code}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"version={version}\n")
+              out.write(f"tag={tag}\n")
+              out.write(f"code={code}\n")
+          EOF
+
+      - name: Build Android APK
+        run: |
+          python build_apk.py --version ${{ steps.meta.outputs.version }} --version-code ${{ steps.meta.outputs.code }} --output-dir dist/
+
+      - name: Generate Checksums
+        run: |
+          cd dist
+          sha256sum *.apk > SHA256SUMS-APK.txt
+          cat SHA256SUMS-APK.txt
+          cd ..
+
+      - name: Upload APK as Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MFFM-Font-Module-Builder-APK
+          path: |
+            dist/*.apk
+            dist/SHA256SUMS-APK.txt
+          if-no-files-found: error
+
+      - name: Publish / Update GitHub Release
+        if: ${{ inputs.create_release != false }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: MFFM Font Module Builder APK ${{ steps.meta.outputs.tag }}
+          body: |
+            ## 📱 MFFM Font Module Builder Standalone APK (${{ steps.meta.outputs.tag }})
+
+            Automated GitHub Actions build of **MFFM Font Module Builder**.
+            
+            ### 📦 Release Assets
+            - **`MFFM-Font-Module-Builder-v${{ steps.meta.outputs.version }}.apk`**: 100% self-contained Android APK. Browse fonts from your phone (Sans, Mono, Serif, Bengali) and create flashable Magisk, KernelSU, or APatch font modules directly on Android.
+            
+            ### ✨ Features
+            - **Multi-Family Support**: Choose main Sans-serif (single or multiple weights) plus optional Monospace, Serif, and Bengali companions.
+            - **Quick Mode**: 1-tap build for beginners with automatic typography fixes (centered clock colon, wobble-free digits, safe metrics, synthetic italic).
+            - **Custom Mode**: Fine-tune module name, clock colon offset, metrics mode, synthetic italics, letter spacing, and OpenType feature freezing.
+            - **Zero On-Device Prerequisites**: No Termux, Python, or PC needed.
+          files: |
+            dist/*.apk
+            dist/SHA256SUMS-APK.txt
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

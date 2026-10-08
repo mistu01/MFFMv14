@@ -122,6 +122,9 @@ Updated Modules/
 .temp_ttf_fonts/
 .runtime-cache/
 mffm-runtime-*/
+app-project/build/
+app-project/src/main/jniLibs/**/*.so
+app-project/src/main/assets/*.zip
 
 # Logs & scratch files
 *.log

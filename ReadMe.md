@@ -114,7 +114,17 @@ mffm-runtime-YYYY.MM.DD.zip
    ```sh
    sh termux-build.sh
    ```
-   *Automatically installs Termux dependencies, compiles the module, and optionally flashes it directly with root (`su`).*
+### On Android Phone (via Standalone Builder App)
+> **Best for:** Users who want an easy, graphical app with zero technical commands.
+
+1. Install **`MFFM-Font-Module-Builder-v14.0.0.apk`** on your Android device (no PC, Termux, or internet needed).
+2. Open the app and choose your fonts:
+   - **Main Sans-serif (Required):** Select a variable font or multiple static weights (Regular, Bold, Italic, etc.).
+   - **Optional Companion Fonts:** Add custom fonts for **Monospace** (coding/terminal), **Serif** (books/reading), and **Bengali** script in the same module!
+3. Choose your builder mode:
+   - **⚡ Quick Mode (Recommended for Beginners):** 1-tap build with perfect defaults (centered clock colon, wobble-free digits, safe metrics, synthetic italic).
+   - **⚙️ Custom Mode (Options to Modify):** Fine-tune module name, clock colon shift, digit equalization, metrics mode, synthetic italics, tracking, and OpenType features.
+4. Tap **⚡ Build Flashable Module**. The app packages and signs the flashable ZIP, saves it directly into your `Downloads` folder, and offers 1-tap direct root flashing for Magisk, KernelSU, and APatch!
 
 ---
 
