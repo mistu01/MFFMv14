@@ -2,6 +2,7 @@ package com.mistu.mffm;
 
 import android.content.ContentProvider;
 import android.content.ContentValues;
+import android.content.Context;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
@@ -13,6 +14,14 @@ import java.io.FileNotFoundException;
 
 public class MffmFileProvider extends ContentProvider {
     public static final String AUTHORITY = "com.mistu.mffm.fileprovider";
+
+    public static Uri getUriForFile(Context context, String authority, File file) {
+        return new Uri.Builder()
+                .scheme("content")
+                .authority(authority)
+                .path(file.getAbsolutePath())
+                .build();
+    }
 
     @Override
     public boolean onCreate() {
@@ -26,9 +35,12 @@ public class MffmFileProvider extends ContentProvider {
             throw new FileNotFoundException("Invalid URI path");
         }
         File file = new File(path);
-        if (!file.exists()) {
+        if (!file.exists() && getContext() != null) {
             // Also check files in app cache or files dir
             file = new File(getContext().getFilesDir(), path);
+            if (!file.exists()) {
+                file = new File(getContext().getCacheDir(), path);
+            }
         }
         if (!file.exists()) {
             throw new FileNotFoundException("File not found: " + path);
