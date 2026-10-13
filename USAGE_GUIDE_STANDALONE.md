@@ -211,12 +211,25 @@ Family-specific feature freezing:
 
 ### Synthetic Italics
 
-If your primary Sans-serif font only provides upright weights and lacks italic faces:
-```bash
-python build.py --synthetic-italic
-```
-- Automatically generates slanted companion italic faces for all available upright weights.
-- Adjust angle using `--synthetic-italic-angle` (default: `-12.0` degrees).
+The standalone builder includes an **automatic italic scanner** for Sans-serif fonts:
+- **Auto-Scan & Wizard Prompt**: When building interactively (`python build.py` or `python build_standalone.py`), the builder checks if Sans-serif fonts contain native italic faces or variable slant/italic axes (`slnt`, `ital`). If missing, it alerts you with the missing faces and prompts:
+  ```text
+  [?] Sans-serif lacks italic faces / slant axes. Synthesize companion italics? [Y/n]
+  [?] Enter slant angle in degrees [-12.0]: 
+  ```
+- **Force Synthesis**:
+  ```bash
+  python build.py --synthetic-italic
+  ```
+- **Disable Synthesis (Skip Prompt)**:
+  ```bash
+  python build.py --no-synthetic-italic
+  ```
+- **Custom Slant Angle**:
+  ```bash
+  python build.py --synthetic-italic --synthetic-italic-angle -14.0
+  ```
+- Synthesized italic faces are automatically integrated into centered colon processing, feature freezing, and tracking adjustments, bundled into `DroidSans.ttf`, mapped into `sans.xml`, and logged in `font-config.sh` and `module.prop`.
 
 ---
 

@@ -69,7 +69,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--colon-rule", choices=("between_digits", "after_digit", "always"), default="between_digits", help="contextual rule for centered colon substitution (default: between_digits)")
     parser.add_argument("--equalize-digits", action="store_true", default=False, help="equalize advance widths of digits (0-9) and center contours for wobble-free clocks")
     parser.add_argument("--pua-colon", action="store_true", default=False, help="copy colon glyph to Android PUA (U+EE01) for lockscreen clocks")
-    parser.add_argument("--synthetic-italic", action="store_true", default=False, help="synthesize italic style for Sans-serif if missing")
+    parser.add_argument("--synthetic-italic", action="store_true", default=None, help="synthesize italic style for Sans-serif if missing")
+    parser.add_argument("--no-synthetic-italic", action="store_false", dest="synthetic_italic", help="disable synthetic italic generation")
     parser.add_argument("--synthetic-italic-angle", type=float, default=-12.0, help="slant angle for synthetic italic (default: -12.0)")
     parser.add_argument("--metrics-mode", choices=("compact", "safe", "preserve"), default=None, help="vertical metrics mode: compact (default tight FFIX3), safe (decoupled zero-clipping), or preserve (original font metrics with Roboto underline)")
     parser.add_argument("--subset", action="store_true", default=None, help="subset fonts (drops Plane 16 SF bloat, CJK scripts & Noto emoji conflicts; preserves spoken alphabets & PUA)")
@@ -175,7 +176,7 @@ def save_build_config(path: Path, args: argparse.Namespace) -> None:
         "colon_rule": args.colon_rule,
         "equalize_digits": bool(args.equalize_digits),
         "pua_colon": bool(args.pua_colon),
-        "synthetic_italic": bool(args.synthetic_italic),
+        "synthetic_italic": bool(args.synthetic_italic) if args.synthetic_italic is not None else None,
         "synthetic_italic_angle": float(args.synthetic_italic_angle or -12.0),
         "interactive": args.interactive,
         "metrics_mode": getattr(args, "metrics_mode", "compact") or "compact",
@@ -345,8 +346,16 @@ def build_module(args: argparse.Namespace) -> Path | None:
         print("  Digit Widths     : Equalize for wobble-free clocks", flush=True)
     if args.pua_colon:
         print("  Lockscreen PUA   : Map to U+EE01, U+2236, U+2982", flush=True)
-    if args.synthetic_italic:
+    if args.synthetic_italic is True:
         print(f"  Synthetic Italic : Enabled ({args.synthetic_italic_angle or -12.0}° slant)", flush=True)
+    elif args.synthetic_italic is False:
+        print("  Synthetic Italic : Disabled", flush=True)
+    else:
+        should_prompt = args.interactive if args.interactive is not None else sys.stdin.isatty()
+        if should_prompt and args.interactive is not False:
+            print("  Synthetic Italic : Auto (prompt if missing)", flush=True)
+        else:
+            print("  Synthetic Italic : Disabled", flush=True)
     print("-" * 64, flush=True)
     print(flush=True)
 
@@ -371,7 +380,7 @@ def build_module(args: argparse.Namespace) -> Path | None:
             colon_rule=str(args.colon_rule or "between_digits"),
             equalize_digits=bool(args.equalize_digits),
             pua_colon=bool(args.pua_colon),
-            synthetic_italic=bool(args.synthetic_italic),
+            synthetic_italic=args.synthetic_italic,
             synthetic_italic_angle=float(args.synthetic_italic_angle or -12.0),
             metrics_mode=args.metrics_mode,
             subset=bool(args.subset),
@@ -381,6 +390,8 @@ def build_module(args: argparse.Namespace) -> Path | None:
             serif_tracking=args.serif_tracking,
             bengali_tracking=args.bengali_tracking,
         )
+        if result.synthesized_italic:
+            args.synthetic_italic = True
         display_name = display_name_for_mode(args.name or result.family, result.mode)
         props = update_module_metadata(
             module_dir,

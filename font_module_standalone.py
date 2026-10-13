@@ -1697,6 +1697,52 @@ def prompt_add_centered_colon_if_missing(
     return False, default_offset
 
 
+def prompt_synthetic_italic_if_missing(
+    sans_paths: Iterable[Path],
+    interactive: bool = False,
+    default_angle: float = -12.0,
+) -> tuple[bool, float]:
+    """Check if input Sans-serif font(s) lack italic support and prompt user interactively to prepare synthetic italic."""
+    if not interactive:
+        return False, default_angle
+
+    sans_list = list(sans_paths)
+    if not sans_list:
+        return False, default_angle
+
+    has_ital = any(font_has_italic_support(p) for p in sans_list)
+    if has_ital:
+        return False, default_angle
+
+    print("\n------------------------------------------------------------", flush=True)
+    print("Synthetic Italic / Oblique Feature Check", flush=True)
+    print("------------------------------------------------------------", flush=True)
+    print("No native italic faces or variable slant/italic axes detected in Sans-serif font(s):", flush=True)
+    for p in sans_list:
+        print(f"  * {p.name}", flush=True)
+    print("Without italic faces, apps and web pages requesting italic text will display unslanted upright letters.", flush=True)
+    try:
+        choice = input("Do you want to synthesize companion italic faces (fake italic / oblique)? [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("\nUsing default: no synthetic italic.", flush=True)
+        return False, default_angle
+
+    if choice in ("", "y", "yes"):
+        print("Synthetic italic generation approved.", flush=True)
+        try:
+            angle_str = input(f"Enter slant angle in degrees (negative slants forward, default {default_angle:.1f}°): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            angle_str = ""
+        try:
+            angle = float(angle_str) if angle_str else default_angle
+        except ValueError:
+            angle = default_angle
+        return True, angle
+
+    print("Synthetic italic generation skipped.", flush=True)
+    return False, default_angle
+
+
 def prompt_feature_selection(available_features: dict[str, str], category_name: str = "Sans-serif") -> list[str]:
     """Prompt user interactively to view all OpenType features with safety recommendations and select ones to freeze."""
     if not available_features:
@@ -2028,6 +2074,13 @@ def inspect_fonts(fonts_dir: Path, requested_mode: str = "auto") -> dict[str, ob
             report["primary_families"] = sorted({face.family for face in primary})
             if not sans_provided:
                 notes.append("No Sans-serif faces found; Sans is mandatory for normal builds")
+            elif separated["sans"]:
+                has_sans_ital = any(
+                    face.style == "italic" or any(tag in face.axes for tag in ("slnt", "ital"))
+                    for face in separated["sans"]
+                )
+                if not has_sans_ital:
+                    notes.append("Sans-serif: No native italic faces or slant axes detected (fake italic can be synthesized automatically)")
         else:
             notes.append("No font faces found in any subdirectory")
         return report
@@ -2055,7 +2108,7 @@ def compile_fonts(
     colon_rule: str = "between_digits",
     equalize_digits: bool = False,
     pua_colon: bool = False,
-    synthetic_italic: bool = False,
+    synthetic_italic: bool | None = None,
     synthetic_italic_angle: float = -12.0,
     metrics_mode: str = "compact",
     subset: bool = False,
@@ -2141,20 +2194,39 @@ def compile_fonts(
         print("[3/4] Applying Typography & Clock Enhancements...", flush=True)
         has_enhancements = False
         italic_synthesized = False
+        should_prompt = interactive_features if interactive_features is not None else sys.stdin.isatty()
 
-        if synthetic_italic:
-            has_ital = any(font_has_italic_support(p) for p in sans_ttf_paths)
-            if not has_ital and sans_ttf_paths:
-                italic_synthesized = True
-                has_enhancements = True
-                print(f"  * Synthesizing companion italic faces ({synthetic_italic_angle:.1f}° slant)...", flush=True)
-                for font_path in list(sans_ttf_paths):
-                    out_ital_path = font_path.parent / f"{font_path.stem}-Italic{font_path.suffix}"
-                    print(f"    -> Slanting {font_path.name}...", flush=True)
-                    synthesize_italic_font(font_path, out_ital_path, angle=synthetic_italic_angle or -12.0)
-                    if out_ital_path.exists() and out_ital_path not in sans_ttf_paths:
-                        sans_ttf_paths.append(out_ital_path)
-                print("    -> Companion italics synthesized successfully [OK]", flush=True)
+        # Automatic scan for Sans-serif native italic support
+        has_ital = any(font_has_italic_support(p) for p in sans_ttf_paths) if sans_ttf_paths else True
+        should_synth = False
+        angle_to_use = synthetic_italic_angle if synthetic_italic_angle is not None else -12.0
+
+        if not has_ital and sans_ttf_paths:
+            if synthetic_italic is True:
+                should_synth = True
+                print(f"  * Sans-serif Italic Check: No native italic detected -> Synthetic italic forced (--synthetic-italic)", flush=True)
+            elif synthetic_italic is False:
+                should_synth = False
+            elif should_prompt:
+                should_synth, angle_to_use = prompt_synthetic_italic_if_missing(
+                    sans_ttf_paths, interactive=should_prompt, default_angle=angle_to_use
+                )
+            else:
+                should_synth = False
+        elif has_ital and synthetic_italic is True:
+            print("  * Sans-serif font already contains native italic support; skipping synthetic italic.", flush=True)
+
+        if should_synth and sans_ttf_paths:
+            italic_synthesized = True
+            has_enhancements = True
+            print(f"  * Synthesizing companion italic faces ({angle_to_use:.1f}° slant)...", flush=True)
+            for font_path in list(sans_ttf_paths):
+                out_ital_path = font_path.parent / f"{font_path.stem}-Italic{font_path.suffix}"
+                print(f"    -> Slanting {font_path.name}...", flush=True)
+                synthesize_italic_font(font_path, out_ital_path, angle=angle_to_use)
+                if out_ital_path.exists() and out_ital_path not in sans_ttf_paths:
+                    sans_ttf_paths.append(out_ital_path)
+            print("    -> Companion italics synthesized successfully [OK]", flush=True)
 
         applied_features: list[str] = []
         category_paths = tuple(
@@ -2170,7 +2242,6 @@ def compile_fonts(
         # a global --centered-colon/--no-centered-colon flag applies to every category.
         colon_choice = {key: centered_colon for key, _paths, _label in category_paths}
         colon_offsets = {key: colon_offset for key, _paths, _label in category_paths}
-        should_prompt = interactive_features if interactive_features is not None else sys.stdin.isatty()
 
         if should_prompt:
             for colon_key, colon_paths, colon_label in category_paths:
@@ -2354,6 +2425,7 @@ def compile_fonts(
             f"METRICS_MODE={shell_quote(metrics_mode)}",
             f"SUBSET_ENABLED={shell_quote('true' if subset else 'false')}",
             f"TRACKING={shell_quote(str(tracking))}",
+            f"SYNTHETIC_ITALIC={shell_quote('true' if italic_synthesized else 'false')}",
         ]
         if mono_index is not None:
             config.append(f"MONO_INDEX={shell_quote(str(mono_index))}")

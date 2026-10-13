@@ -4,6 +4,18 @@ All notable changes, releases, and architectural developments for the **MFFMv14 
 
 Dates follow the `YYYY.MM.DD` versioning format carried by the modules.
 
+## 2026.10.14
+
+### Added
+- **Automatic Sans-serif Italic Scan & Interactive Prompt (`font_module_standalone.py`, `build_standalone.py`)**:
+  - Automatically scans Sans-serif font faces (static TTF/OTF and variable fonts) for native italic faces or variable slant/italic axes (`slnt`, `ital`).
+  - When no italic faces or axes are detected:
+    - In interactive mode (or standard CLI wizard run), prompts user (`[Y/n]`) with target slant angle (default `-12.0°`) to synthesize companion italic faces.
+    - If accepted or specified via `--synthetic-italic`, companion italic faces are synthesized for all Sans weights, centered colon/features/tracking are applied, faces are indexed into `DroidSans.ttf`, mapped in `sans.xml`, and logged in `font-config.sh` (`SYNTHETIC_ITALIC=true`) and `module.prop` (`[Active: Synthetic Italic]`).
+  - Added `--no-synthetic-italic` flag to explicitly skip synthetic italic generation without prompting.
+  - `--inspect` mode reports missing italics in Sans-serif (`[!] Sans-serif: No native italic faces or slant axes detected (fake italic can be synthesized automatically)`).
+  - Standalone installer (`template-standalone/customize.sh`) displays `Synthetic ital: enabled` during installation.
+
 ---
 
 ## 2026.09.24

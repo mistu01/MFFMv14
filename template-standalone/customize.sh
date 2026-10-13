@@ -1404,6 +1404,7 @@ ui_print "    Font model   : $FONT_MODE"
 ui_print "    Font family  : $FONT_FAMILY"
 [ -n "$METRICS_MODE" ] && ui_print "    Metrics mode : $METRICS_MODE"
 [ -n "$TRACKING" ] && [ "$TRACKING" != "0" ] && ui_print "    Font tracking: ${TRACKING} ‰ em"
+[ "$SYNTHETIC_ITALIC" = "true" ] && ui_print "    Synthetic ital: enabled"
 
 if [ "$FONT_MODE" = "variable" ] || [ -n "$VF_MONO_AXIS_META" ] || [ -n "$VF_SERIF_UPRIGHT_AXIS_META" ] || [ -n "$VF_BENGALI_AXIS_META" ]; then
   prepare_variable_config
