@@ -43,11 +43,11 @@ PYTHON_VARIANT = "lto+static-full"
 PYTHON_RELEASE_BASE = "https://github.com/astral-sh/python-build-standalone/releases/download"
 
 # Pure-python fontTools wheel (no C accelerator, works on static musl python).
-FONTTOOLS_VERSION = "4.67.0"
+FONTTOOLS_VERSION = "4.68.0"
 FONTTOOLS_WHEEL_URL = (
-    "https://files.pythonhosted.org/packages/3d/61/4161946319472aaa9b897bd18ad5108a5b10f5ebaa503d921a001ac4fff9/fonttools-4.67.0-py3-none-any.whl"
+    "https://files.pythonhosted.org/packages/35/74/4ea331ecc65ba05a58b1e4e8ccd604c8a15565f876dfbf93fc2a2ea2e22b/fonttools-4.68.0-py3-none-any.whl"
 )
-FONTTOOLS_WHEEL_SHA256 = "4304f03ed7f4ba000a8dcc941ad854bfa52e2f3b6112b8f099b6f431cf98e701"
+FONTTOOLS_WHEEL_SHA256 = "d76f8fdcb6936f5e1045a0c9dd721a4bf11112e60d1e243bfa1d39f06a8b3104"
 
 # Standard-library directories safe to drop for a fontTools-only runtime.
 STDLIB_REMOVE_DIRS = (
